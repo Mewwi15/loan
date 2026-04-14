@@ -161,10 +161,12 @@ export default function NewLoanPage() {
   const [loading, setLoading] = useState(false);
   const [isBankModalOpen, setIsBankModalOpen] = useState(false);
 
-  // 🌟 ระบบค้นหาลูกค้าฉลาดขึ้น
   const [customersList, setCustomersList] = useState([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef(null);
+
+  // 🌟 เพิ่ม State ไว้จำว่าผู้ใช้เลือกป้อนวันแบบ Custom หรือไม่
+  const [isCustomFrequency, setIsCustomFrequency] = useState(false);
 
   const [formData, setFormData] = useState({
     customerId: "",
@@ -206,12 +208,12 @@ export default function NewLoanPage() {
   const percent = Number(formData.interestPercent) || 0;
   const count = Math.max(Number(formData.installments) || 1, 1);
 
-  const rawProfit = Math.floor((principal * percent) / 100);
-  const rawTotalAmount = principal + rawProfit;
-  const installmentAmount = Math.floor(rawTotalAmount / count);
+  // คำนวณกำไรและค่างวด (ไม่ใช้ Math.floor ในการหาร เพื่อความแม่นยำ)
+  const rawTotalAmount = principal + (principal * percent) / 100;
+  const installmentAmount = Math.ceil(rawTotalAmount / count); // ปัดเศษขึ้นให้เต็มบาท
   const actualTotalToCollect = installmentAmount * count;
   const totalProfit = Math.max(actualTotalToCollect - principal, 0);
-  const profitPerInstallment = Math.floor(totalProfit / count);
+  const profitPerInstallment = Math.ceil(totalProfit / count);
 
   const handleChange = (e) => {
     const { name, value, type } = e.target;
@@ -231,6 +233,7 @@ export default function NewLoanPage() {
   };
 
   const setFreq = (val, type = "day") => {
+    setIsCustomFrequency(false); // ปิดโหมดป้อนเองถ้ากดปุ่มสำเร็จรูป
     setFormData((prev) => ({ ...prev, frequency: val, type: type }));
   };
 
@@ -249,25 +252,24 @@ export default function NewLoanPage() {
     return matchName || matchNickname;
   });
 
-  // ฟังก์ชันบันทึกสัญญา
   const handleSaveContract = async () => {
     const targetLoanNumber = formData.loanNumber.toString().trim();
 
     if (!formData.customerName.trim()) return alert("กรุณาระบุชื่อลูกค้า");
     if (principal <= 0) return alert("กรุณาระบุยอดปล่อยกู้");
     if (!targetLoanNumber) return alert("กรุณาระบุลำดับวงกู้");
+    if (formData.frequency <= 0)
+      return alert("กรุณาระบุรอบการส่งเงินที่ถูกต้อง");
 
     setLoading(true);
 
     try {
-      // 🌟 1. ตรวจสอบว่า "ลำดับวงกู้" นี้ มีคนใช้งานอยู่หรือไม่?
       const checkLoanQuery = query(
         collection(db, "loans"),
         where("loanNumber", "==", targetLoanNumber),
       );
       const checkLoanSnapshot = await getDocs(checkLoanQuery);
 
-      // ดึงเอกสารที่เจอมาเช็คว่ามีอันไหนที่สถานะ "ไม่ใช่ closed" (แปลว่ากำลังใช้งานอยู่)
       const isSlotTaken = checkLoanSnapshot.docs.some(
         (doc) => doc.data().status !== "closed",
       );
@@ -277,10 +279,9 @@ export default function NewLoanPage() {
           `❌ สล็อต "วงที่ ${targetLoanNumber}" กำลังถูกใช้งานอยู่!\n\nกรุณาเปลี่ยนเป็นลำดับวงอื่น หรือไปทำการ "ปิดวงกู้" เดิมที่หน้าวอร์รูมก่อนครับ`,
         );
         setLoading(false);
-        return; // หยุดการทำงาน ไม่ให้เซฟต่อ
+        return;
       }
 
-      // 🌟 2. ตรวจสอบลูกค้าจาก ID ที่เลือก หรือค้นหาจากชื่อเล่น/ชื่อจริง
       const targetCustomer = customersList.find(
         (c) =>
           c.id === formData.customerId ||
@@ -308,7 +309,7 @@ export default function NewLoanPage() {
         customerId: targetCustomer.id,
         customerName: displayCustomerName,
         loanName: finalLoanName,
-        loanNumber: targetLoanNumber, // บันทึกรหัสวง
+        loanNumber: targetLoanNumber,
         bankOwner: selectedBankInfo.owner,
         bankName: selectedBankInfo.bank,
         bankAccount: selectedBankInfo.acc,
@@ -367,7 +368,7 @@ export default function NewLoanPage() {
         customerId: "",
         customerName: "",
         loanName: "",
-        loanNumber: "", // เคลียร์ให้ว่างจะได้ไม่เผลอกดซ้ำ
+        loanNumber: "",
         bankIndex: 0,
         principal: 0,
         interestPercent: 10,
@@ -376,6 +377,7 @@ export default function NewLoanPage() {
         frequency: 1,
         type: "day",
       });
+      setIsCustomFrequency(false);
     } catch (error) {
       console.error("Error:", error);
       alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
@@ -386,7 +388,6 @@ export default function NewLoanPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-8 pt-10 gap-4">
         <div>
           <h1 className="text-3xl font-black text-gray-800 tracking-tight">
@@ -411,7 +412,6 @@ export default function NewLoanPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-        {/* ฝั่งซ้าย: กรอกข้อมูล */}
         <div className="space-y-8">
           <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-gray-50 space-y-8">
             <h3 className="font-black text-gray-800 flex items-center gap-2 text-sm uppercase tracking-widest border-l-4 border-orange-500 pl-4">
@@ -420,7 +420,6 @@ export default function NewLoanPage() {
 
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-                {/* 🌟 ช่องเลือกลูกค้าแบบ Dropdown */}
                 <div className="md:col-span-12" ref={dropdownRef}>
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
                     ชื่อลูกค้า (ค้นหาจากชื่อเล่น/ชื่อจริง)
@@ -437,7 +436,6 @@ export default function NewLoanPage() {
                       placeholder="พิมพ์เพื่อค้นหาลูกค้า..."
                     />
 
-                    {/* กล่อง Dropdown */}
                     {showDropdown && (
                       <div className="absolute z-50 w-full mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl max-h-60 overflow-y-auto">
                         {filteredCustomers.length > 0 ? (
@@ -478,7 +476,6 @@ export default function NewLoanPage() {
                   </div>
                 </div>
 
-                {/* ชื่อวงกู้ */}
                 <div className="md:col-span-7">
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
                     ชื่อวงกู้ (ไม่บังคับ)
@@ -496,7 +493,6 @@ export default function NewLoanPage() {
                   </div>
                 </div>
 
-                {/* ลำดับวงกู้ / รหัสวง */}
                 <div className="md:col-span-5">
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
                     ลำดับวงกู้
@@ -515,7 +511,6 @@ export default function NewLoanPage() {
                 </div>
               </div>
 
-              {/* เลือกบัญชีธนาคาร */}
               <div>
                 <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400 mb-1 block">
                   บัญชีธนาคารที่ใช้ปล่อยกู้
@@ -555,7 +550,6 @@ export default function NewLoanPage() {
                 </button>
               </div>
 
-              {/* ยอดเงินและดอกเบี้ย */}
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
@@ -576,6 +570,7 @@ export default function NewLoanPage() {
                   <input
                     name="interestPercent"
                     type="number"
+                    step="0.01" // อนุญาตให้ใส่ทศนิยมได้ (เช่น 44.3)
                     value={
                       formData.interestPercent === 0
                         ? ""
@@ -587,16 +582,17 @@ export default function NewLoanPage() {
                 </div>
               </div>
 
-              {/* ความถี่ */}
+              {/* 🌟 ส่วนแก้ไข: รอบการส่งเงินแบบเลือกเองได้ */}
               <div className="p-6 bg-gray-50 rounded-[2rem] border border-gray-100">
                 <label className="text-[12px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-4">
                   <Clock className="w-4 h-4 text-orange-500" /> รอบการส่งเงิน
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   {[
                     { label: "รายวัน", val: 1, type: "day" },
                     { label: "5 วัน", val: 5, type: "day" },
-                    { label: "รายอาทิตย์", val: 7, type: "day" },
+                    { label: "7 วัน", val: 7, type: "day" },
                     { label: "รายเดือน", val: 1, type: "month" },
                   ].map((f) => (
                     <button
@@ -604,7 +600,9 @@ export default function NewLoanPage() {
                       type="button"
                       onClick={() => setFreq(f.val, f.type)}
                       className={`py-3 rounded-xl text-[10px] font-black transition-all border ${
-                        formData.frequency === f.val && formData.type === f.type
+                        !isCustomFrequency &&
+                        formData.frequency === f.val &&
+                        formData.type === f.type
                           ? "bg-[#1F2335] border-[#1F2335] text-white shadow-lg"
                           : "bg-white border-gray-200 text-gray-400 hover:border-orange-200"
                       }`}
@@ -612,10 +610,46 @@ export default function NewLoanPage() {
                       {f.label}
                     </button>
                   ))}
+
+                  {/* ปุ่ม "กำหนดเอง" */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCustomFrequency(true);
+                      setFormData((prev) => ({ ...prev, type: "day" }));
+                    }}
+                    className={`py-3 rounded-xl text-[10px] font-black transition-all border ${
+                      isCustomFrequency
+                        ? "bg-orange-500 border-orange-500 text-white shadow-lg"
+                        : "bg-white border-gray-200 text-gray-400 hover:border-orange-200"
+                    }`}
+                  >
+                    กำหนดเอง
+                  </button>
                 </div>
+
+                {/* 🌟 โชว์ช่องกรอกตัวเลขเมื่อกด "กำหนดเอง" */}
+                {isCustomFrequency && (
+                  <div className="mt-4 flex items-center gap-3 animate-in slide-in-from-top-2 duration-300">
+                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                      ส่งทุกๆ
+                    </span>
+                    <input
+                      type="number"
+                      name="frequency"
+                      value={formData.frequency === 0 ? "" : formData.frequency}
+                      onChange={handleChange}
+                      className="w-24 px-4 py-2 text-center bg-white border border-gray-200 rounded-xl outline-none font-black text-orange-500 focus:border-orange-500 transition-all shadow-inner"
+                      placeholder="เช่น 3"
+                      min="1"
+                    />
+                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                      วัน
+                    </span>
+                  </div>
+                )}
               </div>
 
-              {/* งวดและวันที่ */}
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
@@ -645,7 +679,6 @@ export default function NewLoanPage() {
                 </div>
               </div>
 
-              {/* สรุปยอด (Dark Card) */}
               <div className="bg-[#1F2335] p-8 rounded-[2.5rem] text-white shadow-2xl relative overflow-hidden space-y-8 mt-4">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/10 rounded-full -mr-16 -mt-16 blur-3xl"></div>
                 <div className="relative z-10 grid grid-cols-2 gap-y-8 gap-x-4">
@@ -689,7 +722,6 @@ export default function NewLoanPage() {
           </div>
         </div>
 
-        {/* ฝั่งขวา: พรีวิวตารางงวด */}
         <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-50 overflow-hidden flex flex-col h-full min-h-[700px]">
           <div className="p-8 border-b border-gray-50 bg-gray-50/30 flex justify-between items-center">
             <h3 className="font-black text-gray-800 flex items-center gap-3 text-sm uppercase tracking-widest">
@@ -743,7 +775,6 @@ export default function NewLoanPage() {
         </div>
       </div>
 
-      {/* --- POPUP MODAL: เลือกบัญชีธนาคาร --- */}
       {isBankModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div
