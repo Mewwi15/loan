@@ -12,7 +12,7 @@ import {
   X,
   PhoneCall,
   Activity,
-  CheckSquare, // เพิ่ม Icon สำหรับหน้าบันทึกรายวัน
+  CheckSquare,
 } from "lucide-react";
 
 export default function Sidebar() {
@@ -20,36 +20,39 @@ export default function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
 
   const isActive = (path) => pathname === path;
+
+  // ปิด Sidebar อัตโนมัติเวลากดเปลี่ยนหน้า
   const handleLinkClick = () => setIsOpen(false);
 
   return (
     <>
-      {/* ปุ่ม Hamburger Menu (มือถือ) */}
+      {/* 🌟 ปุ่ม Hamburger Menu (โชว์บน iPad และมือถือ) */}
       <button
         onClick={() => setIsOpen(true)}
-        className="md:hidden fixed top-5 left-4 z-40 p-2.5 bg-[#2B3044] text-white rounded-xl shadow-lg hover:bg-gray-800 transition-all active:scale-95"
+        className="xl:hidden fixed top-4 left-4 z-40 p-2.5 bg-[#2B3044] text-white rounded-xl shadow-lg hover:bg-gray-800 transition-all active:scale-95"
       >
         <Menu className="w-6 h-6" />
       </button>
 
-      {/* ฉากหลังเบลอ (มือถือ) */}
+      {/* 🌟 ฉากหลังเบลอ */}
       {isOpen && (
         <div
-          className="md:hidden fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-40 animate-in fade-in duration-300"
+          className="xl:hidden fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-40 animate-in fade-in duration-300"
           onClick={() => setIsOpen(false)}
         />
       )}
 
-      {/* Sidebar หลัก */}
+      {/* 🌟 Sidebar หลัก */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#2B3044] text-white flex flex-col justify-between h-screen transform transition-transform duration-300 ease-in-out md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#2B3044] text-white flex flex-col justify-between h-screen transform transition-transform duration-300 ease-in-out xl:translate-x-0 ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         <div className="p-6 relative">
+          {/* ปุ่ม X ปิดเมนู */}
           <button
             onClick={() => setIsOpen(false)}
-            className="md:hidden absolute top-6 right-4 p-2 text-gray-400 hover:text-white bg-white/5 rounded-xl transition-colors"
+            className="xl:hidden absolute top-6 right-4 p-2 text-gray-400 hover:text-white bg-white/5 rounded-xl transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -93,17 +96,15 @@ export default function Sidebar() {
               <span>สร้างสัญญาใหม่</span>
             </Link>
 
-            {/* เมนู บันทึกรายวัน (Daily Check) */}
             <Link
               href="/loans/daily-check"
               onClick={handleLinkClick}
-              className={`flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all duration-200 ${isActive("/loans/daily-check") ? "bg-orange-500 text-white shadow-xl shadow-orange-500/20 font-black" : "text-gray-400 hover:text-white hover:bg-white/5 font-bold"}`}
+              className={`flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all duration-200 ${isActive("/daily-check") ? "bg-orange-500 text-white shadow-xl shadow-orange-500/20 font-black" : "text-gray-400 hover:text-white hover:bg-white/5 font-bold"}`}
             >
               <CheckSquare className="w-5 h-5" />
               <span>บันทึกรายวัน</span>
             </Link>
 
-            {/* เมนู ติดตามทวงถาม */}
             <Link
               href="/collections"
               onClick={handleLinkClick}
@@ -113,7 +114,6 @@ export default function Sidebar() {
               <span>ติดตามทวงถาม</span>
             </Link>
 
-            {/* เมนู หน้าวอ (Monitoring) */}
             <Link
               href="/loans/war-room"
               onClick={handleLinkClick}

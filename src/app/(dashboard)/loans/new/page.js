@@ -19,7 +19,7 @@ import {
   User,
   Loader2,
   Landmark,
-  Users, // 🌟 เพิ่มไอคอน Users สำหรับกลุ่ม
+  Users,
   ChevronDown,
   X,
   CheckCircle2,
@@ -301,10 +301,8 @@ export default function NewLoanPage() {
           return;
         }
 
-        // ถ้ายอมรับการเข้าร่วมกลุ่ม ระบบจะยัดชื่อกลุ่มเก่าให้คนนี้ทันที (แม้จะพิมพ์ชื่ออื่นมา)
         finalLoanName = existingGroupName;
       } else {
-        // วงใหม่เอี่ยม: ถ้าแอดมินพิมพ์ชื่อกลุ่มมาก็ใช้ชื่อนั้น ถ้าว่างไว้ก็ให้เป็นชื่อลูกค้าปกติ
         finalLoanName = finalLoanName || displayCustomerName;
       }
 
@@ -315,7 +313,7 @@ export default function NewLoanPage() {
       const loanData = {
         customerId: targetCustomer.id,
         customerName: displayCustomerName,
-        loanName: finalLoanName, // ถูกจัดการเรียบร้อยแล้ว
+        loanName: finalLoanName,
         loanNumber: targetLoanNumber,
         bankOwner: selectedBankInfo.owner,
         bankName: selectedBankInfo.bank,
@@ -358,7 +356,7 @@ export default function NewLoanPage() {
           loanId: loanRef.id,
           customerId: targetCustomer.id,
           customerName: displayCustomerName,
-          loanName: finalLoanName, // บันทึกลงตารางงวดด้วย
+          loanName: finalLoanName,
           loanNumber: targetLoanNumber,
           installmentNo: i + 1,
           dueDate: dueDate.toISOString().split("T")[0],
@@ -374,7 +372,7 @@ export default function NewLoanPage() {
       setFormData({
         customerId: "",
         customerName: "",
-        loanName: "", // เคลียร์ชื่อกลุ่ม
+        loanName: "",
         loanNumber: "",
         bankIndex: 0,
         principal: 0,
@@ -418,9 +416,10 @@ export default function NewLoanPage() {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+      {/* 🌟 จุดแก้ไขสำคัญ: เปลี่ยน lg:grid-cols-2 เป็น xl:grid-cols-2 เพื่อให้ iPad เป็นแนวตั้ง 1 คอลัมน์ */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-10">
         <div className="space-y-8">
-          <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-gray-50 space-y-8">
+          <div className="bg-white p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-gray-50 space-y-8">
             <h3 className="font-black text-gray-800 flex items-center gap-2 text-sm uppercase tracking-widest border-l-4 border-orange-500 pl-4">
               Loan Configuration
             </h3>
@@ -483,7 +482,6 @@ export default function NewLoanPage() {
                   </div>
                 </div>
 
-                {/* 🌟 ช่องตั้งชื่อกลุ่ม (เปลี่ยน Label และเพิ่มคำแนะนำ) */}
                 <div className="md:col-span-7">
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
                     ชื่อกลุ่ม / วงแชร์ (ไม่บังคับ)
@@ -561,7 +559,7 @@ export default function NewLoanPage() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-2 gap-4 md:gap-6">
                 <div>
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
                     ยอดปล่อยกู้
@@ -571,7 +569,7 @@ export default function NewLoanPage() {
                     type="number"
                     value={formData.principal === 0 ? "" : formData.principal}
                     onChange={handleChange}
-                    className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-800 text-2xl focus:bg-white focus:border-orange-500 transition-all text-gray-700"
+                    className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-800 text-xl md:text-2xl focus:bg-white focus:border-orange-500 transition-all text-gray-700"
                   />
                 </div>
                 <div>
@@ -588,17 +586,17 @@ export default function NewLoanPage() {
                         : formData.interestPercent
                     }
                     onChange={handleChange}
-                    className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none text-green-600 font-black text-2xl focus:bg-white focus:border-green-500 transition-all"
+                    className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none text-green-600 font-black text-xl md:text-2xl focus:bg-white focus:border-green-500 transition-all"
                   />
                 </div>
               </div>
 
-              <div className="p-6 bg-gray-50 rounded-[2rem] border border-gray-100">
+              <div className="p-4 md:p-6 bg-gray-50 rounded-[2rem] border border-gray-100">
                 <label className="text-[12px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-4">
                   <Clock className="w-4 h-4 text-orange-500" /> รอบการส่งเงิน
                 </label>
 
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
                   {[
                     { label: "รายวัน", val: 1, type: "day" },
                     { label: "5 วัน", val: 5, type: "day" },
@@ -658,7 +656,7 @@ export default function NewLoanPage() {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-2 gap-4 md:gap-6">
                 <div>
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
                     จำนวนงวด
@@ -687,39 +685,39 @@ export default function NewLoanPage() {
                 </div>
               </div>
 
-              <div className="bg-[#1F2335] p-8 rounded-[2.5rem] text-white shadow-2xl relative overflow-hidden space-y-8 mt-4">
+              <div className="bg-[#1F2335] p-6 md:p-8 rounded-[2.5rem] text-white shadow-2xl relative overflow-hidden space-y-6 md:space-y-8 mt-4">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/10 rounded-full -mr-16 -mt-16 blur-3xl"></div>
-                <div className="relative z-10 grid grid-cols-2 gap-y-8 gap-x-4">
+                <div className="relative z-10 grid grid-cols-2 gap-y-6 md:gap-y-8 gap-x-4">
                   <div>
-                    <span className="text-[14px] font-black text-gray-500 uppercase tracking-widest block mb-1">
+                    <span className="text-[12px] md:text-[14px] font-black text-gray-500 uppercase tracking-widest block mb-1">
                       ยอดเก็บ / งวด
                     </span>
-                    <span className="font-black text-4xl text-orange-400 tracking-tighter">
+                    <span className="font-black text-2xl md:text-4xl text-orange-400 tracking-tighter">
                       ฿{installmentAmount.toLocaleString()}
                     </span>
                   </div>
                   <div className="text-right">
-                    <span className="text-[14px] font-black text-gray-500 uppercase tracking-widest block mb-1">
+                    <span className="text-[12px] md:text-[14px] font-black text-gray-500 uppercase tracking-widest block mb-1">
                       กำไร / งวด
                     </span>
-                    <span className="font-black text-4xl text-green-400 tracking-tighter">
+                    <span className="font-black text-2xl md:text-4xl text-green-400 tracking-tighter">
                       ฿{profitPerInstallment.toLocaleString()}
                     </span>
                   </div>
-                  <div className="col-span-2 border-t border-white/5 pt-8 flex justify-between items-end">
+                  <div className="col-span-2 border-t border-white/5 pt-6 md:pt-8 flex justify-between items-end">
                     <div>
-                      <span className="text-[14px] font-black text-gray-500 uppercase tracking-widest block mb-1">
+                      <span className="text-[12px] md:text-[14px] font-black text-gray-500 uppercase tracking-widest block mb-1">
                         ยอดรับจริงทั้งหมด
                       </span>
-                      <span className="font-black text-2xl">
+                      <span className="font-black text-xl md:text-2xl">
                         ฿{actualTotalToCollect.toLocaleString()}
                       </span>
                     </div>
                     <div className="text-right">
-                      <span className="text-[14px] font-black text-orange-400 uppercase tracking-widest block mb-1">
+                      <span className="text-[12px] md:text-[14px] font-black text-orange-400 uppercase tracking-widest block mb-1">
                         กำไรสุทธิ
                       </span>
-                      <span className="font-black text-2xl text-orange-500">
+                      <span className="font-black text-xl md:text-2xl text-orange-500">
                         ฿{totalProfit.toLocaleString()}
                       </span>
                     </div>
@@ -730,8 +728,8 @@ export default function NewLoanPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-50 overflow-hidden flex flex-col h-full min-h-[700px]">
-          <div className="p-8 border-b border-gray-50 bg-gray-50/30 flex justify-between items-center">
+        <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-50 overflow-hidden flex flex-col h-full min-h-[500px]">
+          <div className="p-6 md:p-8 border-b border-gray-50 bg-gray-50/30 flex justify-between items-center">
             <h3 className="font-black text-gray-800 flex items-center gap-3 text-sm uppercase tracking-widest">
               <Calendar className="w-5 h-5 text-orange-500" /> ตารางค่างวดพรีวิว
             </h3>
@@ -744,9 +742,9 @@ export default function NewLoanPage() {
             <table className="w-full text-left">
               <thead className="sticky top-0 bg-white border-b border-gray-50 z-10">
                 <tr className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
-                  <th className="px-10 py-5">งวดที่</th>
-                  <th className="px-10 py-5 text-center">วันที่ชำระ</th>
-                  <th className="px-10 py-5 text-right">ยอดเงิน</th>
+                  <th className="px-6 md:px-10 py-5">งวดที่</th>
+                  <th className="px-6 md:px-10 py-5 text-center">วันที่ชำระ</th>
+                  <th className="px-6 md:px-10 py-5 text-right">ยอดเงิน</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -765,13 +763,13 @@ export default function NewLoanPage() {
                       key={i}
                       className="hover:bg-orange-50/10 transition-all group"
                     >
-                      <td className="px-10 py-6 text-xs font-black text-gray-300 group-hover:text-orange-500">
+                      <td className="px-6 md:px-10 py-4 md:py-6 text-xs font-black text-gray-300 group-hover:text-orange-500">
                         {String(i + 1).padStart(2, "0")}
                       </td>
-                      <td className="px-10 py-6 text-sm font-bold text-gray-600 text-center">
+                      <td className="px-6 md:px-10 py-4 md:py-6 text-sm font-bold text-gray-600 text-center">
                         {dateStr}
                       </td>
-                      <td className="px-10 py-6 text-sm font-black text-gray-800 text-right">
+                      <td className="px-6 md:px-10 py-4 md:py-6 text-sm font-black text-gray-800 text-right">
                         ฿{installmentAmount.toLocaleString()}
                       </td>
                     </tr>
@@ -790,9 +788,9 @@ export default function NewLoanPage() {
             onClick={() => setIsBankModalOpen(false)}
           ></div>
           <div className="relative w-full max-w-4xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
-            <div className="flex justify-between items-center px-8 py-6 border-b border-gray-50 bg-gray-50/80">
+            <div className="flex justify-between items-center px-6 md:px-8 py-6 border-b border-gray-50 bg-gray-50/80">
               <div>
-                <h2 className="text-2xl font-black text-gray-800">
+                <h2 className="text-xl md:text-2xl font-black text-gray-800">
                   เลือกบัญชีโอนออก
                 </h2>
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
@@ -807,7 +805,7 @@ export default function NewLoanPage() {
               </button>
             </div>
 
-            <div className="overflow-y-auto p-8 space-y-10 flex-1">
+            <div className="overflow-y-auto p-6 md:p-8 space-y-10 flex-1">
               {Object.entries(groupedBanks).map(([owner, banks]) => (
                 <div key={owner}>
                   <div className="flex items-center gap-3 mb-5">
@@ -820,7 +818,7 @@ export default function NewLoanPage() {
                     <div className="flex-1 h-px bg-gray-100 ml-4"></div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                     {banks.map((b) => {
                       const isSelected = formData.bankIndex === b.index;
                       return (
@@ -834,7 +832,7 @@ export default function NewLoanPage() {
                             }));
                             setIsBankModalOpen(false);
                           }}
-                          className={`relative p-5 rounded-3xl border flex flex-col items-start text-left transition-all duration-300 group ${
+                          className={`relative p-4 md:p-5 rounded-3xl border flex flex-col items-start text-left transition-all duration-300 group ${
                             isSelected
                               ? "shadow-md scale-[1.02]"
                               : "bg-white hover:shadow-lg hover:-translate-y-1"
@@ -879,7 +877,7 @@ export default function NewLoanPage() {
                             )}
                           </div>
                           <span
-                            className="font-black text-lg transition-colors mt-1"
+                            className="font-black text-base md:text-lg transition-colors mt-1"
                             style={{ color: isSelected ? b.color : "#374151" }}
                           >
                             {b.bank}

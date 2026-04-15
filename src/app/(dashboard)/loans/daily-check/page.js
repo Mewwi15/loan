@@ -53,7 +53,6 @@ export default function DailyCheckPage() {
         const loanRef = doc(db, "loans", scheduleData.loanId);
         const loanSnap = await getDoc(loanRef);
 
-        // 🌟 ไฮไลท์การแก้ปัญหา: เช็คด้วยว่าวงกู้หลักต้องไม่ถูก "ปิด" (status !== "closed")
         if (loanSnap.exists() && loanSnap.data().status !== "closed") {
           const loanData = loanSnap.data();
           jobs.push({
@@ -72,14 +71,12 @@ export default function DailyCheckPage() {
         }
       }
 
-      // เรียงลำดับคิวรับเงินจาก รหัสวงน้อย -> มาก
       jobs.sort((a, b) => {
-        const strA = String(a.loanNumber || "999999");
-        const strB = String(b.loanNumber || "999999");
-        return strA.localeCompare(strB, undefined, {
-          numeric: true,
-          sensitivity: "base",
-        });
+        const numA =
+          parseInt(String(a.loanNumber || "999999").trim(), 10) || 999999;
+        const numB =
+          parseInt(String(b.loanNumber || "999999").trim(), 10) || 999999;
+        return numA - numB;
       });
 
       setDailyQueue(jobs);
@@ -195,11 +192,12 @@ export default function DailyCheckPage() {
   };
 
   return (
-    <div className="w-full pb-20 px-4 md:px-10 font-sans animate-in fade-in duration-500">
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6 mb-8 pt-10">
+    // 🌟 เปลี่ยน Padding ซ้ายขวาให้เหมาะกับ iPad (md:px-6 lg:px-8)
+    <div className="w-full pb-20 px-4 md:px-6 lg:px-8 font-sans animate-in fade-in duration-500">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6 mb-8 pt-6 md:pt-10">
         <div>
-          <h1 className="text-2xl font-black text-gray-800 flex items-center gap-3">
-            <UserCheck className="w-7 h-7 text-orange-500" />
+          <h1 className="text-xl md:text-2xl font-black text-gray-800 flex items-center gap-3">
+            <UserCheck className="w-6 h-6 md:w-7 md:h-7 text-orange-500" />
             บันทึกรับชำระ
           </h1>
           <div className="mt-2 flex items-center gap-2 bg-white px-4 py-2 rounded-xl border border-gray-100 shadow-sm w-fit group">
@@ -208,7 +206,7 @@ export default function DailyCheckPage() {
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              className="bg-transparent outline-none font-black text-sm text-gray-700 uppercase tracking-widest cursor-pointer"
+              className="bg-transparent outline-none font-black text-xs md:text-sm text-gray-700 uppercase tracking-widest cursor-pointer"
             />
           </div>
         </div>
@@ -234,21 +232,26 @@ export default function DailyCheckPage() {
             </p>
           </div>
         ) : filteredQueue.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left min-w-[1000px]">
+          <div className="overflow-x-auto w-full">
+            {/* 🌟 เอา min-w-[1000px] ออก เปลี่ยนเป็น min-w-[700px] ให้พอดีจอ iPad แนวนอน/แนวตั้ง */}
+            <table className="w-full text-left min-w-[700px] xl:min-w-full">
               <thead className="bg-gray-50/50 border-b border-gray-50">
-                <tr className="text-[14px] font-black text-gray-400 uppercase tracking-[0.2em]">
-                  <th className="px-6 py-5 text-center w-20">เช็คจ่าย</th>
-                  <th className="px-6 py-5">ข้อมูลวงกู้</th>
-                  <th className="px-6 py-5">บัญชีรับโอน</th>
-                  <th className="px-6 py-5 text-right">ยอดเก็บ</th>
-                  <th className="px-6 py-5 text-right">
+                <tr className="text-[10px] md:text-[12px] font-black text-gray-400 uppercase tracking-[0.1em] md:tracking-[0.2em]">
+                  <th className="px-3 md:px-4 py-4 text-center w-16">
+                    เช็คจ่าย
+                  </th>
+                  <th className="px-3 md:px-4 py-4">ข้อมูลวงกู้</th>
+                  <th className="px-3 md:px-4 py-4">บัญชีรับโอน</th>
+                  <th className="px-3 md:px-4 py-4 text-right">ยอดเก็บ</th>
+                  <th className="px-3 md:px-4 py-4 text-right">
                     <span className="text-orange-500 flex items-center justify-end gap-1">
                       <TrendingUp className="w-3 h-3" /> กำไร
                     </span>
                   </th>
-                  <th className="px-6 py-5 text-center w-32">บวกค่าปรับ</th>
-                  <th className="px-6 py-5 text-right">คงเหลือ</th>
+                  <th className="px-3 md:px-4 py-4 text-center w-28">
+                    บวกค่าปรับ
+                  </th>
+                  <th className="px-3 md:px-4 py-4 text-right pr-6">คงเหลือ</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -262,22 +265,22 @@ export default function DailyCheckPage() {
                       key={item.id}
                       className={`transition-all duration-300 ${item.isChecked ? "bg-green-50/30" : "hover:bg-gray-50/30"}`}
                     >
-                      <td className="px-6 py-5 text-center">
+                      <td className="px-3 md:px-4 py-3 md:py-4 text-center">
                         <button
                           onClick={() => toggleCheck(item.id)}
-                          className={`w-8 h-8 mx-auto rounded-xl flex items-center justify-center transition-all active:scale-90 ${
+                          className={`w-7 h-7 md:w-8 md:h-8 mx-auto rounded-xl flex items-center justify-center transition-all active:scale-90 ${
                             item.isChecked
                               ? "bg-green-500 text-white shadow-lg shadow-green-500/20"
                               : "bg-gray-100 text-gray-300 hover:bg-gray-200"
                           }`}
                         >
-                          <CheckCircle2 className="w-5 h-5" />
+                          <CheckCircle2 className="w-4 h-4 md:w-5 md:h-5" />
                         </button>
                       </td>
-                      <td className="px-6 py-5">
-                        <div className="flex items-center gap-3">
+                      <td className="px-3 md:px-4 py-3 md:py-4">
+                        <div className="flex items-center gap-2 md:gap-3">
                           <div
-                            className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm shrink-0"
+                            className="w-8 h-8 md:w-10 md:h-10 rounded-xl flex items-center justify-center font-black text-xs md:text-sm shrink-0"
                             style={{
                               backgroundColor: item.isChecked
                                 ? "#f3f4f6"
@@ -289,52 +292,52 @@ export default function DailyCheckPage() {
                           >
                             {item.loanNumber}
                           </div>
-                          <div>
-                            <p className="text-sm font-black text-gray-800">
+                          <div className="min-w-0">
+                            <p className="text-xs md:text-sm font-black text-gray-800 truncate">
                               วง {item.loanNumber} • {item.loanName}
                             </p>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="text-[9px] font-bold text-gray-500 uppercase tracking-widest bg-white border border-gray-100 shadow-sm px-2 py-0.5 rounded-md">
+                            <div className="flex flex-wrap items-center gap-1 md:gap-2 mt-0.5">
+                              <span className="text-[8px] md:text-[9px] font-bold text-gray-500 uppercase tracking-widest bg-white border border-gray-100 shadow-sm px-1.5 md:px-2 py-0.5 rounded-md">
                                 งวดที่ {item.installmentNo}
                               </span>
-                              <span className="text-[10px] font-bold text-gray-400 truncate max-w-[120px]">
+                              <span className="text-[9px] md:text-[10px] font-bold text-gray-400 truncate max-w-[80px] md:max-w-[120px]">
                                 {item.customerName}
                               </span>
                             </div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-5">
+                      <td className="px-3 md:px-4 py-3 md:py-4">
                         <div className="flex items-center gap-2">
                           <div
-                            className="w-7 h-7 rounded-lg flex items-center justify-center shadow-sm shrink-0"
+                            className="w-6 h-6 md:w-7 md:h-7 rounded-lg flex items-center justify-center shadow-sm shrink-0"
                             style={{ backgroundColor: `${item.bankColor}15` }}
                           >
                             <Landmark
-                              className="w-3.5 h-3.5"
+                              className="w-3 h-3 md:w-3.5 md:h-3.5"
                               style={{ color: item.bankColor }}
                             />
                           </div>
                           <div>
-                            <p className="text-[16px] font-black text-gray-800 whitespace-nowrap">
+                            <p className="text-[12px] md:text-[14px] font-black text-gray-800 whitespace-nowrap">
                               {item.bankName}
                             </p>
-                            <p className="text-[14px] font-bold text-gray-400 truncate max-w-[100px]">
+                            <p className="text-[9px] md:text-[10px] font-bold text-gray-400 truncate max-w-[80px] md:max-w-[100px]">
                               {item.bankOwner}
                             </p>
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-5 text-right font-black text-gray-800 whitespace-nowrap">
+                      <td className="px-3 md:px-4 py-3 md:py-4 text-right font-black text-gray-800 text-xs md:text-sm whitespace-nowrap">
                         ฿{item.amount.toLocaleString()}
                       </td>
-                      <td className="px-6 py-5 text-right font-black text-green-500 whitespace-nowrap">
+                      <td className="px-3 md:px-4 py-3 md:py-4 text-right font-black text-green-500 text-xs md:text-sm whitespace-nowrap">
                         +฿{(item.profitShare || 0).toLocaleString()}
                       </td>
-                      <td className="px-6 py-5 text-center">
+                      <td className="px-3 md:px-4 py-3 md:py-4 text-center">
                         <div className="flex justify-center">
                           <div
-                            className={`flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 rounded-xl border border-gray-100 ${item.penalty > 0 ? "border-orange-200 bg-orange-50" : ""}`}
+                            className={`flex items-center gap-1 px-2 md:px-3 py-1 md:py-1.5 bg-gray-50 rounded-xl border border-gray-100 ${item.penalty > 0 ? "border-orange-200 bg-orange-50" : ""}`}
                           >
                             <AlertTriangle
                               className={`w-3 h-3 ${item.penalty > 0 ? "text-orange-500" : "text-gray-300"}`}
@@ -347,19 +350,19 @@ export default function DailyCheckPage() {
                               onChange={(e) =>
                                 updatePenalty(item.id, e.target.value)
                               }
-                              className="w-14 bg-transparent outline-none text-center font-black text-gray-700 text-sm"
+                              className="w-10 md:w-14 bg-transparent outline-none text-center font-black text-gray-700 text-xs md:text-sm"
                             />
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-5 text-right">
+                      <td className="px-3 md:px-4 py-3 md:py-4 text-right pr-6">
                         <p
-                          className={`text-lg font-black tracking-tight transition-colors whitespace-nowrap ${item.isChecked ? "text-orange-600" : "text-gray-400"}`}
+                          className={`text-sm md:text-lg font-black tracking-tight transition-colors whitespace-nowrap ${item.isChecked ? "text-orange-600" : "text-gray-400"}`}
                         >
                           ฿{remainingAfter.toLocaleString()}
                         </p>
                         {item.isChecked && (
-                          <p className="text-[9px] font-bold text-green-500 uppercase whitespace-nowrap">
+                          <p className="text-[8px] md:text-[9px] font-bold text-green-500 uppercase whitespace-nowrap">
                             ตัดหนี้ -฿{item.amount.toLocaleString()}
                           </p>
                         )}
@@ -385,12 +388,12 @@ export default function DailyCheckPage() {
           disabled={
             isSaving || dailyQueue.filter((i) => i.isChecked).length === 0
           }
-          className="bg-[#1F2335] hover:bg-black text-white px-12 py-4 rounded-[1.5rem] font-black shadow-xl transition-all active:scale-95 flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="bg-[#1F2335] hover:bg-black text-white px-8 md:px-12 py-3 md:py-4 rounded-[1.5rem] font-black shadow-xl transition-all active:scale-95 flex items-center gap-2 md:gap-3 text-xs md:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isSaving ? (
-            <Loader2 className="w-5 h-5 animate-spin" />
+            <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" />
           ) : (
-            <Save className="w-5 h-5 text-orange-500" />
+            <Save className="w-4 h-4 md:w-5 md:h-5 text-orange-500" />
           )}
           ยืนยันการตัดยอดเข้าสู่ระบบ
         </button>
