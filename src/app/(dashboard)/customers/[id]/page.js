@@ -460,8 +460,11 @@ export default function CustomerDetailPage({ params }) {
             <ArrowLeft className="w-5 h-5 text-gray-400" />
           </Link>
           <div>
+            {/* 🌟 ไฮไลท์การแก้: ปรับให้แสดง ชื่อเล่น (ชื่อจริง) */}
             <h1 className="text-3xl sm:text-4xl font-black text-gray-900 tracking-tight">
-              {customer.name}
+              {customer.nickname
+                ? `${customer.nickname} (${customer.name})`
+                : customer.name}
             </h1>
             <div className="flex items-center gap-4 mt-2">
               <p className="text-xs text-orange-500 font-black uppercase tracking-widest flex items-center gap-2">
@@ -583,7 +586,6 @@ export default function CustomerDetailPage({ params }) {
                       <span className="hidden sm:inline">ปิดวงกู้</span>
                     </button>
 
-                    {/* 🌟 ปุ่มแก้ไขสัญญาแบบเต็มรูปแบบ */}
                     <button
                       onClick={() => openEditContract(loan)}
                       className="text-[12px] md:text-[14px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 md:px-4 py-2.5 rounded-xl transition-colors flex items-center gap-1"

@@ -9,7 +9,6 @@ import {
   doc,
   serverTimestamp,
   query,
-  orderBy,
   writeBatch,
   where,
   getDocs,
@@ -30,6 +29,9 @@ import {
   CheckCircle2,
   Save,
   FileSignature,
+  UserCog,
+  LayoutGrid, // 🌟 ไอคอนมุมมองการ์ด
+  List, // 🌟 ไอคอนมุมมองรายการแนวยาว
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -41,9 +43,13 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // 🌟 State สำหรับสลับมุมมอง (grid หรือ list)
+  const [viewMode, setViewMode] = useState("list"); // ตั้งค่าเริ่มต้นเป็นแนวยาว (list)
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [newCustomer, setNewCustomer] = useState({
+    code: "",
     nickname: "",
     name: "",
     phone: "",
@@ -54,13 +60,40 @@ export default function CustomersPage() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [customerToDelete, setCustomerToDelete] = useState(null);
 
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [customerToEdit, setCustomerToEdit] = useState(null);
+  const [editCustomerData, setEditCustomerData] = useState({
+    code: "",
+    nickname: "",
+    name: "",
+    phone: "",
+    facebook: "",
+  });
+
   useEffect(() => {
-    const q = query(collection(db, "customers"), orderBy("createdAt", "desc"));
+    const q = query(collection(db, "customers"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const customerList = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
       }));
+
+      customerList.sort((a, b) => {
+        const codeA = (a.code || "").trim();
+        const codeB = (b.code || "").trim();
+
+        if (codeA && codeB) {
+          return codeA.localeCompare(codeB, "en", { numeric: true });
+        }
+        if (codeA && !codeB) return -1;
+        if (!codeA && codeB) return 1;
+
+        const timeA = a.createdAt?.seconds || 0;
+        const timeB = b.createdAt?.seconds || 0;
+        return timeB - timeA;
+      });
+
       setCustomers(customerList);
       setLoading(false);
     });
@@ -96,6 +129,7 @@ export default function CustomersPage() {
       }
 
       await addDoc(collection(db, "customers"), {
+        code: newCustomer.code.trim().toUpperCase(),
         nickname: newCustomer.nickname,
         name: newCustomer.name,
         phone: newCustomer.phone,
@@ -108,7 +142,13 @@ export default function CustomersPage() {
       });
 
       setIsModalOpen(false);
-      setNewCustomer({ nickname: "", name: "", phone: "", facebook: "" });
+      setNewCustomer({
+        code: "",
+        nickname: "",
+        name: "",
+        phone: "",
+        facebook: "",
+      });
       setSelectedFile(null);
       alert("เพิ่มข้อมูลลูกค้าสำเร็จ!");
     } catch (error) {
@@ -171,12 +211,82 @@ export default function CustomersPage() {
     }
   };
 
+  const openEditModal = (e, customer) => {
+    e.stopPropagation();
+    setCustomerToEdit(customer);
+    setEditCustomerData({
+      code: customer.code || "",
+      nickname: customer.nickname || "",
+      name: customer.name || "",
+      phone: customer.phone || "",
+      facebook: customer.facebook || "",
+    });
+    setEditModalOpen(true);
+  };
+
+  const handleUpdateCustomer = async (e) => {
+    e.preventDefault();
+    setIsUpdating(true);
+    const batch = writeBatch(db);
+
+    try {
+      const newDisplayName = editCustomerData.nickname || editCustomerData.name;
+
+      const customerRef = doc(db, "customers", customerToEdit.id);
+      batch.update(customerRef, {
+        code: editCustomerData.code.trim().toUpperCase(),
+        nickname: editCustomerData.nickname,
+        name: editCustomerData.name,
+        phone: editCustomerData.phone,
+        facebook: editCustomerData.facebook,
+      });
+
+      const loansQ = query(
+        collection(db, "loans"),
+        where("customerId", "==", customerToEdit.id),
+      );
+      const loansSnap = await getDocs(loansQ);
+      loansSnap.forEach((d) =>
+        batch.update(d.ref, { customerName: newDisplayName }),
+      );
+
+      const schQ = query(
+        collection(db, "schedules"),
+        where("customerId", "==", customerToEdit.id),
+      );
+      const schSnap = await getDocs(schQ);
+      schSnap.forEach((d) =>
+        batch.update(d.ref, { customerName: newDisplayName }),
+      );
+
+      const transQ = query(
+        collection(db, "transactions"),
+        where("customerId", "==", customerToEdit.id),
+      );
+      const transSnap = await getDocs(transQ);
+      transSnap.forEach((d) =>
+        batch.update(d.ref, { customerName: newDisplayName }),
+      );
+
+      await batch.commit();
+      alert("✅ อัปเดตข้อมูลลูกค้าสำเร็จ!");
+      setEditModalOpen(false);
+      setCustomerToEdit(null);
+    } catch (error) {
+      console.error("Error updating customer:", error);
+      alert("เกิดข้อผิดพลาดในการอัปเดตข้อมูล");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const filteredCustomers = customers.filter((customer) => {
+    const search = searchTerm.toLowerCase();
     const matchSearch =
-      customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (customer.nickname &&
-        customer.nickname.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      customer.phone.includes(searchTerm);
+      (customer.code && customer.code.toLowerCase().includes(search)) ||
+      customer.name.toLowerCase().includes(search) ||
+      (customer.nickname && customer.nickname.toLowerCase().includes(search)) ||
+      customer.phone.includes(search);
     const matchStatus =
       statusFilter === "ทั้งหมด" || customer.status === statusFilter;
     return matchSearch && matchStatus;
@@ -209,29 +319,50 @@ export default function CustomersPage() {
         </button>
       </div>
 
-      <div className="bg-white p-2 rounded-[1.5rem] shadow-sm border border-gray-100 mb-10 flex flex-col md:flex-row items-center gap-2">
+      <div className="bg-white p-2 rounded-[1.5rem] shadow-sm border border-gray-100 mb-10 flex flex-col xl:flex-row items-center gap-2">
         <div className="relative flex-1 w-full group">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 group-focus-within:text-orange-500 transition-colors" />
           <input
             type="text"
-            placeholder="ค้นหาชื่อ, ชื่อเล่น หรือ เบอร์โทรศัพท์..."
+            placeholder="ค้นหารหัส, ชื่อ, ชื่อเล่น หรือ เบอร์โทรศัพท์..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-12 pr-4 py-3 bg-transparent outline-none font-bold text-gray-700 placeholder:text-gray-300"
           />
         </div>
-        <div className="hidden md:block w-px h-8 bg-gray-100 mx-2"></div>
-        <div className="relative w-full md:w-auto flex items-center px-2">
-          <Filter className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="w-full md:w-48 pl-10 pr-8 py-3 bg-transparent outline-none font-black text-gray-600 text-[10px] uppercase tracking-widest cursor-pointer appearance-none"
-          >
-            <option value="ทั้งหมด">แสดงทุกสถานะ</option>
-            <option value="ปกติ">🟢 ปกติ</option>
-            <option value="ค้างชำระ">🔴 ค้างชำระ</option>
-          </select>
+        <div className="hidden xl:block w-px h-8 bg-gray-100 mx-2"></div>
+
+        <div className="flex w-full xl:w-auto items-center gap-2 px-2 pb-2 xl:pb-0">
+          <div className="relative flex-1 xl:w-auto">
+            <Filter className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full xl:w-48 pl-10 pr-8 py-3 bg-transparent outline-none font-black text-gray-600 text-[10px] uppercase tracking-widest cursor-pointer appearance-none"
+            >
+              <option value="ทั้งหมด">แสดงทุกสถานะ</option>
+              <option value="ปกติ">🟢 ปกติ</option>
+              <option value="ค้างชำระ">🔴 ค้างชำระ</option>
+            </select>
+          </div>
+
+          {/* 🌟 ปุ่มสลับมุมมอง Grid / List */}
+          <div className="flex bg-gray-100 p-1 rounded-xl">
+            <button
+              onClick={() => setViewMode("list")}
+              className={`p-2 rounded-lg transition-all ${viewMode === "list" ? "bg-white text-orange-500 shadow-sm" : "text-gray-400 hover:text-gray-600"}`}
+              title="มุมมองแบบรายการแนวยาว"
+            >
+              <List className="w-5 h-5" />
+            </button>
+            <button
+              onClick={() => setViewMode("grid")}
+              className={`p-2 rounded-lg transition-all ${viewMode === "grid" ? "bg-white text-orange-500 shadow-sm" : "text-gray-400 hover:text-gray-600"}`}
+              title="มุมมองแบบการ์ด"
+            >
+              <LayoutGrid className="w-5 h-5" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -243,104 +374,226 @@ export default function CustomersPage() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
-          {filteredCustomers.map((customer) => (
-            <div
-              key={customer.id}
-              onClick={() => router.push(`/customers/${customer.id}`)}
-              className="group block bg-white rounded-[2rem] p-8 border border-gray-100 shadow-sm hover:shadow-xl hover:shadow-orange-100/40 hover:border-orange-200 transition-all duration-300 relative space-y-6 cursor-pointer"
-            >
-              <button
-                onClick={(e) => confirmDelete(e, customer)}
-                className="absolute top-6 right-6 p-2.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors z-10"
-              >
-                <Trash2 className="w-5 h-5" />
-              </button>
+        <>
+          {/* 🌟 1. มุมมองแบบรายการแนวยาว (List View) */}
+          {viewMode === "list" && (
+            <div className="flex flex-col gap-4">
+              {filteredCustomers.map((customer) => (
+                <div
+                  key={customer.id}
+                  onClick={() => router.push(`/customers/${customer.id}`)}
+                  className="group flex flex-col lg:flex-row items-start lg:items-center justify-between bg-white rounded-2xl p-5 border border-gray-100 shadow-sm hover:shadow-md hover:border-orange-200 transition-all cursor-pointer gap-4"
+                >
+                  {/* ข้อมูลลูกค้าฝั่งซ้าย */}
+                  <div className="flex items-center gap-4 w-full lg:w-1/3">
+                    <div className="min-w-[4rem] px-2 h-14 bg-orange-50 rounded-xl flex items-center justify-center text-lg font-black text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all duration-300 shrink-0 shadow-inner tracking-wider">
+                      {customer.code
+                        ? customer.code
+                        : (customer.nickname || customer.name).charAt(0)}
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="text-lg font-black text-gray-800 group-hover:text-orange-500 transition-colors truncate">
+                        {customer.nickname
+                          ? `${customer.nickname} (${customer.name})`
+                          : customer.name}
+                      </h3>
+                      <div className="flex items-center gap-3 mt-1 text-[11px] font-bold text-gray-500">
+                        <span>📞 {customer.phone || "-"}</span>
+                        {customer.facebook && (
+                          <span className="flex items-center gap-1 text-[#1877F2]">
+                            <MessageCircle className="w-3 h-3" />{" "}
+                            {customer.facebook}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
 
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 bg-orange-50 rounded-2xl flex items-center justify-center text-2xl font-black text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all duration-300 shrink-0 shadow-inner">
-                  {(customer.nickname || customer.name).charAt(0)}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-xl font-black text-gray-800 group-hover:text-orange-500 transition-colors truncate">
-                    {customer.nickname
-                      ? `${customer.nickname} (${customer.name})`
-                      : customer.name}
-                  </h3>
-                  <div className="flex flex-col gap-1 mt-1">
-                    <p className="text-[11px] font-bold text-gray-500 tracking-wider">
-                      📞 {customer.phone}
-                    </p>
-                    {customer.facebook && (
-                      <p className="text-[10px] font-bold text-[#1877F2] truncate flex items-center gap-1">
-                        <MessageCircle className="w-3 h-3" />{" "}
-                        {customer.facebook}
-                      </p>
+                  {/* ตัวเลขการเงินตรงกลาง */}
+                  <div className="flex items-center gap-8 w-full lg:w-1/3 border-l-2 border-orange-100 pl-6 relative">
+                    {customer.documentUrl && (
+                      <div className="absolute -left-[11px] bg-white rounded-full p-1 border border-orange-200">
+                        <FileText className="w-3 h-3 text-orange-500" />
+                      </div>
                     )}
+                    <div>
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
+                        ยอดหนี้รวม
+                      </p>
+                      <p className="text-base font-black text-gray-800">
+                        ฿{(customer.totalDebt || 0).toLocaleString()}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
+                        วงกู้ปัจจุบัน
+                      </p>
+                      <p className="text-base font-black text-gray-500">
+                        {customer.activeLoans || 0} วง
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* สถานะและปุ่ม Action ฝั่งขวา */}
+                  <div className="flex items-center justify-between w-full lg:w-auto gap-4">
+                    <span
+                      className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg shrink-0 ${customer.status === "ปกติ" ? "bg-green-50 text-green-600" : "bg-rose-50 text-rose-500"}`}
+                    >
+                      {customer.status}
+                    </span>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const displayName =
+                            customer.nickname || customer.name;
+                          router.push(
+                            `/loans/new?name=${encodeURIComponent(displayName)}&id=${customer.id}`,
+                          );
+                        }}
+                        className="text-[10px] font-black text-orange-500 bg-orange-50 hover:bg-orange-500 hover:text-white px-3 py-2 rounded-xl uppercase tracking-widest transition-all flex items-center gap-1 shadow-sm"
+                      >
+                        <FileSignature className="w-4 h-4" />{" "}
+                        <span className="hidden xl:inline">สร้างสัญญา</span>
+                      </button>
+                      <button
+                        onClick={(e) => openEditModal(e, customer)}
+                        className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-colors"
+                        title="แก้ไขข้อมูลลูกค้า"
+                      >
+                        <UserCog className="w-5 h-5" />
+                      </button>
+                      <button
+                        onClick={(e) => confirmDelete(e, customer)}
+                        className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                        title="ลบข้อมูลลูกค้า"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-
-              <div className="flex gap-8 border-l-2 border-orange-100 pl-6 py-1 relative">
-                {customer.documentUrl && (
-                  <div
-                    className="absolute -left-[11px] top-1/2 -translate-y-1/2 bg-white rounded-full p-1 border border-orange-200"
-                    title="มีเอกสารแนบ"
-                  >
-                    <FileText className="w-3 h-3 text-orange-500" />
-                  </div>
-                )}
-                <div>
-                  <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mb-1">
-                    ยอดหนี้รวม
-                  </p>
-                  <p className="text-xl font-black text-gray-800">
-                    ฿{(customer.totalDebt || 0).toLocaleString()}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mb-1">
-                    วงกู้
-                  </p>
-                  <p className="text-xl font-black text-gray-500">
-                    {customer.activeLoans || 0}{" "}
-                    <span className="text-xs">วง</span>
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-4 border-t border-gray-50">
-                <div className="flex items-center gap-2 z-10">
-                  <span
-                    className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg ${customer.status === "ปกติ" ? "bg-green-50 text-green-600" : "bg-rose-50 text-rose-500"}`}
-                  >
-                    {customer.status}
-                  </span>
-
-                  {/* 🌟 ไฮไลท์การแก้: ส่ง ID และ ชื่อ ผ่าน URL เพื่อให้หน้าสร้างสัญญาดึงไปใช้ */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const displayName = customer.nickname || customer.name;
-                      router.push(
-                        `/loans/new?name=${encodeURIComponent(displayName)}&id=${customer.id}`,
-                      );
-                    }}
-                    className="text-[10px] font-black text-orange-500 bg-orange-50 hover:bg-orange-500 hover:text-white px-3 py-1.5 rounded-lg uppercase tracking-widest transition-all flex items-center gap-1 shadow-sm"
-                  >
-                    <FileSignature className="w-3 h-3" /> สร้างสัญญา
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-1 text-[11px] font-black text-gray-300 group-hover:text-orange-500 uppercase tracking-widest transition-colors">
-                  ดูรายละเอียด <ArrowUpRight className="w-4 h-4" />
-                </div>
-              </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+
+          {/* 🌟 2. มุมมองแบบการ์ด (Grid View) แบบเดิม */}
+          {viewMode === "grid" && (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
+              {filteredCustomers.map((customer) => (
+                <div
+                  key={customer.id}
+                  onClick={() => router.push(`/customers/${customer.id}`)}
+                  className="group block bg-white rounded-[2rem] p-8 border border-gray-100 shadow-sm hover:shadow-xl hover:shadow-orange-100/40 hover:border-orange-200 transition-all duration-300 relative space-y-6 cursor-pointer"
+                >
+                  <div className="absolute top-6 right-6 flex gap-2 z-10">
+                    <button
+                      onClick={(e) => openEditModal(e, customer)}
+                      className="p-2.5 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-colors"
+                      title="แก้ไขข้อมูลลูกค้า"
+                    >
+                      <UserCog className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={(e) => confirmDelete(e, customer)}
+                      className="p-2.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                      title="ลบข้อมูลลูกค้า"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-4 pt-2">
+                    <div className="min-w-[4rem] px-2 h-16 bg-orange-50 rounded-2xl flex items-center justify-center text-xl font-black text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all duration-300 shrink-0 shadow-inner tracking-wider">
+                      {customer.code
+                        ? customer.code
+                        : (customer.nickname || customer.name).charAt(0)}
+                    </div>
+
+                    <div className="flex-1 min-w-0 pr-16">
+                      <h3 className="text-xl font-black text-gray-800 group-hover:text-orange-500 transition-colors truncate">
+                        {customer.nickname
+                          ? `${customer.nickname} (${customer.name})`
+                          : customer.name}
+                      </h3>
+                      <div className="flex flex-col gap-1 mt-1">
+                        <p className="text-[11px] font-bold text-gray-500 tracking-wider">
+                          📞 {customer.phone}
+                        </p>
+                        {customer.facebook && (
+                          <p className="text-[10px] font-bold text-[#1877F2] truncate flex items-center gap-1">
+                            <MessageCircle className="w-3 h-3" />{" "}
+                            {customer.facebook}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-8 border-l-2 border-orange-100 pl-6 py-1 relative">
+                    {customer.documentUrl && (
+                      <div
+                        className="absolute -left-[11px] top-1/2 -translate-y-1/2 bg-white rounded-full p-1 border border-orange-200"
+                        title="มีเอกสารแนบ"
+                      >
+                        <FileText className="w-3 h-3 text-orange-500" />
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mb-1">
+                        ยอดหนี้รวม
+                      </p>
+                      <p className="text-xl font-black text-gray-800">
+                        ฿{(customer.totalDebt || 0).toLocaleString()}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mb-1">
+                        วงกู้
+                      </p>
+                      <p className="text-xl font-black text-gray-500">
+                        {customer.activeLoans || 0}{" "}
+                        <span className="text-xs">วง</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-4 border-t border-gray-50">
+                    <div className="flex items-center gap-2 z-10">
+                      <span
+                        className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg ${customer.status === "ปกติ" ? "bg-green-50 text-green-600" : "bg-rose-50 text-rose-500"}`}
+                      >
+                        {customer.status}
+                      </span>
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const displayName =
+                            customer.nickname || customer.name;
+                          router.push(
+                            `/loans/new?name=${encodeURIComponent(displayName)}&id=${customer.id}`,
+                          );
+                        }}
+                        className="text-[10px] font-black text-orange-500 bg-orange-50 hover:bg-orange-500 hover:text-white px-3 py-1.5 rounded-lg uppercase tracking-widest transition-all flex items-center gap-1 shadow-sm"
+                      >
+                        <FileSignature className="w-3 h-3" /> สร้างสัญญา
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-1 text-[11px] font-black text-gray-300 group-hover:text-orange-500 uppercase tracking-widest transition-colors">
+                      ดูรายละเอียด <ArrowUpRight className="w-4 h-4" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
+      {/* --- MODAL: เพิ่มลูกค้าใหม่ --- */}
       {isModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div
@@ -369,6 +622,23 @@ export default function CustomersPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
+                    รหัสลูกค้า (ถ้ามี)
+                  </label>
+                  <input
+                    type="text"
+                    value={newCustomer.code}
+                    onChange={(e) =>
+                      setNewCustomer({
+                        ...newCustomer,
+                        code: e.target.value,
+                      })
+                    }
+                    className="w-full px-5 py-4 bg-orange-50/50 border border-transparent focus:border-orange-500 focus:bg-white rounded-2xl outline-none font-black text-orange-500 text-sm transition-all uppercase placeholder:normal-case"
+                    placeholder="เช่น A01"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
                     ชื่อเล่น *
                   </label>
                   <input
@@ -385,52 +655,57 @@ export default function CustomersPage() {
                     placeholder="เช่น จูน"
                   />
                 </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
-                    ชื่อจริง-นามสกุล *
-                  </label>
-                  <input
-                    required
-                    type="text"
-                    value={newCustomer.name}
-                    onChange={(e) =>
-                      setNewCustomer({ ...newCustomer, name: e.target.value })
-                    }
-                    className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-orange-500 focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
-                    placeholder="ชื่อ-สกุล"
-                  />
-                </div>
               </div>
 
               <div>
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
-                  เบอร์โทรศัพท์
+                  ชื่อจริง-นามสกุล *
                 </label>
                 <input
-                  type="tel"
-                  value={newCustomer.phone}
+                  required
+                  type="text"
+                  value={newCustomer.name}
                   onChange={(e) =>
-                    setNewCustomer({ ...newCustomer, phone: e.target.value })
+                    setNewCustomer({ ...newCustomer, name: e.target.value })
                   }
                   className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-orange-500 focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
-                  placeholder="08X-XXX-XXXX"
+                  placeholder="ชื่อ-สกุล"
                 />
               </div>
 
-              <div>
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1 flex items-center gap-1">
-                  <MessageCircle className="w-3 h-3 text-[#1877F2]" />{" "}
-                  ชื่อเฟสบุ๊ค
-                </label>
-                <input
-                  type="text"
-                  value={newCustomer.facebook}
-                  onChange={(e) =>
-                    setNewCustomer({ ...newCustomer, facebook: e.target.value })
-                  }
-                  className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-[#1877F2] focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
-                  placeholder="ชื่อเฟส"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
+                    เบอร์โทรศัพท์
+                  </label>
+                  <input
+                    type="tel"
+                    value={newCustomer.phone}
+                    onChange={(e) =>
+                      setNewCustomer({ ...newCustomer, phone: e.target.value })
+                    }
+                    className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-orange-500 focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
+                    placeholder="08X-XXX"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1 flex items-center gap-1">
+                    <MessageCircle className="w-3 h-3 text-[#1877F2]" />{" "}
+                    ชื่อเฟสบุ๊ค
+                  </label>
+                  <input
+                    type="text"
+                    value={newCustomer.facebook}
+                    onChange={(e) =>
+                      setNewCustomer({
+                        ...newCustomer,
+                        facebook: e.target.value,
+                      })
+                    }
+                    className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-[#1877F2] focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
+                    placeholder="ชื่อเฟส"
+                  />
+                </div>
               </div>
 
               <div className="pt-2">
@@ -498,6 +773,148 @@ export default function CustomersPage() {
         </div>
       )}
 
+      {/* 🌟 MODAL: แก้ไขข้อมูลลูกค้า */}
+      {editModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm"
+            onClick={() => !isUpdating && setEditModalOpen(false)}
+          ></div>
+          <div className="relative bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl p-8 animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <h2 className="text-2xl font-black text-gray-800 flex items-center gap-2">
+                  <UserCog className="w-6 h-6 text-blue-500" />{" "}
+                  แก้ไขข้อมูลลูกค้า
+                </h2>
+                <p className="text-[12px] font-bold text-gray-400 uppercase tracking-widest mt-1">
+                  การแก้ไขชื่อจะอัปเดตไปยังทุกวงกู้และทุกประวัติการจ่าย
+                </p>
+              </div>
+              <button
+                onClick={() => !isUpdating && setEditModalOpen(false)}
+                className="p-2 text-gray-400 hover:bg-gray-100 rounded-xl transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateCustomer} className="space-y-5">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
+                    รหัสลูกค้า
+                  </label>
+                  <input
+                    type="text"
+                    value={editCustomerData.code}
+                    onChange={(e) =>
+                      setEditCustomerData({
+                        ...editCustomerData,
+                        code: e.target.value,
+                      })
+                    }
+                    className="w-full px-5 py-4 bg-orange-50/50 border border-transparent focus:border-orange-500 focus:bg-white rounded-2xl outline-none font-black text-orange-500 text-sm transition-all uppercase"
+                    placeholder="เช่น A01"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
+                    ชื่อเล่น *
+                  </label>
+                  <input
+                    required
+                    type="text"
+                    value={editCustomerData.nickname}
+                    onChange={(e) =>
+                      setEditCustomerData({
+                        ...editCustomerData,
+                        nickname: e.target.value,
+                      })
+                    }
+                    className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
+                  ชื่อจริง-นามสกุล *
+                </label>
+                <input
+                  required
+                  type="text"
+                  value={editCustomerData.name}
+                  onChange={(e) =>
+                    setEditCustomerData({
+                      ...editCustomerData,
+                      name: e.target.value,
+                    })
+                  }
+                  className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
+                    เบอร์โทรศัพท์
+                  </label>
+                  <input
+                    type="tel"
+                    value={editCustomerData.phone}
+                    onChange={(e) =>
+                      setEditCustomerData({
+                        ...editCustomerData,
+                        phone: e.target.value,
+                      })
+                    }
+                    className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
+                    ชื่อเฟสบุ๊ค
+                  </label>
+                  <input
+                    type="text"
+                    value={editCustomerData.facebook}
+                    onChange={(e) =>
+                      setEditCustomerData({
+                        ...editCustomerData,
+                        facebook: e.target.value,
+                      })
+                    }
+                    className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
+                  />
+                </div>
+              </div>
+              <div className="pt-4 flex gap-4">
+                <button
+                  type="button"
+                  onClick={() => setEditModalOpen(false)}
+                  disabled={isUpdating}
+                  className="w-full py-4 rounded-2xl font-black text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdating}
+                  className="w-full bg-blue-500 hover:bg-blue-600 text-white py-4 rounded-2xl font-black shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isUpdating ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Save className="w-5 h-5" />
+                  )}
+                  บันทึกการแก้ไข
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- DELETE CONFIRMATION MODAL --- */}
       {deleteModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div
