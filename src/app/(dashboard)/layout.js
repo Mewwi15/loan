@@ -1,7 +1,20 @@
+"use client"; // 🌟 สำคัญมาก ต้องมีบรรทัดนี้เพราะมีการใช้ onClick และ window
+
 import Sidebar from "@/components/layout/Sidebar"; // เช็ค Path ให้ตรงกับที่คุณเก็บไฟล์ Sidebar ไว้นะครับ
 import { LogOut } from "lucide-react";
 
 export default function DashboardLayout({ children }) {
+  // 🌟 ฟังก์ชันออกจากระบบ
+  const handleLogout = () => {
+    if (window.confirm("คุณต้องการออกจากระบบใช่หรือไม่?")) {
+      // ล้างข้อมูลเซสชัน
+      localStorage.removeItem("isLoggedIn");
+      localStorage.removeItem("loginTimestamp");
+      // รีเฟรชหน้าเพื่อให้ AuthGuard ทำงานและเด้งกลับไปหน้าล็อกอิน
+      window.location.reload();
+    }
+  };
+
   return (
     <div className="flex h-screen bg-[#F4F7FE] font-sans overflow-hidden w-full relative">
       <Sidebar />
@@ -15,8 +28,12 @@ export default function DashboardLayout({ children }) {
             ระบบจัดการวงกู้
           </h2>
 
-          <div className="flex items-center gap-4">
-            <button className="flex items-center gap-2 px-4 py-2 bg-gray-50 hover:bg-red-50 text-gray-600 hover:text-red-500 rounded-xl transition-colors text-xs font-black uppercase tracking-widest">
+          {/* 🌟 เอาปุ่มออกจากระบบมาไว้มุมขวาบนตรงนี้ครับ */}
+          <div className="flex items-center">
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-rose-50 border border-gray-100 hover:border-rose-200 text-gray-500 hover:text-rose-500 rounded-xl transition-all shadow-sm active:scale-95 text-[10px] sm:text-xs font-black uppercase tracking-widest"
+            >
               <LogOut className="w-4 h-4" />
               <span className="hidden sm:inline">ออกจากระบบ</span>
             </button>

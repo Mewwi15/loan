@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react"; // 🌟 เพิ่ม useRef
 import { db, storage } from "@/lib/firebase";
 import {
   collection,
@@ -30,8 +30,9 @@ import {
   Save,
   FileSignature,
   UserCog,
-  LayoutGrid, // 🌟 ไอคอนมุมมองการ์ด
-  List, // 🌟 ไอคอนมุมมองรายการแนวยาว
+  LayoutGrid,
+  List,
+  Plus, // 🌟 เพิ่มไอคอน Plus
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -42,9 +43,7 @@ export default function CustomersPage() {
   const [statusFilter, setStatusFilter] = useState("ทั้งหมด");
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  // 🌟 State สำหรับสลับมุมมอง (grid หรือ list)
-  const [viewMode, setViewMode] = useState("list"); // ตั้งค่าเริ่มต้นเป็นแนวยาว (list)
+  const [viewMode, setViewMode] = useState("list");
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -70,6 +69,27 @@ export default function CustomersPage() {
     phone: "",
     facebook: "",
   });
+
+  // 🌟 State & Ref สำหรับจัดการปุ่มลอย (Floating Button)
+  const headerRef = useRef(null);
+  const [showFab, setShowFab] = useState(false);
+
+  // 🌟 เซ็นเซอร์ตรวจจับว่าปุ่มหลักด้านบนเลื่อนหายไปหรือยัง
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        // ถ้า Header หายไปจากหน้าจอ (isIntersecting = false) ให้แสดงปุ่มลอย
+        setShowFab(!entry.isIntersecting);
+      },
+      { threshold: 0 },
+    );
+
+    if (headerRef.current) {
+      observer.observe(headerRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const q = query(collection(db, "customers"));
@@ -117,8 +137,26 @@ export default function CustomersPage() {
     setIsSaving(true);
 
     try {
-      let documentUrl = "";
+      if (newCustomer.code.trim()) {
+        const checkQuery = query(
+          collection(db, "customers"),
+          where("code", "==", newCustomer.code.trim().toUpperCase()),
+        );
+        const checkSnap = await getDocs(checkQuery);
+        if (!checkSnap.empty) {
+          alert("❌ รหัสลูกค้านี้มีในระบบแล้ว กรุณาใช้รหัสอื่นครับ");
+          setIsSaving(false);
+          return;
+        }
+      }
 
+      if (!newCustomer.nickname.trim() && !newCustomer.name.trim()) {
+        alert("กรุณากรอกชื่อเล่น หรือ ชื่อจริง อย่างน้อย 1 อย่างครับ");
+        setIsSaving(false);
+        return;
+      }
+
+      let documentUrl = "";
       if (selectedFile) {
         const fileRef = ref(
           storage,
@@ -130,10 +168,10 @@ export default function CustomersPage() {
 
       await addDoc(collection(db, "customers"), {
         code: newCustomer.code.trim().toUpperCase(),
-        nickname: newCustomer.nickname,
-        name: newCustomer.name,
-        phone: newCustomer.phone,
-        facebook: newCustomer.facebook,
+        nickname: newCustomer.nickname.trim(),
+        name: newCustomer.name.trim(),
+        phone: newCustomer.phone.trim(),
+        facebook: newCustomer.facebook.trim(),
         documentUrl: documentUrl,
         activeLoans: 0,
         totalDebt: 0,
@@ -168,34 +206,36 @@ export default function CustomersPage() {
       const customerRef = doc(db, "customers", customerToDelete.id);
       batch.delete(customerRef);
 
-      const searchNames = [customerToDelete.name];
-      if (customerToDelete.nickname) {
+      const searchNames = [];
+      if (customerToDelete.name) searchNames.push(customerToDelete.name);
+      if (customerToDelete.nickname)
         searchNames.push(customerToDelete.nickname);
-      }
 
-      const loansQuery = query(
-        collection(db, "loans"),
-        where("customerName", "in", searchNames),
-      );
-      const loansSnapshot = await getDocs(loansQuery);
-
-      for (const loanDoc of loansSnapshot.docs) {
-        const loanId = loanDoc.id;
-        batch.delete(loanDoc.ref);
-
-        const schedulesQuery = query(
-          collection(db, "schedules"),
-          where("loanId", "==", loanId),
+      if (searchNames.length > 0) {
+        const loansQuery = query(
+          collection(db, "loans"),
+          where("customerName", "in", searchNames),
         );
-        const schedulesSnapshot = await getDocs(schedulesQuery);
-        schedulesSnapshot.forEach((sDoc) => batch.delete(sDoc.ref));
+        const loansSnapshot = await getDocs(loansQuery);
 
-        const transQuery = query(
-          collection(db, "transactions"),
-          where("loanId", "==", loanId),
-        );
-        const transSnapshot = await getDocs(transQuery);
-        transSnapshot.forEach((tDoc) => batch.delete(tDoc.ref));
+        for (const loanDoc of loansSnapshot.docs) {
+          const loanId = loanDoc.id;
+          batch.delete(loanDoc.ref);
+
+          const schedulesQuery = query(
+            collection(db, "schedules"),
+            where("loanId", "==", loanId),
+          );
+          const schedulesSnapshot = await getDocs(schedulesQuery);
+          schedulesSnapshot.forEach((sDoc) => batch.delete(sDoc.ref));
+
+          const transQuery = query(
+            collection(db, "transactions"),
+            where("loanId", "==", loanId),
+          );
+          const transSnapshot = await getDocs(transQuery);
+          transSnapshot.forEach((tDoc) => batch.delete(tDoc.ref));
+        }
       }
 
       await batch.commit();
@@ -230,15 +270,38 @@ export default function CustomersPage() {
     const batch = writeBatch(db);
 
     try {
+      if (editCustomerData.code.trim()) {
+        const checkQuery = query(
+          collection(db, "customers"),
+          where("code", "==", editCustomerData.code.trim().toUpperCase()),
+        );
+        const checkSnap = await getDocs(checkQuery);
+        const isDuplicate = checkSnap.docs.some(
+          (doc) => doc.id !== customerToEdit.id,
+        );
+
+        if (isDuplicate) {
+          alert("❌ รหัสลูกค้านี้มีในระบบแล้ว กรุณาใช้รหัสอื่นครับ");
+          setIsUpdating(false);
+          return;
+        }
+      }
+
+      if (!editCustomerData.nickname.trim() && !editCustomerData.name.trim()) {
+        alert("กรุณากรอกชื่อเล่น หรือ ชื่อจริง อย่างน้อย 1 อย่างครับ");
+        setIsUpdating(false);
+        return;
+      }
+
       const newDisplayName = editCustomerData.nickname || editCustomerData.name;
 
       const customerRef = doc(db, "customers", customerToEdit.id);
       batch.update(customerRef, {
         code: editCustomerData.code.trim().toUpperCase(),
-        nickname: editCustomerData.nickname,
-        name: editCustomerData.name,
-        phone: editCustomerData.phone,
-        facebook: editCustomerData.facebook,
+        nickname: editCustomerData.nickname.trim(),
+        name: editCustomerData.name.trim(),
+        phone: editCustomerData.phone.trim(),
+        facebook: editCustomerData.facebook.trim(),
       });
 
       const loansQ = query(
@@ -284,9 +347,9 @@ export default function CustomersPage() {
     const search = searchTerm.toLowerCase();
     const matchSearch =
       (customer.code && customer.code.toLowerCase().includes(search)) ||
-      customer.name.toLowerCase().includes(search) ||
+      (customer.name && customer.name.toLowerCase().includes(search)) ||
       (customer.nickname && customer.nickname.toLowerCase().includes(search)) ||
-      customer.phone.includes(search);
+      (customer.phone && customer.phone.includes(search));
     const matchStatus =
       statusFilter === "ทั้งหมด" || customer.status === statusFilter;
     return matchSearch && matchStatus;
@@ -299,9 +362,32 @@ export default function CustomersPage() {
     setDeleteModalOpen(true);
   };
 
+  const getCustomerDisplayName = (nickname, name) => {
+    if (nickname && name) return `${nickname} (${name})`;
+    if (nickname) return nickname;
+    return name;
+  };
+
   return (
-    <div className="pb-20 px-4 sm:px-10 font-sans animate-in fade-in duration-500">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-8 pt-10">
+    <div className="pb-24 px-4 sm:px-10 font-sans animate-in fade-in duration-500 relative min-h-screen">
+      {/* 🌟 ปุ่ม Floating Button (จะโผล่มาเฉพาะตอนเลื่อนจอลง) */}
+      <button
+        onClick={() => setIsModalOpen(true)}
+        className={`fixed bottom-8 right-8 z-50 flex items-center justify-center w-14 h-14 bg-gray-900 hover:bg-black text-white rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.5)] transition-all duration-300 active:scale-95 border border-gray-700 ${
+          showFab
+            ? "scale-100 opacity-100"
+            : "scale-0 opacity-0 pointer-events-none"
+        }`}
+        title="เพิ่มลูกค้าใหม่"
+      >
+        <Plus className="w-7 h-7 text-orange-500" />
+      </button>
+
+      {/* 🌟 แนบ ref ไว้ที่ Header เพื่อให้เซ็นเซอร์รู้ว่าส่วนนี้หายไปจากจอหรือยัง */}
+      <div
+        ref={headerRef}
+        className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-8 pt-10"
+      >
         <div>
           <h1 className="text-3xl sm:text-4xl font-black text-gray-800 tracking-tight">
             ระบบจัดการลูกค้า
@@ -311,6 +397,8 @@ export default function CustomersPage() {
             <span className="text-orange-500">{customers.length}</span> รายการ
           </p>
         </div>
+
+        {/* 🌟 ปุ่มใหญ่ดั้งเดิม */}
         <button
           onClick={() => setIsModalOpen(true)}
           className="w-full md:w-auto flex items-center justify-center gap-2 bg-gray-900 hover:bg-black text-white px-8 py-4 rounded-2xl shadow-xl transition-all active:scale-95 text-sm font-black uppercase tracking-widest"
@@ -346,7 +434,6 @@ export default function CustomersPage() {
             </select>
           </div>
 
-          {/* 🌟 ปุ่มสลับมุมมอง Grid / List */}
           <div className="flex bg-gray-100 p-1 rounded-xl">
             <button
               onClick={() => setViewMode("list")}
@@ -375,7 +462,6 @@ export default function CustomersPage() {
         </div>
       ) : (
         <>
-          {/* 🌟 1. มุมมองแบบรายการแนวยาว (List View) */}
           {viewMode === "list" && (
             <div className="flex flex-col gap-4">
               {filteredCustomers.map((customer) => (
@@ -384,7 +470,6 @@ export default function CustomersPage() {
                   onClick={() => router.push(`/customers/${customer.id}`)}
                   className="group flex flex-col lg:flex-row items-start lg:items-center justify-between bg-white rounded-2xl p-5 border border-gray-100 shadow-sm hover:shadow-md hover:border-orange-200 transition-all cursor-pointer gap-4"
                 >
-                  {/* ข้อมูลลูกค้าฝั่งซ้าย */}
                   <div className="flex items-center gap-4 w-full lg:w-1/3">
                     <div className="min-w-[4rem] px-2 h-14 bg-orange-50 rounded-xl flex items-center justify-center text-lg font-black text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all duration-300 shrink-0 shadow-inner tracking-wider">
                       {customer.code
@@ -393,9 +478,10 @@ export default function CustomersPage() {
                     </div>
                     <div className="min-w-0">
                       <h3 className="text-lg font-black text-gray-800 group-hover:text-orange-500 transition-colors truncate">
-                        {customer.nickname
-                          ? `${customer.nickname} (${customer.name})`
-                          : customer.name}
+                        {getCustomerDisplayName(
+                          customer.nickname,
+                          customer.name,
+                        )}
                       </h3>
                       <div className="flex items-center gap-3 mt-1 text-[11px] font-bold text-gray-500">
                         <span>📞 {customer.phone || "-"}</span>
@@ -409,7 +495,6 @@ export default function CustomersPage() {
                     </div>
                   </div>
 
-                  {/* ตัวเลขการเงินตรงกลาง */}
                   <div className="flex items-center gap-8 w-full lg:w-1/3 border-l-2 border-orange-100 pl-6 relative">
                     {customer.documentUrl && (
                       <div className="absolute -left-[11px] bg-white rounded-full p-1 border border-orange-200">
@@ -434,7 +519,6 @@ export default function CustomersPage() {
                     </div>
                   </div>
 
-                  {/* สถานะและปุ่ม Action ฝั่งขวา */}
                   <div className="flex items-center justify-between w-full lg:w-auto gap-4">
                     <span
                       className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg shrink-0 ${customer.status === "ปกติ" ? "bg-green-50 text-green-600" : "bg-rose-50 text-rose-500"}`}
@@ -478,7 +562,6 @@ export default function CustomersPage() {
             </div>
           )}
 
-          {/* 🌟 2. มุมมองแบบการ์ด (Grid View) แบบเดิม */}
           {viewMode === "grid" && (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
               {filteredCustomers.map((customer) => (
@@ -513,13 +596,14 @@ export default function CustomersPage() {
 
                     <div className="flex-1 min-w-0 pr-16">
                       <h3 className="text-xl font-black text-gray-800 group-hover:text-orange-500 transition-colors truncate">
-                        {customer.nickname
-                          ? `${customer.nickname} (${customer.name})`
-                          : customer.name}
+                        {getCustomerDisplayName(
+                          customer.nickname,
+                          customer.name,
+                        )}
                       </h3>
                       <div className="flex flex-col gap-1 mt-1">
                         <p className="text-[11px] font-bold text-gray-500 tracking-wider">
-                          📞 {customer.phone}
+                          📞 {customer.phone || "-"}
                         </p>
                         {customer.facebook && (
                           <p className="text-[10px] font-bold text-[#1877F2] truncate flex items-center gap-1">
@@ -642,7 +726,6 @@ export default function CustomersPage() {
                     ชื่อเล่น *
                   </label>
                   <input
-                    required
                     type="text"
                     value={newCustomer.nickname}
                     onChange={(e) =>
@@ -659,10 +742,9 @@ export default function CustomersPage() {
 
               <div>
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
-                  ชื่อจริง-นามสกุล *
+                  ชื่อจริง-นามสกุล (ไม่บังคับ)
                 </label>
                 <input
-                  required
                   type="text"
                   value={newCustomer.name}
                   onChange={(e) =>
@@ -823,7 +905,6 @@ export default function CustomersPage() {
                     ชื่อเล่น *
                   </label>
                   <input
-                    required
                     type="text"
                     value={editCustomerData.nickname}
                     onChange={(e) =>
@@ -838,10 +919,9 @@ export default function CustomersPage() {
               </div>
               <div>
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
-                  ชื่อจริง-นามสกุล *
+                  ชื่อจริง-นามสกุล (ไม่บังคับ)
                 </label>
                 <input
-                  required
                   type="text"
                   value={editCustomerData.name}
                   onChange={(e) =>
@@ -930,7 +1010,9 @@ export default function CustomersPage() {
             </h2>
             <p className="text-sm font-bold text-gray-500 mb-8">
               ข้อมูลและประวัติเงินกู้ทั้งหมดของ{" "}
-              <span className="text-gray-800">{customerToDelete?.name}</span>{" "}
+              <span className="text-gray-800">
+                {customerToDelete?.name || customerToDelete?.nickname}
+              </span>{" "}
               จะหายไปถาวร
             </p>
             <div className="flex gap-4">

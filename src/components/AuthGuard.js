@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { db } from "@/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
-import { Lock, Loader2, KeyRound, LogOut, ShieldAlert } from "lucide-react";
+import { Lock, Loader2, KeyRound, ShieldAlert } from "lucide-react";
 
 export default function AuthGuard({ children }) {
   const [isAuth, setIsAuth] = useState(false);
@@ -15,25 +15,21 @@ export default function AuthGuard({ children }) {
   // ตั้งค่าเวลาหมดอายุ: 2 ชั่วโมง (7,200,000 มิลลิวินาที)
   const SESSION_TIMEOUT = 2 * 60 * 60 * 1000;
 
-  // --- 1. ฟังก์ชัน Logout (แช่แข็งด้วย useCallback เพื่อแก้ ESLint) ---
   const handleLogout = useCallback(() => {
     localStorage.removeItem("isLoggedIn");
     localStorage.removeItem("loginTimestamp");
     setIsAuth(false);
-    // รีเฟรชหน้าเพื่อให้ State ทั้งแอปถูกล้างใหม่หมด
     if (typeof window !== "undefined") {
       window.location.reload();
     }
   }, []);
 
-  // --- 2. ฟังก์ชันเช็คสถานะ Session ---
   const checkSession = useCallback(() => {
     const loginTime = localStorage.getItem("loginTimestamp");
     const isLogged = localStorage.getItem("isLoggedIn");
 
     if (isLogged === "true" && loginTime) {
       const now = new Date().getTime();
-      // ตรวจสอบว่าเวลาปัจจุบันลบเวลา Login เกิน 2 ชม. หรือไม่
       if (now - parseInt(loginTime) > SESSION_TIMEOUT) {
         handleLogout();
       } else {
@@ -43,19 +39,16 @@ export default function AuthGuard({ children }) {
     setLoading(false);
   }, [handleLogout, SESSION_TIMEOUT]);
 
-  // --- 3. เรียกใช้การตรวจสอบเมื่อเข้าหน้าเว็บ ---
   useEffect(() => {
     checkSession();
   }, [checkSession]);
 
-  // --- 4. ฟังก์ชัน Login ---
   const handleLogin = async (e) => {
     e.preventDefault();
     setIsChecking(true);
     setError("");
 
     try {
-      // ดึงรหัสผ่านที่ตั้งไว้ใน Firebase Collection: settings / Document: auth
       const docRef = doc(db, "settings", "auth");
       const docSnap = await getDoc(docRef);
 
@@ -81,7 +74,6 @@ export default function AuthGuard({ children }) {
     }
   };
 
-  // 1. ระหว่างโหลดข้อมูลครั้งแรก
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -90,11 +82,9 @@ export default function AuthGuard({ children }) {
     );
   }
 
-  // 2. ถ้ายังไม่ได้ Login ให้โชว์หน้ากรอกรหัส
   if (!isAuth) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#1F2335] px-4">
-        {/* Background Decorations */}
         <div className="absolute top-0 right-0 w-96 h-96 bg-orange-500/10 rounded-full blur-3xl -mr-48 -mt-48"></div>
         <div className="absolute bottom-0 left-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl -ml-48 -mb-48"></div>
 
@@ -155,22 +145,6 @@ export default function AuthGuard({ children }) {
     );
   }
 
-  // 3. ถ้า Login แล้ว ให้แสดงเนื้อหาปกติ
-  return (
-    <>
-      {children}
-      {/* ปุ่ม Logout แบบ Floating เผื่อเจ้าของอยากกดออกเอง */}
-      <button
-        onClick={handleLogout}
-        className="fixed bottom-6 right-6 p-4 bg-white hover:bg-rose-50 border border-gray-100 rounded-2xl shadow-xl text-gray-400 hover:text-rose-500 transition-all z-[100] group"
-      >
-        <div className="flex items-center gap-2">
-          <span className="max-w-0 overflow-hidden group-hover:max-w-xs transition-all duration-300 text-[10px] font-black uppercase tracking-widest">
-            Logout
-          </span>
-          <LogOut className="w-5 h-5" />
-        </div>
-      </button>
-    </>
-  );
+  // 🌟 ปล่อยโล่งๆ ไม่มีปุ่มลอยแล้ว
+  return <>{children}</>;
 }
