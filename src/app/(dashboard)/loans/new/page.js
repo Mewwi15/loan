@@ -19,14 +19,13 @@ import {
   User,
   Loader2,
   Landmark,
-  PenTool,
+  Users, // 🌟 เพิ่มไอคอน Users สำหรับกลุ่ม
   ChevronDown,
   X,
   CheckCircle2,
   Hash,
 } from "lucide-react";
 
-// --- รายชื่อบัญชีและสีประจำธนาคาร (Brand Colors) ---
 const BANK_OPTIONS = [
   { owner: "พงศกร ศรีษเกตุ", bank: "TTB", acc: "9219175719", color: "#f6821f" },
   {
@@ -165,7 +164,6 @@ export default function NewLoanPage() {
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef(null);
 
-  // 🌟 เพิ่ม State ไว้จำว่าผู้ใช้เลือกป้อนวันแบบ Custom หรือไม่
   const [isCustomFrequency, setIsCustomFrequency] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -208,9 +206,8 @@ export default function NewLoanPage() {
   const percent = Number(formData.interestPercent) || 0;
   const count = Math.max(Number(formData.installments) || 1, 1);
 
-  // คำนวณกำไรและค่างวด (ไม่ใช้ Math.floor ในการหาร เพื่อความแม่นยำ)
   const rawTotalAmount = principal + (principal * percent) / 100;
-  const installmentAmount = Math.ceil(rawTotalAmount / count); // ปัดเศษขึ้นให้เต็มบาท
+  const installmentAmount = Math.ceil(rawTotalAmount / count);
   const actualTotalToCollect = installmentAmount * count;
   const totalProfit = Math.max(actualTotalToCollect - principal, 0);
   const profitPerInstallment = Math.ceil(totalProfit / count);
@@ -233,7 +230,7 @@ export default function NewLoanPage() {
   };
 
   const setFreq = (val, type = "day") => {
-    setIsCustomFrequency(false); // ปิดโหมดป้อนเองถ้ากดปุ่มสำเร็จรูป
+    setIsCustomFrequency(false);
     setFormData((prev) => ({ ...prev, frequency: val, type: type }));
   };
 
@@ -264,24 +261,6 @@ export default function NewLoanPage() {
     setLoading(true);
 
     try {
-      const checkLoanQuery = query(
-        collection(db, "loans"),
-        where("loanNumber", "==", targetLoanNumber),
-      );
-      const checkLoanSnapshot = await getDocs(checkLoanQuery);
-
-      const isSlotTaken = checkLoanSnapshot.docs.some(
-        (doc) => doc.data().status !== "closed",
-      );
-
-      if (isSlotTaken) {
-        alert(
-          `❌ สล็อต "วงที่ ${targetLoanNumber}" กำลังถูกใช้งานอยู่!\n\nกรุณาเปลี่ยนเป็นลำดับวงอื่น หรือไปทำการ "ปิดวงกู้" เดิมที่หน้าวอร์รูมก่อนครับ`,
-        );
-        setLoading(false);
-        return;
-      }
-
       const targetCustomer = customersList.find(
         (c) =>
           c.id === formData.customerId ||
@@ -290,25 +269,53 @@ export default function NewLoanPage() {
       );
 
       if (!targetCustomer) {
-        alert(
-          "❌ ไม่พบชื่อลูกค้านี้ในระบบ! กรุณาเลือกลูกค้าจาก Dropdown ที่แนะนำครับ",
-        );
+        alert("❌ ไม่พบชื่อลูกค้านี้ในระบบ! กรุณาเลือกลูกค้าจาก Dropdown");
         setLoading(false);
         return;
       }
 
-      const customerRef = doc(db, "customers", targetCustomer.id);
-      const batch = writeBatch(db);
-
       const displayCustomerName =
         targetCustomer.nickname || targetCustomer.name;
-      const finalLoanName = formData.loanName.trim() || displayCustomerName;
+      let finalLoanName = formData.loanName.trim();
 
+      const checkLoanQuery = query(
+        collection(db, "loans"),
+        where("loanNumber", "==", targetLoanNumber),
+      );
+      const checkLoanSnapshot = await getDocs(checkLoanQuery);
+
+      const activeLoansInSlot = checkLoanSnapshot.docs
+        .map((doc) => doc.data())
+        .filter((data) => data.status !== "closed");
+
+      if (activeLoansInSlot.length > 0) {
+        const existingGroupName =
+          activeLoansInSlot[0].loanName || "ไม่ระบุชื่อกลุ่ม";
+
+        const confirmJoin = window.confirm(
+          `⚠️ สล็อต "วงที่ ${targetLoanNumber}" มีคนใช้งานอยู่แล้วในชื่อกลุ่ม: "${existingGroupName}"\n\nคุณต้องการเพิ่มลูกค้ารายนี้เข้า "กลุ่มเดียวกัน" ใช่หรือไม่?\n(คลิก OK เพื่อเข้าร่วมกลุ่ม หรือ Cancel เพื่อยกเลิกและเปลี่ยนเลขวงใหม่)`,
+        );
+
+        if (!confirmJoin) {
+          setLoading(false);
+          return;
+        }
+
+        // ถ้ายอมรับการเข้าร่วมกลุ่ม ระบบจะยัดชื่อกลุ่มเก่าให้คนนี้ทันที (แม้จะพิมพ์ชื่ออื่นมา)
+        finalLoanName = existingGroupName;
+      } else {
+        // วงใหม่เอี่ยม: ถ้าแอดมินพิมพ์ชื่อกลุ่มมาก็ใช้ชื่อนั้น ถ้าว่างไว้ก็ให้เป็นชื่อลูกค้าปกติ
+        finalLoanName = finalLoanName || displayCustomerName;
+      }
+
+      const customerRef = doc(db, "customers", targetCustomer.id);
+      const batch = writeBatch(db);
       const loanRef = doc(collection(db, "loans"));
+
       const loanData = {
         customerId: targetCustomer.id,
         customerName: displayCustomerName,
-        loanName: finalLoanName,
+        loanName: finalLoanName, // ถูกจัดการเรียบร้อยแล้ว
         loanNumber: targetLoanNumber,
         bankOwner: selectedBankInfo.owner,
         bankName: selectedBankInfo.bank,
@@ -351,7 +358,7 @@ export default function NewLoanPage() {
           loanId: loanRef.id,
           customerId: targetCustomer.id,
           customerName: displayCustomerName,
-          loanName: finalLoanName,
+          loanName: finalLoanName, // บันทึกลงตารางงวดด้วย
           loanNumber: targetLoanNumber,
           installmentNo: i + 1,
           dueDate: dueDate.toISOString().split("T")[0],
@@ -367,7 +374,7 @@ export default function NewLoanPage() {
       setFormData({
         customerId: "",
         customerName: "",
-        loanName: "",
+        loanName: "", // เคลียร์ชื่อกลุ่ม
         loanNumber: "",
         bankIndex: 0,
         principal: 0,
@@ -476,21 +483,25 @@ export default function NewLoanPage() {
                   </div>
                 </div>
 
+                {/* 🌟 ช่องตั้งชื่อกลุ่ม (เปลี่ยน Label และเพิ่มคำแนะนำ) */}
                 <div className="md:col-span-7">
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
-                    ชื่อวงกู้ (ไม่บังคับ)
+                    ชื่อกลุ่ม / วงแชร์ (ไม่บังคับ)
                   </label>
                   <div className="relative mt-1">
-                    <PenTool className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
+                    <Users className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
                     <input
                       name="loanName"
                       type="text"
                       value={formData.loanName}
                       onChange={handleChange}
                       className="w-full pl-12 pr-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-orange-500 font-bold transition-all text-gray-700"
-                      placeholder="ค่าเริ่มต้น: ชื่อลูกค้า"
+                      placeholder="เช่น แชร์แม่ชม (ปล่อยว่าง = ใช้ชื่อลูกค้า)"
                     />
                   </div>
+                  <p className="text-[9px] font-bold text-gray-400 mt-2 ml-2 tracking-widest">
+                    * ใช้สำหรับจัดกลุ่มคนกู้ในหน้าวอร์รูม
+                  </p>
                 </div>
 
                 <div className="md:col-span-5">
@@ -570,7 +581,7 @@ export default function NewLoanPage() {
                   <input
                     name="interestPercent"
                     type="number"
-                    step="0.01" // อนุญาตให้ใส่ทศนิยมได้ (เช่น 44.3)
+                    step="0.01"
                     value={
                       formData.interestPercent === 0
                         ? ""
@@ -582,7 +593,6 @@ export default function NewLoanPage() {
                 </div>
               </div>
 
-              {/* 🌟 ส่วนแก้ไข: รอบการส่งเงินแบบเลือกเองได้ */}
               <div className="p-6 bg-gray-50 rounded-[2rem] border border-gray-100">
                 <label className="text-[12px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-4">
                   <Clock className="w-4 h-4 text-orange-500" /> รอบการส่งเงิน
@@ -611,7 +621,6 @@ export default function NewLoanPage() {
                     </button>
                   ))}
 
-                  {/* ปุ่ม "กำหนดเอง" */}
                   <button
                     type="button"
                     onClick={() => {
@@ -628,7 +637,6 @@ export default function NewLoanPage() {
                   </button>
                 </div>
 
-                {/* 🌟 โชว์ช่องกรอกตัวเลขเมื่อกด "กำหนดเอง" */}
                 {isCustomFrequency && (
                   <div className="mt-4 flex items-center gap-3 animate-in slide-in-from-top-2 duration-300">
                     <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">

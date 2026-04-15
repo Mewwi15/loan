@@ -21,6 +21,8 @@ import {
   TrendingUp,
   AlertOctagon,
   Archive,
+  Users, // ไอคอนสำหรับวงกลุ่ม
+  ChevronDown,
 } from "lucide-react";
 
 export default function WarRoomPage() {
@@ -28,14 +30,16 @@ export default function WarRoomPage() {
   const [data, setData] = useState({ items: [], isLoaded: false });
   const [selectedLoan, setSelectedLoan] = useState(null);
 
-  // --- 1. ดึงข้อมูลวงกู้ทั้งหมดแบบ Real-time ---
+  // 🌟 State สำหรับจำว่าการ์ดกลุ่มไหนถูกกดกางออกอยู่บ้าง
+  const [expandedGroups, setExpandedGroups] = useState([]);
+
   useEffect(() => {
     const q = query(collection(db, "loans"));
 
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        // 🌟 1. จัดกลุ่มข้อมูลตามรหัสวง (Slot) ก่อน
+        // 1. จัดกลุ่มข้อมูลตามรหัสวง (Slot) ก่อน
         const groupedLoans = {};
 
         snapshot.docs.forEach((doc) => {
@@ -44,7 +48,9 @@ export default function WarRoomPage() {
             d.totalInstallments > 0
               ? (d.currentInstallment / d.totalInstallments) * 100
               : 0;
-          const loanNum = String(d.loanNumber || "999999");
+
+          const rawNum = String(d.loanNumber || "999999").trim();
+          const loanNum = parseInt(rawNum, 10) || 999999;
 
           if (!groupedLoans[loanNum]) {
             groupedLoans[loanNum] = [];
@@ -53,41 +59,68 @@ export default function WarRoomPage() {
             id: doc.id,
             ...d,
             progress,
+            displayLoanNumber: rawNum,
           });
         });
 
         const finalLoanList = [];
 
-        // 🌟 2. คัดเลือกเฉพาะ 1 ใบที่ดีที่สุดในแต่ละสล็อตมาแสดง
+        // 2. 🌟 ยุบรวม (Merge) วงที่ซ้ำกันให้เป็นการ์ดกลุ่ม
         for (const num in groupedLoans) {
           const loansInSlot = groupedLoans[num];
 
-          // ตรวจสอบว่าในสล็อตนี้ มีวงที่ "กำลังเดินอยู่ (active)" หรือไม่
-          const activeLoan = loansInSlot.find((l) => l.status !== "closed");
+          // หากลุ่มที่กำลัง Active อยู่
+          const activeLoans = loansInSlot.filter((l) => l.status !== "closed");
 
-          if (activeLoan) {
-            // ถ้ามีวงที่กำลังทำงาน ให้เอาวงนั้นมาโชว์ (วงที่ปิดแล้วจะถูกซ่อนอัตโนมัติ)
-            finalLoanList.push(activeLoan);
-          } else {
-            // ถ้าไม่มีวงที่ active เลย แสดงว่าสล็อตนี้ "ว่าง"
-            // ให้เอาวงที่เพิ่งปิดล่าสุดมาโชว์เป็นประวัติสีเทา
-            loansInSlot.sort((a, b) => {
-              const timeA = a.createdAt?.seconds || 0;
-              const timeB = b.createdAt?.seconds || 0;
-              return timeB - timeA; // เรียงจากเวลาล่าสุดไปเก่า
+          if (activeLoans.length > 0) {
+            // ถลุงข้อมูลรวมกัน
+            const totalRemaining = activeLoans.reduce(
+              (sum, l) => sum + (Number(l.remainingBalance) || 0),
+              0,
+            );
+            const baseLoan = activeLoans[0];
+            const customerNamesList = activeLoans
+              .map((l) => l.customerName)
+              .join(", ");
+
+            finalLoanList.push({
+              isGroup: activeLoans.length > 1, // เช็คว่าเป็นกู้กลุ่มหรือไม่
+              id: activeLoans.length > 1 ? `group-${num}` : baseLoan.id, // ใช้ ID สมมติถ้าเป็นกลุ่ม
+              displayLoanNumber: baseLoan.displayLoanNumber,
+              loanName: baseLoan.loanName || "วงกู้รวม", // ใช้ชื่อวง
+              customerNamesList: customerNamesList,
+              memberCount: activeLoans.length,
+              remainingBalance: totalRemaining,
+              currentInstallment: baseLoan.currentInstallment,
+              totalInstallments: baseLoan.totalInstallments,
+              progress: baseLoan.progress,
+              bankColor: baseLoan.bankColor,
+              status: "active",
+              originalLoans: activeLoans, // 🌟 เก็บข้อมูลลูกวงทุกคนไว้ข้างใน
+              ...(activeLoans.length === 1 ? baseLoan : {}), // ถ้ามีคนเดียว เอาข้อมูลมาใช้ปกติเลย
             });
-            finalLoanList.push(loansInSlot[0]);
+          } else {
+            // ถ้าว่าง (ไม่มี Active เลย)
+            loansInSlot.sort(
+              (a, b) =>
+                (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0),
+            );
+            finalLoanList.push({
+              isGroup: false,
+              id: `closed-${num}`,
+              displayLoanNumber: loansInSlot[0].displayLoanNumber,
+              loanName: loansInSlot[0].loanName || loansInSlot[0].customerName,
+              customerName: loansInSlot[0].customerName,
+              status: "closed",
+            });
           }
         }
 
-        // 🌟 3. เรียงลำดับคิวจาก วงน้อย ไป วงมาก (Natural Sort)
+        // 3. เรียงลำดับจาก วงน้อย -> วงมาก
         finalLoanList.sort((a, b) => {
-          const strA = String(a.loanNumber || "999999");
-          const strB = String(b.loanNumber || "999999");
-          return strA.localeCompare(strB, undefined, {
-            numeric: true,
-            sensitivity: "base",
-          });
+          const numA = parseInt(a.displayLoanNumber, 10) || 999999;
+          const numB = parseInt(b.displayLoanNumber, 10) || 999999;
+          return numA - numB;
         });
 
         setData({ items: finalLoanList, isLoaded: true });
@@ -101,16 +134,34 @@ export default function WarRoomPage() {
     return () => unsubscribe();
   }, []);
 
-  // --- 2. ระบบค้นหาชื่อลูกค้า หรือ ชื่อวงกู้ ---
   const filteredLoans = useMemo(() => {
     return data.items.filter((loan) => {
       const search = searchTerm.toLowerCase();
-      const matchCustomer = loan.customerName?.toLowerCase().includes(search);
+      const matchCustomer =
+        loan.customerNamesList?.toLowerCase().includes(search) ||
+        loan.customerName?.toLowerCase().includes(search);
       const matchLoanName = loan.loanName?.toLowerCase().includes(search);
-      const matchLoanNumber = loan.loanNumber?.toString().includes(search);
+      const matchLoanNumber = loan.displayLoanNumber
+        ?.toString()
+        .includes(search);
       return matchCustomer || matchLoanName || matchLoanNumber;
     });
   }, [searchTerm, data.items]);
+
+  // ฟังก์ชันกดการ์ด
+  const handleCardClick = (loan) => {
+    if (loan.isGroup) {
+      // ถ้าเป็นกลุ่ม ให้กางออก หรือ หุบเข้า
+      setExpandedGroups((prev) =>
+        prev.includes(loan.id)
+          ? prev.filter((id) => id !== loan.id)
+          : [...prev, loan.id],
+      );
+    } else {
+      // ถ้าเป็นคนเดียว ให้เปิด Modal เลย
+      setSelectedLoan(loan);
+    }
+  };
 
   if (!data.isLoaded)
     return (
@@ -124,7 +175,6 @@ export default function WarRoomPage() {
 
   return (
     <div className="w-full pb-20 px-4 md:px-10 font-sans animate-in fade-in duration-500">
-      {/* --- Header --- */}
       <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-10 pt-10">
         <div>
           <h1 className="text-2xl font-black text-gray-800 flex items-center gap-3">
@@ -140,7 +190,7 @@ export default function WarRoomPage() {
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 group-focus-within:text-orange-500 transition-colors" />
           <input
             type="text"
-            placeholder="ค้นหาชื่อ หรือ รหัสวง..."
+            placeholder="ค้นหาชื่อกลุ่ม หรือ รหัสวง..."
             className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-100 rounded-2xl outline-none font-bold text-gray-700 text-sm focus:border-orange-500 shadow-sm transition-all"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -148,11 +198,9 @@ export default function WarRoomPage() {
         </div>
       </div>
 
-      {/* --- รายการวงกู้ --- */}
       <div className="space-y-4">
         {filteredLoans.length > 0 ? (
           filteredLoans.map((loan, index) => {
-            // 🟢 ตรวจสอบสถานะ: ถ้าปิดวงแล้ว ให้แสดงการ์ดสีเทา (วงว่าง)
             if (loan.status === "closed") {
               return (
                 <div
@@ -161,11 +209,11 @@ export default function WarRoomPage() {
                 >
                   <div className="flex items-center gap-4 w-full sm:w-auto">
                     <div className="w-12 h-12 shrink-0 rounded-2xl bg-gray-200 flex items-center justify-center text-lg font-black text-gray-400 shadow-inner">
-                      {loan.loanNumber || index + 1}
+                      {loan.displayLoanNumber || index + 1}
                     </div>
                     <div className="flex-1">
                       <h3 className="text-base font-black text-gray-500 flex items-center gap-2">
-                        วง {loan.loanNumber || index + 1}
+                        วง {loan.displayLoanNumber || index + 1}
                         <span className="text-[10px] bg-gray-200 text-gray-500 px-2 py-0.5 rounded-md uppercase tracking-widest flex items-center gap-1">
                           <Archive className="w-3 h-3" /> ว่าง (ปิดวงแล้ว)
                         </span>
@@ -179,67 +227,132 @@ export default function WarRoomPage() {
               );
             }
 
-            // 🔴 ถ้าวงยัง Active ให้แสดงการ์ดปกติ
+            const isExpanded = expandedGroups.includes(loan.id);
+
             return (
               <div
                 key={loan.id}
-                onClick={() => setSelectedLoan(loan)}
-                className="bg-white rounded-[1.8rem] border border-gray-50 p-6 md:px-8 md:py-7 shadow-sm hover:shadow-xl hover:shadow-orange-100/40 hover:border-orange-200 transition-all group cursor-pointer"
+                className="bg-white rounded-[1.8rem] border border-gray-50 shadow-sm hover:shadow-xl hover:shadow-orange-100/40 hover:border-orange-200 transition-all group overflow-hidden"
               >
-                <div className="grid grid-cols-1 md:grid-cols-12 items-center gap-6">
-                  <div className="md:col-span-4 flex items-center gap-4">
-                    <div
-                      className="w-12 h-12 shrink-0 rounded-2xl flex items-center justify-center text-lg font-black transition-all shadow-sm"
-                      style={{
-                        backgroundColor: `${loan.bankColor || "#f97316"}15`,
-                        color: loan.bankColor || "#f97316",
-                        border: `1px solid ${loan.bankColor || "#f97316"}40`,
-                      }}
-                    >
-                      {loan.loanNumber || index + 1}
+                {/* 🌟 หน้าปัดการ์ดหลัก */}
+                <div
+                  onClick={() => handleCardClick(loan)}
+                  className="p-6 md:px-8 md:py-7 cursor-pointer"
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-12 items-center gap-6">
+                    <div className="md:col-span-4 flex items-center gap-4">
+                      <div
+                        className="w-12 h-12 shrink-0 rounded-2xl flex items-center justify-center text-lg font-black transition-all shadow-sm relative"
+                        style={{
+                          backgroundColor: `${loan.bankColor || "#f97316"}15`,
+                          color: loan.bankColor || "#f97316",
+                          border: `1px solid ${loan.bankColor || "#f97316"}40`,
+                        }}
+                      >
+                        {loan.displayLoanNumber || index + 1}
+                        {loan.isGroup && (
+                          <div className="absolute -top-2 -right-2 bg-[#1F2335] text-white text-[9px] w-5 h-5 rounded-full flex items-center justify-center shadow-md">
+                            {loan.memberCount}
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <h3 className="text-base font-black text-gray-800 group-hover:text-orange-500 transition-colors truncate">
+                          วง {loan.displayLoanNumber || index + 1} •{" "}
+                          {loan.loanName}
+                        </h3>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[9px] font-bold text-gray-500 uppercase tracking-widest bg-gray-100 px-2 py-0.5 rounded-md truncate max-w-[180px]">
+                            {loan.isGroup
+                              ? `ลูกวง ${loan.memberCount} คน: ${loan.customerNamesList}`
+                              : loan.customerNamesList || loan.customerName}
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <h3 className="text-base font-black text-gray-800 group-hover:text-orange-500 transition-colors truncate">
-                        วง {loan.loanNumber || index + 1} •{" "}
-                        {loan.loanName || loan.customerName}
-                      </h3>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-[9px] font-bold text-gray-500 uppercase tracking-widest bg-gray-100 px-2 py-0.5 rounded-md truncate max-w-[120px]">
-                          {loan.customerName}
+
+                    <div className="md:col-span-4 flex flex-col gap-2.5">
+                      <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-widest text-gray-400">
+                        <span>สถานะการส่ง</span>
+                        <span className="text-gray-700">
+                          งวด {loan.currentInstallment} /{" "}
+                          {loan.totalInstallments}
                         </span>
+                      </div>
+                      <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-orange-500 rounded-full transition-all duration-1000"
+                          style={{ width: `${loan.progress}%` }}
+                        ></div>
+                      </div>
+                    </div>
+
+                    <div className="md:col-span-4 flex items-center justify-between md:justify-end gap-8">
+                      <div className="text-right">
+                        <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest mb-0.5">
+                          {loan.isGroup
+                            ? "ยอดคงเหลือรวม"
+                            : "คงเหลือที่ต้องเก็บ"}
+                        </p>
+                        <p className="text-2xl font-black text-gray-800 tracking-tighter">
+                          ฿{(loan.remainingBalance || 0).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="w-12 h-12 shrink-0 bg-gray-50 text-gray-300 rounded-2xl flex items-center justify-center group-hover:bg-orange-50 group-hover:text-orange-500 transition-all border border-gray-100 group-hover:border-orange-200 shadow-sm">
+                        {loan.isGroup ? (
+                          <ChevronDown
+                            className={`w-6 h-6 transition-transform ${isExpanded ? "rotate-180 text-orange-500" : ""}`}
+                          />
+                        ) : (
+                          <ChevronRight className="w-6 h-6" />
+                        )}
                       </div>
                     </div>
                   </div>
-
-                  <div className="md:col-span-4 flex flex-col gap-2.5">
-                    <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-widest text-gray-400">
-                      <span>สถานะการส่ง</span>
-                      <span className="text-gray-700">
-                        งวด {loan.currentInstallment} / {loan.totalInstallments}
-                      </span>
-                    </div>
-                    <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-orange-500 rounded-full transition-all duration-1000"
-                        style={{ width: `${loan.progress}%` }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  <div className="md:col-span-4 flex items-center justify-between md:justify-end gap-8">
-                    <div className="text-right">
-                      <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest mb-0.5">
-                        คงเหลือที่ต้องเก็บ
-                      </p>
-                      <p className="text-2xl font-black text-gray-800 tracking-tighter">
-                        ฿{(loan.remainingBalance || 0).toLocaleString()}
-                      </p>
-                    </div>
-                    <div className="w-12 h-12 shrink-0 bg-gray-50 text-gray-300 rounded-2xl flex items-center justify-center group-hover:bg-orange-50 group-hover:text-orange-500 transition-all border border-gray-100 group-hover:border-orange-200 shadow-sm">
-                      <ChevronRight className="w-6 h-6" />
-                    </div>
-                  </div>
                 </div>
+
+                {/* 🌟 โซนลูกวง (จะโชว์ก็ต่อเมื่อเป็นการ์ดกลุ่ม และถูกกดให้กางออก) */}
+                {loan.isGroup && isExpanded && (
+                  <div className="border-t border-gray-100 bg-gray-50/50 p-6 md:px-8 space-y-3 animate-in slide-in-from-top-2 duration-300">
+                    <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest flex items-center gap-2 mb-4">
+                      <Users className="w-3 h-3" /> รายชื่อลูกวงทั้งหมด
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {loan.originalLoans.map((member) => (
+                        <div
+                          key={member.id}
+                          onClick={(e) => {
+                            e.stopPropagation(); // กันไม่ให้กดแล้วการ์ดใหญ่พับ
+                            setSelectedLoan(member); // เปิด Modal เฉพาะของคนนี้
+                          }}
+                          className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm hover:border-orange-500 hover:shadow-md cursor-pointer transition-all group/member"
+                        >
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="text-sm font-black text-gray-800 group-hover/member:text-orange-500 transition-colors">
+                                {member.customerName}
+                              </p>
+                              <p className="text-[9px] font-bold text-gray-400 mt-1 uppercase tracking-widest">
+                                ยอดคงเหลือ
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-base font-black text-gray-800">
+                                ฿
+                                {(
+                                  member.remainingBalance || 0
+                                ).toLocaleString()}
+                              </p>
+                              <div className="text-[9px] font-bold text-orange-400 mt-1 flex items-center justify-end gap-1">
+                                ดูตาราง <ChevronRight className="w-3 h-3" />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })
@@ -253,7 +366,6 @@ export default function WarRoomPage() {
         )}
       </div>
 
-      {/* --- Modal รายละเอียด --- */}
       {selectedLoan && (
         <LoanDetailModal
           loan={selectedLoan}
@@ -314,7 +426,7 @@ function LoanDetailModal({ loan, onClose }) {
               </h2>
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-[10px] font-black text-orange-500 uppercase tracking-widest bg-orange-50 px-2 py-0.5 rounded-md">
-                  วงที่ {loan.loanNumber || "-"}
+                  วงที่ {loan.displayLoanNumber || loan.loanNumber || "-"}
                 </span>
                 <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
                   {loan.loanName || loan.customerName}
