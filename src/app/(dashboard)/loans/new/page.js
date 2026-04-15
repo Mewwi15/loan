@@ -180,6 +180,21 @@ export default function NewLoanPage() {
     type: "day",
   });
 
+  // 🌟 ดึงข้อมูลลูกค้าจาก URL ตอนโหลดหน้า
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const prefillName = params.get("name");
+    const prefillId = params.get("id");
+
+    if (prefillName) {
+      setFormData((prev) => ({
+        ...prev,
+        customerName: prefillName,
+        customerId: prefillId || "",
+      }));
+    }
+  }, []);
+
   useEffect(() => {
     const fetchCustomers = async () => {
       const querySnapshot = await getDocs(collection(db, "customers"));
@@ -383,6 +398,9 @@ export default function NewLoanPage() {
         type: "day",
       });
       setIsCustomFrequency(false);
+
+      // หลังจากเซฟเสร็จ ให้เปลี่ยน URL กลับให้เป็นแบบสะอาด (ลบ query parameters ออก)
+      window.history.replaceState(null, "", window.location.pathname);
     } catch (error) {
       console.error("Error:", error);
       alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
@@ -416,7 +434,6 @@ export default function NewLoanPage() {
         </button>
       </div>
 
-      {/* 🌟 จุดแก้ไขสำคัญ: เปลี่ยน lg:grid-cols-2 เป็น xl:grid-cols-2 เพื่อให้ iPad เป็นแนวตั้ง 1 คอลัมน์ */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-10">
         <div className="space-y-8">
           <div className="bg-white p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-gray-50 space-y-8">

@@ -29,16 +29,18 @@ import {
   UploadCloud,
   CheckCircle2,
   Save,
+  FileSignature,
 } from "lucide-react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 export default function CustomersPage() {
+  const router = useRouter();
+
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("ทั้งหมด");
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // State สำหรับเพิ่มลูกค้าใหม่
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [newCustomer, setNewCustomer] = useState({
@@ -49,11 +51,9 @@ export default function CustomersPage() {
   });
   const [selectedFile, setSelectedFile] = useState(null);
 
-  // State สำหรับลบลูกค้า
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [customerToDelete, setCustomerToDelete] = useState(null);
 
-  // --- 1. ดึงข้อมูลลูกค้าแบบ Real-time จาก Firebase ---
   useEffect(() => {
     const q = query(collection(db, "customers"), orderBy("createdAt", "desc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -67,7 +67,6 @@ export default function CustomersPage() {
     return () => unsubscribe();
   }, []);
 
-  // --- 2. ฟังก์ชันจัดการเลือกไฟล์ PDF ---
   const handleFileChange = (e) => {
     if (e.target.files[0]) {
       const file = e.target.files[0];
@@ -80,7 +79,6 @@ export default function CustomersPage() {
     }
   };
 
-  // --- 3. ฟังก์ชันเพิ่มลูกค้าใหม่ (พร้อมอัปโหลดไฟล์) ---
   const handleQuickAdd = async (e) => {
     e.preventDefault();
     setIsSaving(true);
@@ -121,24 +119,20 @@ export default function CustomersPage() {
     }
   };
 
-  // --- 4. ฟังก์ชันลบข้อมูลลูกค้าแบบ Cascading ---
   const handleDelete = async () => {
     if (!customerToDelete) return;
     setLoading(true);
     const batch = writeBatch(db);
 
     try {
-      // A. ลบตัวลูกค้า
       const customerRef = doc(db, "customers", customerToDelete.id);
       batch.delete(customerRef);
 
-      // 🌟 B. ไฮไลท์วิธีแก้: ดึงทั้งชื่อจริงและชื่อเล่นมาค้นหา
       const searchNames = [customerToDelete.name];
       if (customerToDelete.nickname) {
         searchNames.push(customerToDelete.nickname);
       }
 
-      // ค้นหาวงกู้ทั้งหมดที่ตรงกับรายชื่อที่หามาได้
       const loansQuery = query(
         collection(db, "loans"),
         where("customerName", "in", searchNames),
@@ -147,9 +141,8 @@ export default function CustomersPage() {
 
       for (const loanDoc of loansSnapshot.docs) {
         const loanId = loanDoc.id;
-        batch.delete(loanDoc.ref); // ลบ Loan
+        batch.delete(loanDoc.ref);
 
-        // ลบ Schedules
         const schedulesQuery = query(
           collection(db, "schedules"),
           where("loanId", "==", loanId),
@@ -157,7 +150,6 @@ export default function CustomersPage() {
         const schedulesSnapshot = await getDocs(schedulesQuery);
         schedulesSnapshot.forEach((sDoc) => batch.delete(sDoc.ref));
 
-        // ลบ Transactions
         const transQuery = query(
           collection(db, "transactions"),
           where("loanId", "==", loanId),
@@ -179,7 +171,6 @@ export default function CustomersPage() {
     }
   };
 
-  // กรองข้อมูลตามคำค้นหาและสถานะ
   const filteredCustomers = customers.filter((customer) => {
     const matchSearch =
       customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -192,6 +183,7 @@ export default function CustomersPage() {
   });
 
   const confirmDelete = (e, customer) => {
+    e.stopPropagation();
     e.preventDefault();
     setCustomerToDelete(customer);
     setDeleteModalOpen(true);
@@ -199,7 +191,6 @@ export default function CustomersPage() {
 
   return (
     <div className="pb-20 px-4 sm:px-10 font-sans animate-in fade-in duration-500">
-      {/* --- Header Section --- */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-8 pt-10">
         <div>
           <h1 className="text-3xl sm:text-4xl font-black text-gray-800 tracking-tight">
@@ -218,7 +209,6 @@ export default function CustomersPage() {
         </button>
       </div>
 
-      {/* --- Control Bar --- */}
       <div className="bg-white p-2 rounded-[1.5rem] shadow-sm border border-gray-100 mb-10 flex flex-col md:flex-row items-center gap-2">
         <div className="relative flex-1 w-full group">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 group-focus-within:text-orange-500 transition-colors" />
@@ -245,7 +235,6 @@ export default function CustomersPage() {
         </div>
       </div>
 
-      {/* --- Customer Grid --- */}
       {loading ? (
         <div className="py-20 flex flex-col items-center gap-4 text-gray-400">
           <Loader2 className="w-10 h-10 animate-spin text-orange-500" />
@@ -256,12 +245,11 @@ export default function CustomersPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
           {filteredCustomers.map((customer) => (
-            <Link
+            <div
               key={customer.id}
-              href={`/customers/${customer.id}`}
-              className="group block bg-white rounded-[2rem] p-8 border border-gray-100 shadow-sm hover:shadow-xl hover:shadow-orange-100/40 hover:border-orange-200 transition-all duration-300 relative space-y-6"
+              onClick={() => router.push(`/customers/${customer.id}`)}
+              className="group block bg-white rounded-[2rem] p-8 border border-gray-100 shadow-sm hover:shadow-xl hover:shadow-orange-100/40 hover:border-orange-200 transition-all duration-300 relative space-y-6 cursor-pointer"
             >
-              {/* ปุ่มลบ */}
               <button
                 onClick={(e) => confirmDelete(e, customer)}
                 className="absolute top-6 right-6 p-2.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors z-10"
@@ -269,7 +257,6 @@ export default function CustomersPage() {
                 <Trash2 className="w-5 h-5" />
               </button>
 
-              {/* ข้อมูล Header การ์ด */}
               <div className="flex items-center gap-4">
                 <div className="w-16 h-16 bg-orange-50 rounded-2xl flex items-center justify-center text-2xl font-black text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all duration-300 shrink-0 shadow-inner">
                   {(customer.nickname || customer.name).charAt(0)}
@@ -294,9 +281,7 @@ export default function CustomersPage() {
                 </div>
               </div>
 
-              {/* ข้อมูลตัวเลขยอดหนี้ */}
               <div className="flex gap-8 border-l-2 border-orange-100 pl-6 py-1 relative">
-                {/* ไอคอนแสดงเอกสาร PDF (ถ้ามี) */}
                 {customer.documentUrl && (
                   <div
                     className="absolute -left-[11px] top-1/2 -translate-y-1/2 bg-white rounded-full p-1 border border-orange-200"
@@ -324,23 +309,38 @@ export default function CustomersPage() {
                 </div>
               </div>
 
-              {/* Footer การ์ด */}
               <div className="flex items-center justify-between pt-4 border-t border-gray-50">
-                <span
-                  className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg ${customer.status === "ปกติ" ? "bg-green-50 text-green-600" : "bg-rose-50 text-rose-500"}`}
-                >
-                  {customer.status}
-                </span>
+                <div className="flex items-center gap-2 z-10">
+                  <span
+                    className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg ${customer.status === "ปกติ" ? "bg-green-50 text-green-600" : "bg-rose-50 text-rose-500"}`}
+                  >
+                    {customer.status}
+                  </span>
+
+                  {/* 🌟 ไฮไลท์การแก้: ส่ง ID และ ชื่อ ผ่าน URL เพื่อให้หน้าสร้างสัญญาดึงไปใช้ */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const displayName = customer.nickname || customer.name;
+                      router.push(
+                        `/loans/new?name=${encodeURIComponent(displayName)}&id=${customer.id}`,
+                      );
+                    }}
+                    className="text-[10px] font-black text-orange-500 bg-orange-50 hover:bg-orange-500 hover:text-white px-3 py-1.5 rounded-lg uppercase tracking-widest transition-all flex items-center gap-1 shadow-sm"
+                  >
+                    <FileSignature className="w-3 h-3" /> สร้างสัญญา
+                  </button>
+                </div>
+
                 <div className="flex items-center gap-1 text-[11px] font-black text-gray-300 group-hover:text-orange-500 uppercase tracking-widest transition-colors">
                   ดูรายละเอียด <ArrowUpRight className="w-4 h-4" />
                 </div>
               </div>
-            </Link>
+            </div>
           ))}
         </div>
       )}
 
-      {/* --- MODAL: เพิ่มลูกค้าใหม่ --- */}
       {isModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div
@@ -433,7 +433,6 @@ export default function CustomersPage() {
                 />
               </div>
 
-              {/* โซนอัปโหลดไฟล์ PDF */}
               <div className="pt-2">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-2">
                   เอกสารประกอบการกู้ (PDF เท่านั้น)
@@ -472,7 +471,6 @@ export default function CustomersPage() {
                 </div>
               </div>
 
-              {/* ปุ่ม Action */}
               <div className="pt-4 flex gap-4">
                 <button
                   type="button"
@@ -500,7 +498,6 @@ export default function CustomersPage() {
         </div>
       )}
 
-      {/* --- DELETE CONFIRMATION MODAL --- */}
       {deleteModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div
