@@ -25,7 +25,7 @@ export default function DashboardLayout({ children }) {
         <header className="h-16 lg:h-20 bg-white/80 backdrop-blur-md flex items-center justify-between px-4 lg:px-8 border-b border-gray-100 shrink-0 sticky top-0 z-20">
           {/* 🌟 เว้นระยะทางซ้ายหลบปุ่ม Hamburger บน iPad (ml-14) แต่คอมพิวเตอร์ไม่ต้องเว้น (xl:ml-0) */}
           <h2 className="text-lg lg:text-xl font-black text-gray-800 tracking-tight ml-14 xl:ml-0">
-            ระบบจัดการวงกู้
+            ระบบจัดการสินทรัพย์
           </h2>
 
           {/* 🌟 เอาปุ่มออกจากระบบมาไว้มุมขวาบนตรงนี้ครับ */}

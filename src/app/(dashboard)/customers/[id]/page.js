@@ -207,19 +207,56 @@ export default function CustomerDetailPage({ params }) {
         const customerData = customerDoc.data();
         setCustomer(customerData);
 
-        const searchNames = [customerData.name];
-        if (customerData.nickname) searchNames.push(customerData.nickname);
+        // 🌟 แก้ไข: เตรียมชื่อค้นหาแบบใหม่ และใช้ customerId เป็นหลัก
+        const formattedName =
+          customerData.nickname && customerData.name
+            ? `${customerData.nickname} (${customerData.name})`
+            : customerData.nickname || customerData.name || "";
 
-        const q = query(
+        const searchNames = [];
+        if (customerData.name) searchNames.push(customerData.name);
+        if (customerData.nickname) searchNames.push(customerData.nickname);
+        if (formattedName && !searchNames.includes(formattedName))
+          searchNames.push(formattedName);
+
+        // 1. ดึงข้อมูลด้วย ID (สำหรับข้อมูลใหม่ที่ผูก ID ตรงๆ)
+        const qById = query(
+          collection(db, "loans"),
+          where("customerId", "==", customerId),
+        );
+        // 2. ดึงข้อมูลด้วย ชื่อ (รองรับข้อมูลเก่า)
+        const qByName = query(
           collection(db, "loans"),
           where("customerName", "in", searchNames),
-          orderBy("createdAt", "desc"),
         );
-        const loanSnapshot = await getDocs(q);
-        const loanList = loanSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
+
+        const [snapById, snapByName] = await Promise.all([
+          getDocs(qById),
+          getDocs(qByName),
+        ]);
+
+        // 🌟 รวมข้อมูลและลบตัวซ้ำ (Duplicate)
+        const loanMap = new Map();
+        snapById.docs.forEach((doc) =>
+          loanMap.set(doc.id, { id: doc.id, ...doc.data() }),
+        );
+        snapByName.docs.forEach((doc) =>
+          loanMap.set(doc.id, { id: doc.id, ...doc.data() }),
+        );
+
+        // 🌟 จัดเรียงจากน้อยไปมาก (อิงตามเลขวงกู้ loanNumber)
+        const loanList = Array.from(loanMap.values()).sort((a, b) => {
+          const numA = Number(a.loanNumber);
+          const numB = Number(b.loanNumber);
+
+          // ถ้าเป็นตัวเลขทั้งคู่ ให้เรียงตามตัวเลข (1, 2, 3...)
+          if (!isNaN(numA) && !isNaN(numB)) {
+            return numA - numB;
+          }
+          // ถ้ามีตัวอักษรปนมา ให้เรียงตามตัวอักษรเพื่อไม่ให้พัง
+          return String(a.loanNumber).localeCompare(String(b.loanNumber));
+        });
+
         setLoans(loanList);
       }
     } catch (error) {
@@ -247,7 +284,6 @@ export default function CustomerDetailPage({ params }) {
 
   // 🌟 เปิดฟอร์มแก้ไขสัญญา
   const openEditContract = (loan) => {
-    // หา Bank Index จากข้อมูลเดิม
     const bIndex = BANK_OPTIONS.findIndex((b) => b.acc === loan.bankAccount);
 
     setOriginalTotalAmount(loan.totalAmount || 0);
@@ -460,7 +496,6 @@ export default function CustomerDetailPage({ params }) {
             <ArrowLeft className="w-5 h-5 text-gray-400" />
           </Link>
           <div>
-            {/* 🌟 ไฮไลท์การแก้: ปรับให้แสดง ชื่อเล่น (ชื่อจริง) */}
             <h1 className="text-3xl sm:text-4xl font-black text-gray-900 tracking-tight">
               {customer.nickname
                 ? `${customer.nickname} (${customer.name})`

@@ -24,7 +24,13 @@ import {
   X,
   CheckCircle2,
   Hash,
+  PlusCircle,
+  Trash2,
+  Search,
+  CheckSquare,
+  Square,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 const BANK_OPTIONS = [
   { owner: "พงศกร ศรีษเกตุ", bank: "TTB", acc: "9219175719", color: "#f6821f" },
@@ -163,15 +169,20 @@ const BANK_OPTIONS = [
 ];
 
 export default function NewLoanPage() {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [isBankModalOpen, setIsBankModalOpen] = useState(false);
+
+  const [loanMode, setLoanMode] = useState("single");
 
   const [customersList, setCustomersList] = useState([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef(null);
 
+  // ==========================================
+  // 🟢 STATE: สำหรับวงกู้เดี่ยว (Single Loan)
+  // ==========================================
   const [isCustomFrequency, setIsCustomFrequency] = useState(false);
-
   const [formData, setFormData] = useState({
     customerId: "",
     customerName: "",
@@ -186,7 +197,28 @@ export default function NewLoanPage() {
     type: "day",
   });
 
-  // 🌟 ดึงข้อมูลลูกค้าจาก URL ตอนโหลดหน้า
+  // ==========================================
+  // 🟠 STATE: สำหรับวงกลุ่ม / แชร์ (Group Loan)
+  // ==========================================
+  const [isGroupCustomFreq, setIsGroupCustomFreq] = useState(false);
+  const [groupConfig, setGroupConfig] = useState({
+    groupName: "",
+    loanNumber: "1",
+    bankIndex: 0,
+    principal: 0, // ยอดกู้ต่อคน
+    interestPercent: 10,
+    installments: 20,
+    startDate: new Date().toISOString().split("T")[0],
+    frequency: 1,
+    type: "day",
+  });
+
+  // 🌟 State สำหรับ Checkbox Modal (ไอเดียที่ 2)
+  const [selectedMembers, setSelectedMembers] = useState([]); // [{ customerId, customerName }]
+  const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
+  const [memberSearchQuery, setMemberSearchQuery] = useState("");
+  const [tempSelectedIds, setTempSelectedIds] = useState([]);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const prefillName = params.get("name");
@@ -198,6 +230,7 @@ export default function NewLoanPage() {
         customerName: prefillName,
         customerId: prefillId || "",
       }));
+      setLoanMode("single");
     }
   }, []);
 
@@ -223,6 +256,14 @@ export default function NewLoanPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const formatCustomerName = (c) => {
+    if (c.nickname && c.name) return `${c.nickname} (${c.name})`;
+    return c.nickname || c.name || "";
+  };
+
+  // ==========================================
+  // 🟢 คำนวณ & ฟังก์ชัน: วงเดี่ยว
+  // ==========================================
   const principal = Number(formData.principal) || 0;
   const percent = Number(formData.interestPercent) || 0;
   const count = Math.max(Number(formData.installments) || 1, 1);
@@ -236,17 +277,12 @@ export default function NewLoanPage() {
   const handleChange = (e) => {
     const { name, value, type } = e.target;
     let finalValue = value;
-    if (type === "number") {
-      finalValue = value === "" ? 0 : Number(value);
-    }
+    if (type === "number") finalValue = value === "" ? 0 : Number(value);
     setFormData((prev) => {
       const updated = { ...prev, [name]: finalValue };
-      if (name === "customerName") {
-        updated.customerId = "";
-      }
+      if (name === "customerName") updated.customerId = "";
       return updated;
     });
-
     if (name === "customerName") setShowDropdown(true);
   };
 
@@ -255,25 +291,19 @@ export default function NewLoanPage() {
     setFormData((prev) => ({ ...prev, frequency: val, type: type }));
   };
 
-  const groupedBanks = BANK_OPTIONS.reduce((acc, bank, index) => {
-    if (!acc[bank.owner]) acc[bank.owner] = [];
-    acc[bank.owner].push({ ...bank, index });
-    return acc;
-  }, {});
-
-  const selectedBankInfo = BANK_OPTIONS[formData.bankIndex];
-
   const filteredCustomers = customersList.filter((c) => {
     const search = formData.customerName.toLowerCase();
     const matchName = c.name?.toLowerCase().includes(search);
     const matchNickname = c.nickname?.toLowerCase().includes(search);
-    return matchName || matchNickname;
+    const matchCode = c.code?.toLowerCase().includes(search);
+    return matchName || matchNickname || matchCode;
   });
 
   const handleSaveContract = async () => {
     const targetLoanNumber = formData.loanNumber.toString().trim();
 
-    if (!formData.customerName.trim()) return alert("กรุณาระบุชื่อลูกค้า");
+    if (!formData.customerId)
+      return alert("❌ กรุณาเลือกลูกค้าจากรายการค้นหา (Dropdown) ครับ");
     if (principal <= 0) return alert("กรุณาระบุยอดปล่อยกู้");
     if (!targetLoanNumber) return alert("กรุณาระบุลำดับวงกู้");
     if (formData.frequency <= 0)
@@ -283,20 +313,16 @@ export default function NewLoanPage() {
 
     try {
       const targetCustomer = customersList.find(
-        (c) =>
-          c.id === formData.customerId ||
-          (c.nickname && c.nickname === formData.customerName.trim()) ||
-          c.name === formData.customerName.trim(),
+        (c) => c.id === formData.customerId,
       );
 
       if (!targetCustomer) {
-        alert("❌ ไม่พบชื่อลูกค้านี้ในระบบ! กรุณาเลือกลูกค้าจาก Dropdown");
+        alert("❌ ไม่พบข้อมูลลูกค้านี้ในระบบ กรุณาลองใหม่อีกครั้ง");
         setLoading(false);
         return;
       }
 
-      const displayCustomerName =
-        targetCustomer.nickname || targetCustomer.name;
+      const displayCustomerName = formatCustomerName(targetCustomer);
       let finalLoanName = formData.loanName.trim();
 
       const checkLoanQuery = query(
@@ -304,7 +330,6 @@ export default function NewLoanPage() {
         where("loanNumber", "==", targetLoanNumber),
       );
       const checkLoanSnapshot = await getDocs(checkLoanQuery);
-
       const activeLoansInSlot = checkLoanSnapshot.docs
         .map((doc) => doc.data())
         .filter((data) => data.status !== "closed");
@@ -312,16 +337,13 @@ export default function NewLoanPage() {
       if (activeLoansInSlot.length > 0) {
         const existingGroupName =
           activeLoansInSlot[0].loanName || "ไม่ระบุชื่อกลุ่ม";
-
         const confirmJoin = window.confirm(
-          `⚠️ สล็อต "วงที่ ${targetLoanNumber}" มีคนใช้งานอยู่แล้วในชื่อกลุ่ม: "${existingGroupName}"\n\nคุณต้องการเพิ่มลูกค้ารายนี้เข้า "กลุ่มเดียวกัน" ใช่หรือไม่?\n(คลิก OK เพื่อเข้าร่วมกลุ่ม หรือ Cancel เพื่อยกเลิกและเปลี่ยนเลขวงใหม่)`,
+          `⚠️ สล็อต "วงที่ ${targetLoanNumber}" มีคนใช้งานอยู่แล้วในชื่อกลุ่ม: "${existingGroupName}"\n\nคุณต้องการเพิ่มลูกค้ารายนี้เข้า "กลุ่มเดียวกัน" ใช่หรือไม่?`,
         );
-
         if (!confirmJoin) {
           setLoading(false);
           return;
         }
-
         finalLoanName = existingGroupName;
       } else {
         finalLoanName = finalLoanName || displayCustomerName;
@@ -331,15 +353,18 @@ export default function NewLoanPage() {
       const batch = writeBatch(db);
       const loanRef = doc(collection(db, "loans"));
 
-      const loanData = {
+      const selectedBankForSingle =
+        BANK_OPTIONS[formData.bankIndex] || BANK_OPTIONS[0];
+
+      batch.set(loanRef, {
         customerId: targetCustomer.id,
         customerName: displayCustomerName,
         loanName: finalLoanName,
         loanNumber: targetLoanNumber,
-        bankOwner: selectedBankInfo.owner,
-        bankName: selectedBankInfo.bank,
-        bankAccount: selectedBankInfo.acc,
-        bankColor: selectedBankInfo.color,
+        bankOwner: selectedBankForSingle.owner,
+        bankName: selectedBankForSingle.bank,
+        bankAccount: selectedBankForSingle.acc,
+        bankColor: selectedBankForSingle.color,
         principal: principal,
         interestRate: percent,
         totalAmount: actualTotalToCollect,
@@ -354,8 +379,7 @@ export default function NewLoanPage() {
         frequencyType: formData.type,
         status: "active",
         createdAt: serverTimestamp(),
-      };
-      batch.set(loanRef, loanData);
+      });
 
       batch.update(customerRef, {
         activeLoans: increment(1),
@@ -389,24 +413,8 @@ export default function NewLoanPage() {
 
       await batch.commit();
       alert("✅ บันทึกสัญญาเรียบร้อยแล้ว!");
-
-      setFormData({
-        customerId: "",
-        customerName: "",
-        loanName: "",
-        loanNumber: "",
-        bankIndex: 0,
-        principal: 0,
-        interestPercent: 10,
-        installments: 20,
-        startDate: new Date().toISOString().split("T")[0],
-        frequency: 1,
-        type: "day",
-      });
-      setIsCustomFrequency(false);
-
-      // หลังจากเซฟเสร็จ ให้เปลี่ยน URL กลับให้เป็นแบบสะอาด (ลบ query parameters ออก)
       window.history.replaceState(null, "", window.location.pathname);
+      router.push("/war-room");
     } catch (error) {
       console.error("Error:", error);
       alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
@@ -415,187 +423,725 @@ export default function NewLoanPage() {
     }
   };
 
+  // ==========================================
+  // 🟠 คำนวณ & ฟังก์ชัน: วงกลุ่ม (Group Loan)
+  // ==========================================
+  const handleGroupConfigChange = (e) => {
+    const { name, value, type } = e.target;
+    let finalValue = value;
+    if (type === "number") finalValue = value === "" ? 0 : Number(value);
+    setGroupConfig((prev) => ({ ...prev, [name]: finalValue }));
+  };
+
+  const setGroupFreq = (val, type = "day") => {
+    setIsGroupCustomFreq(false);
+    setGroupConfig((prev) => ({ ...prev, frequency: val, type: type }));
+  };
+
+  // 🌟 เปิด Modal เช็คบ็อกซ์
+  const openMemberModal = () => {
+    setTempSelectedIds(selectedMembers.map((m) => m.customerId));
+    setMemberSearchQuery("");
+    setIsMemberModalOpen(true);
+  };
+
+  // 🌟 ติ๊กเลือก/เอาออก จากรายการ
+  const toggleMemberSelection = (id) => {
+    setTempSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    );
+  };
+
+  // 🌟 ยืนยันการเลือก
+  const confirmMemberSelection = () => {
+    const newMembers = tempSelectedIds.map((id) => {
+      const customer = customersList.find((c) => c.id === id);
+      return {
+        customerId: customer.id,
+        customerName: formatCustomerName(customer),
+      };
+    });
+    setSelectedMembers(newMembers);
+    setIsMemberModalOpen(false);
+  };
+
+  // 🌟 ลบออกจากการ์ดด้านนอก
+  const removeSelectedMember = (idToRemove) => {
+    setSelectedMembers((prev) =>
+      prev.filter((m) => m.customerId !== idToRemove),
+    );
+  };
+
+  const filteredModalCustomers = customersList.filter((c) => {
+    if (!memberSearchQuery) return true;
+    const search = memberSearchQuery.toLowerCase();
+    return (
+      (c.name?.toLowerCase() || "").includes(search) ||
+      (c.nickname?.toLowerCase() || "").includes(search) ||
+      (c.code?.toLowerCase() || "").includes(search)
+    );
+  });
+
+  // 🌟 คำนวณยอดกลุ่มแบบรวมศูนย์ (ใช้ตัวแปรให้ตรงเป๊ะกับ JSX)
+  const groupP = Number(groupConfig.principal) || 0;
+  const groupPercent = Number(groupConfig.interestPercent) || 0;
+  const groupCount = Math.max(Number(groupConfig.installments) || 1, 1);
+
+  // คำนวณ "ต่อคน"
+  const groupRawTotalAmount = groupP + (groupP * groupPercent) / 100;
+  const groupInstAmount = Math.ceil(groupRawTotalAmount / groupCount);
+  const groupActualTotal = groupInstAmount * groupCount;
+  const groupTotProfit = Math.max(groupActualTotal - groupP, 0);
+  const groupProfPerInst = Math.ceil(groupTotProfit / groupCount);
+
+  // คำนวณรวมทั้งกลุ่ม (คูณด้วยสมาชิกทั้งหมดที่เลือกมา)
+  const totalMembers = selectedMembers.length;
+  const totalGroupPrincipal = groupP * totalMembers;
+  const totalGroupExpectedCollect = groupActualTotal * totalMembers;
+  const totalGroupInstallmentAmount = groupInstAmount * totalMembers;
+  const totalGroupProfit = groupTotProfit * totalMembers;
+  const totalGroupProfitPerInst = groupProfPerInst * totalMembers;
+
+  const handleSaveGroupLoan = async () => {
+    const targetLoanNumber = groupConfig.loanNumber.toString().trim();
+
+    if (!groupConfig.groupName.trim())
+      return alert("กรุณาตั้งชื่อกลุ่ม / วงแชร์");
+    if (!targetLoanNumber) return alert("กรุณาระบุลำดับวงกู้ของกลุ่ม");
+    if (groupP <= 0) return alert("กรุณาระบุยอดปล่อยกู้ต่อคนให้ถูกต้อง");
+    if (groupConfig.installments <= 0 || groupConfig.frequency <= 0)
+      return alert("รูปแบบงวดไม่ถูกต้อง");
+
+    if (selectedMembers.length === 0)
+      return alert("❌ กรุณาเลือกสมาชิกเข้ากลุ่มอย่างน้อย 1 คนครับ");
+
+    setLoading(true);
+
+    try {
+      const checkLoanQuery = query(
+        collection(db, "loans"),
+        where("loanNumber", "==", targetLoanNumber),
+      );
+      const checkLoanSnapshot = await getDocs(checkLoanQuery);
+      const activeLoansInSlot = checkLoanSnapshot.docs
+        .map((doc) => doc.data())
+        .filter((data) => data.status !== "closed");
+
+      if (activeLoansInSlot.length > 0) {
+        const existingGroupName =
+          activeLoansInSlot[0].loanName || "ไม่ระบุชื่อกลุ่ม";
+        const confirmJoin = window.confirm(
+          `⚠️ สล็อต "วงที่ ${targetLoanNumber}" มีคนใช้งานอยู่แล้วในชื่อกลุ่ม: "${existingGroupName}"\n\nคุณต้องการสร้างกลุ่มนี้ซ้อนในสล็อตเดียวกัน ใช่หรือไม่?`,
+        );
+        if (!confirmJoin) {
+          setLoading(false);
+          return;
+        }
+      } else {
+        if (
+          !window.confirm(
+            `ยืนยันการสร้างวงกลุ่ม "${groupConfig.groupName}" (วงที่ ${targetLoanNumber})\nยอดปล่อยกู้ ${groupP.toLocaleString()} บ./คน (จำนวน ${selectedMembers.length} คน) ?`,
+          )
+        ) {
+          setLoading(false);
+          return;
+        }
+      }
+
+      const selectedBankForGroup =
+        BANK_OPTIONS[groupConfig.bankIndex] || BANK_OPTIONS[0];
+
+      // สร้างข้อมูลรายบุคคลตามสมาชิกที่ติ๊กเลือกมา
+      for (const member of selectedMembers) {
+        const batch = writeBatch(db);
+
+        const targetCustomer = customersList.find(
+          (c) => c.id === member.customerId,
+        );
+        if (!targetCustomer) {
+          throw new Error(`ไม่พบข้อมูลลูกค้า ID: ${member.customerId}`);
+        }
+
+        const loanRef = doc(collection(db, "loans"));
+        const displayCustomerName = member.customerName;
+
+        batch.set(loanRef, {
+          customerId: targetCustomer.id,
+          customerName: displayCustomerName,
+          loanName: groupConfig.groupName.trim(),
+          loanNumber: targetLoanNumber,
+          bankOwner: selectedBankForGroup.owner,
+          bankName: selectedBankForGroup.bank,
+          bankAccount: selectedBankForGroup.acc,
+          bankColor: selectedBankForGroup.color,
+          principal: groupP,
+          interestRate: groupPercent,
+          totalAmount: groupActualTotal,
+          remainingBalance: groupActualTotal,
+          totalInstallments: groupCount,
+          currentInstallment: 0,
+          installmentAmount: groupInstAmount,
+          totalProfit: groupTotProfit,
+          profitPerInstallment: groupProfPerInst,
+          startDate: groupConfig.startDate,
+          frequency: groupConfig.frequency,
+          frequencyType: groupConfig.type,
+          status: "active",
+          isGroupLoan: true,
+          createdAt: serverTimestamp(),
+        });
+
+        batch.update(doc(db, "customers", targetCustomer.id), {
+          activeLoans: increment(1),
+          totalDebt: increment(groupActualTotal),
+        });
+
+        for (let i = 0; i < groupCount; i++) {
+          let dueDate = new Date(groupConfig.startDate);
+          if (groupConfig.type === "day") {
+            dueDate.setDate(
+              dueDate.getDate() + i * Number(groupConfig.frequency || 1),
+            );
+          } else {
+            dueDate.setMonth(dueDate.getMonth() + i);
+          }
+
+          const scheduleRef = doc(collection(db, "schedules"));
+          batch.set(scheduleRef, {
+            loanId: loanRef.id,
+            customerId: targetCustomer.id,
+            customerName: displayCustomerName,
+            loanName: groupConfig.groupName.trim(),
+            loanNumber: targetLoanNumber,
+            installmentNo: i + 1,
+            dueDate: dueDate.toISOString().split("T")[0],
+            amount: groupInstAmount,
+            profitShare: groupProfPerInst,
+            status: "pending",
+          });
+        }
+        await batch.commit();
+      }
+
+      alert("✅ สร้างวงกู้กลุ่มและกระจายข้อมูลสำเร็จเรียบร้อยแล้ว!");
+      router.push("/war-room");
+    } catch (error) {
+      console.error("Error creating group loan:", error);
+      alert(`เกิดข้อผิดพลาด: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const groupedBanks = BANK_OPTIONS.reduce((acc, bank, index) => {
+    if (!acc[bank.owner]) acc[bank.owner] = [];
+    acc[bank.owner].push({ ...bank, index });
+    return acc;
+  }, {});
+
+  const selectedBankInfo =
+    loanMode === "single"
+      ? BANK_OPTIONS[formData.bankIndex] || BANK_OPTIONS[0]
+      : BANK_OPTIONS[groupConfig.bankIndex] || BANK_OPTIONS[0];
+
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-8 pt-10 gap-4">
+      {/* --- HEADER & TABS --- */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-6 pt-10 gap-4">
         <div>
-          <h1 className="text-3xl font-black text-gray-800 tracking-tight">
-            สร้างวงกู้ใหม่
+          <h1 className="text-3xl font-black text-gray-800 tracking-tight flex items-center gap-3">
+            {loanMode === "single" ? (
+              "สร้างวงกู้ใหม่"
+            ) : (
+              <>
+                <Users className="w-8 h-8 text-orange-500" /> สร้างวงแชร์ /
+                กลุ่ม
+              </>
+            )}
           </h1>
-          <p className="text-[10px] text-gray-400 font-black uppercase tracking-[0.2em] mt-1">
-            อัปเดตยอดลูกค้าอัตโนมัติ
-          </p>
+          <div className="flex bg-gray-100 p-1 rounded-xl mt-4 w-fit shadow-inner">
+            <button
+              onClick={() => setLoanMode("single")}
+              className={`px-6 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${
+                loanMode === "single"
+                  ? "bg-white text-orange-500 shadow-sm"
+                  : "text-gray-400 hover:text-gray-600"
+              }`}
+            >
+              วงกู้เดี่ยว
+            </button>
+            <button
+              onClick={() => setLoanMode("group")}
+              className={`px-6 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${
+                loanMode === "group"
+                  ? "bg-white text-orange-500 shadow-sm"
+                  : "text-gray-400 hover:text-gray-600"
+              }`}
+            >
+              วงแชร์ / วงกลุ่ม
+            </button>
+          </div>
         </div>
+
         <button
-          onClick={handleSaveContract}
+          onClick={
+            loanMode === "single" ? handleSaveContract : handleSaveGroupLoan
+          }
           disabled={loading}
-          className="w-full sm:w-auto bg-orange-500 text-white px-10 py-4 rounded-2xl font-black shadow-xl shadow-orange-100 hover:bg-orange-600 transition-all active:scale-95 text-xs uppercase flex items-center justify-center gap-2 disabled:opacity-50"
+          className="w-full sm:w-auto bg-orange-500 text-white px-10 py-4 rounded-2xl font-black shadow-xl transition-all active:scale-95 text-xs uppercase flex items-center justify-center gap-2 disabled:opacity-50 hover:-translate-y-1"
         >
           {loading ? (
             <Loader2 className="w-4 h-4 animate-spin" />
           ) : (
             <Save className="w-4 h-4" />
           )}
-          บันทึกและเปิดสัญญา
+          {loanMode === "single"
+            ? "บันทึกและเปิดสัญญา"
+            : "บันทึกการสร้างวงกลุ่ม"}
         </button>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-10">
-        <div className="space-y-8">
-          <div className="bg-white p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-gray-50 space-y-8">
-            <h3 className="font-black text-gray-800 flex items-center gap-2 text-sm uppercase tracking-widest border-l-4 border-orange-500 pl-4">
-              Loan Configuration
-            </h3>
+      {/* ========================================== */}
+      {/* 🟢 UI: SINGLE LOAN */}
+      {/* ========================================== */}
+      {loanMode === "single" && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-in fade-in zoom-in-95 duration-300 items-start">
+          <div className="lg:col-span-7 space-y-8">
+            <div className="bg-white p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-gray-50 space-y-8">
+              <h3 className="font-black text-gray-800 flex items-center gap-2 text-sm uppercase tracking-widest border-l-4 border-orange-500 pl-4">
+                Loan Configuration
+              </h3>
 
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-                <div className="md:col-span-12" ref={dropdownRef}>
-                  <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
-                    ชื่อลูกค้า (ค้นหาจากชื่อเล่น/ชื่อจริง)
-                  </label>
-                  <div className="relative mt-1">
-                    <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
-                    <input
-                      name="customerName"
-                      type="text"
-                      value={formData.customerName}
-                      onChange={handleChange}
-                      onFocus={() => setShowDropdown(true)}
-                      className="w-full pl-12 pr-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-orange-500 font-bold transition-all text-gray-700"
-                      placeholder="พิมพ์เพื่อค้นหาลูกค้า..."
-                    />
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+                  {/* ลูกค้า Single Loan */}
+                  <div className="md:col-span-12" ref={dropdownRef}>
+                    <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
+                      ชื่อลูกค้า (ค้นหาจากชื่อเล่น/ชื่อจริง) *
+                    </label>
+                    <div className="relative mt-1">
+                      <User
+                        className={`absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 ${formData.customerId ? "text-green-500" : "text-gray-300"}`}
+                      />
+                      <input
+                        name="customerName"
+                        type="text"
+                        value={formData.customerName}
+                        onChange={handleChange}
+                        onFocus={() => setShowDropdown(true)}
+                        className={`w-full pl-12 pr-10 py-4 bg-white border rounded-2xl outline-none font-bold transition-all text-gray-700 ${formData.customerId ? "border-green-500 bg-green-50/50" : "border-gray-200 focus:border-orange-500"}`}
+                        placeholder="พิมพ์ค้นหาและเลือกลูกค้า..."
+                      />
+                      {formData.customerId && (
+                        <CheckCircle2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-green-500" />
+                      )}
 
-                    {showDropdown && (
-                      <div className="absolute z-50 w-full mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl max-h-60 overflow-y-auto">
-                        {filteredCustomers.length > 0 ? (
-                          filteredCustomers.map((c) => (
-                            <div
-                              key={c.id}
-                              onClick={() => {
-                                setFormData((prev) => ({
-                                  ...prev,
-                                  customerId: c.id,
-                                  customerName: c.nickname || c.name,
-                                }));
-                                setShowDropdown(false);
-                              }}
-                              className="px-5 py-4 hover:bg-orange-50 cursor-pointer border-b border-gray-50 last:border-0 transition-colors flex items-center justify-between"
-                            >
-                              <div>
-                                <p className="text-sm font-black text-gray-800">
-                                  {c.nickname
-                                    ? `${c.nickname} (${c.name})`
-                                    : c.name}
-                                </p>
-                                <p className="text-[10px] font-bold text-gray-400 mt-1">
-                                  📞 {c.phone}
-                                </p>
+                      {showDropdown && (
+                        <div className="absolute z-50 w-full mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl max-h-60 overflow-y-auto">
+                          {filteredCustomers.length > 0 ? (
+                            filteredCustomers.map((c) => (
+                              <div
+                                key={c.id}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setFormData((prev) => ({
+                                    ...prev,
+                                    customerId: c.id,
+                                    customerName: formatCustomerName(c),
+                                  }));
+                                  setShowDropdown(false);
+                                }}
+                                className="px-5 py-4 hover:bg-orange-50 cursor-pointer border-b border-gray-50 last:border-0 transition-colors flex items-center justify-between"
+                              >
+                                <div>
+                                  <p className="text-sm font-black text-gray-800">
+                                    {c.code && (
+                                      <span className="text-orange-500 mr-1">
+                                        [{c.code}]
+                                      </span>
+                                    )}
+                                    {formatCustomerName(c)}
+                                  </p>
+                                  <p className="text-[10px] font-bold text-gray-400 mt-1">
+                                    📞 {c.phone}
+                                  </p>
+                                </div>
                               </div>
+                            ))
+                          ) : (
+                            <div className="px-5 py-6 text-center">
+                              <p className="text-xs font-black text-gray-400 uppercase tracking-widest">
+                                ไม่พบรายชื่อลูกค้านี้
+                              </p>
                             </div>
-                          ))
-                        ) : (
-                          <div className="px-5 py-6 text-center">
-                            <p className="text-xs font-black text-gray-400 uppercase tracking-widest">
-                              ไม่พบรายชื่อลูกค้านี้
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-7">
+                    <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
+                      ชื่อกลุ่ม / วงแชร์ (ไม่บังคับ)
+                    </label>
+                    <div className="relative mt-1">
+                      <Users className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
+                      <input
+                        name="loanName"
+                        type="text"
+                        value={formData.loanName}
+                        onChange={handleChange}
+                        className="w-full pl-12 pr-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-orange-500 font-bold transition-all text-gray-700"
+                        placeholder="เช่น แชร์แม่ชม (ปล่อยว่าง = ใช้ชื่อลูกค้า)"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-5">
+                    <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
+                      ลำดับวงกู้
+                    </label>
+                    <div className="relative mt-1">
+                      <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
+                      <input
+                        name="loanNumber"
+                        type="text"
+                        value={formData.loanNumber}
+                        onChange={handleChange}
+                        className="w-full pl-10 pr-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-orange-500 font-black text-orange-500 transition-all text-center"
+                        placeholder="เช่น 1, 2"
+                      />
+                    </div>
                   </div>
                 </div>
 
-                <div className="md:col-span-7">
-                  <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
-                    ชื่อกลุ่ม / วงแชร์ (ไม่บังคับ)
+                <div>
+                  <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400 mb-1 block">
+                    บัญชีธนาคารที่ใช้ปล่อยกู้
                   </label>
-                  <div className="relative mt-1">
-                    <Users className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
+                  <button
+                    type="button"
+                    onClick={() => setIsBankModalOpen(true)}
+                    className="w-full flex items-center justify-between px-5 py-4 bg-gray-50 hover:bg-white border border-transparent rounded-2xl transition-all group text-left shadow-sm hover:shadow-md"
+                    style={{ borderColor: `${selectedBankInfo.color}40` }}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div
+                        className="w-12 h-12 rounded-xl flex items-center justify-center transition-all"
+                        style={{
+                          backgroundColor: `${selectedBankInfo.color}15`,
+                          border: `1px solid ${selectedBankInfo.color}30`,
+                        }}
+                      >
+                        <Landmark
+                          className="w-6 h-6"
+                          style={{ color: selectedBankInfo.color }}
+                        />
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-gray-800">
+                          {selectedBankInfo.owner}
+                        </p>
+                        <p
+                          className="text-[11px] font-black uppercase tracking-widest mt-0.5"
+                          style={{ color: selectedBankInfo.color }}
+                        >
+                          ธนาคาร: {selectedBankInfo.bank}
+                        </p>
+                      </div>
+                    </div>
+                    <ChevronDown className="w-5 h-5 text-gray-300 group-hover:text-gray-500 transition-colors" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 md:gap-6">
+                  <div>
+                    <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
+                      ยอดปล่อยกู้
+                    </label>
                     <input
-                      name="loanName"
-                      type="text"
-                      value={formData.loanName}
+                      name="principal"
+                      type="number"
+                      value={formData.principal === 0 ? "" : formData.principal}
                       onChange={handleChange}
-                      className="w-full pl-12 pr-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-orange-500 font-bold transition-all text-gray-700"
-                      placeholder="เช่น แชร์แม่ชม (ปล่อยว่าง = ใช้ชื่อลูกค้า)"
+                      className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-800 text-xl md:text-2xl focus:bg-white focus:border-orange-500 transition-all text-gray-700"
                     />
                   </div>
-                  <p className="text-[9px] font-bold text-gray-400 mt-2 ml-2 tracking-widest">
-                    * ใช้สำหรับจัดกลุ่มคนกู้ในหน้าวอร์รูม
-                  </p>
+                  <div>
+                    <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
+                      ดอกเบี้ย (%)
+                    </label>
+                    <input
+                      name="interestPercent"
+                      type="number"
+                      step="0.01"
+                      value={
+                        formData.interestPercent === 0
+                          ? ""
+                          : formData.interestPercent
+                      }
+                      onChange={handleChange}
+                      className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none text-green-600 font-black text-xl md:text-2xl focus:bg-white focus:border-green-500 transition-all"
+                    />
+                  </div>
                 </div>
 
-                <div className="md:col-span-5">
+                <div className="p-4 md:p-6 bg-gray-50 rounded-[2rem] border border-gray-100">
+                  <label className="text-[12px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-4">
+                    <Clock className="w-4 h-4 text-orange-500" /> รอบการส่งเงิน
+                  </label>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+                    {[
+                      { label: "รายวัน", val: 1, type: "day" },
+                      { label: "5 วัน", val: 5, type: "day" },
+                      { label: "7 วัน", val: 7, type: "day" },
+                      { label: "รายเดือน", val: 1, type: "month" },
+                    ].map((f) => (
+                      <button
+                        key={f.label}
+                        type="button"
+                        onClick={() => setFreq(f.val, f.type)}
+                        className={`py-3 rounded-xl text-[10px] font-black transition-all border ${
+                          !isCustomFrequency &&
+                          formData.frequency === f.val &&
+                          formData.type === f.type
+                            ? "bg-[#1F2335] border-[#1F2335] text-white shadow-lg"
+                            : "bg-white border-gray-200 text-gray-400 hover:border-orange-200"
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomFrequency(true);
+                        setFormData((prev) => ({ ...prev, type: "day" }));
+                      }}
+                      className={`py-3 rounded-xl text-[10px] font-black transition-all border ${
+                        isCustomFrequency
+                          ? "bg-orange-500 border-orange-500 text-white shadow-lg"
+                          : "bg-white border-gray-200 text-gray-400 hover:border-orange-200"
+                      }`}
+                    >
+                      กำหนดเอง
+                    </button>
+                  </div>
+
+                  {isCustomFrequency && (
+                    <div className="mt-4 flex items-center gap-3 animate-in slide-in-from-top-2 duration-300">
+                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                        ส่งทุกๆ
+                      </span>
+                      <input
+                        type="number"
+                        name="frequency"
+                        value={
+                          formData.frequency === 0 ? "" : formData.frequency
+                        }
+                        onChange={handleChange}
+                        className="w-24 px-4 py-2 text-center bg-white border border-gray-200 rounded-xl outline-none font-black text-orange-500 focus:border-orange-500 transition-all shadow-inner"
+                        placeholder="เช่น 3"
+                        min="1"
+                      />
+                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                        วัน
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 md:gap-6">
+                  <div>
+                    <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
+                      จำนวนงวด
+                    </label>
+                    <input
+                      name="installments"
+                      type="number"
+                      value={
+                        formData.installments === 0 ? "" : formData.installments
+                      }
+                      onChange={handleChange}
+                      className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-700 focus:bg-white focus:border-orange-500 transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[12px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                      วันที่เริ่ม
+                    </label>
+                    <input
+                      name="startDate"
+                      type="date"
+                      value={formData.startDate}
+                      onChange={handleChange}
+                      className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-700 focus:bg-white focus:border-orange-500 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-[#1F2335] p-6 md:p-8 rounded-[2.5rem] text-white shadow-2xl relative overflow-hidden space-y-6 md:space-y-8 mt-4">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/10 rounded-full -mr-16 -mt-16 blur-3xl"></div>
+                  <div className="relative z-10 grid grid-cols-2 gap-y-6 md:gap-y-8 gap-x-4">
+                    <div>
+                      <span className="text-[12px] md:text-[14px] font-black text-gray-500 uppercase tracking-widest block mb-1">
+                        ยอดเก็บ / งวด
+                      </span>
+                      <span className="font-black text-2xl md:text-4xl text-orange-400 tracking-tighter">
+                        ฿{installmentAmount.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[12px] md:text-[14px] font-black text-gray-500 uppercase tracking-widest block mb-1">
+                        กำไร / งวด
+                      </span>
+                      <span className="font-black text-2xl md:text-4xl text-green-400 tracking-tighter">
+                        ฿{profitPerInstallment.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="col-span-2 border-t border-white/5 pt-6 md:pt-8 flex justify-between items-end">
+                      <div>
+                        <span className="text-[12px] md:text-[14px] font-black text-gray-500 uppercase tracking-widest block mb-1">
+                          ยอดรับจริงทั้งหมด
+                        </span>
+                        <span className="font-black text-xl md:text-2xl">
+                          ฿{actualTotalToCollect.toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[12px] md:text-[14px] font-black text-orange-400 uppercase tracking-widest block mb-1">
+                          กำไรสุทธิ
+                        </span>
+                        <span className="font-black text-xl md:text-2xl text-orange-500">
+                          ฿{totalProfit.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="lg:col-span-5 z-0">
+            <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-50 overflow-hidden flex flex-col h-fit max-h-[70vh]">
+              <div className="p-6 md:p-8 border-b border-gray-50 bg-gray-50/30 flex justify-between items-center">
+                <h3 className="font-black text-gray-800 flex items-center gap-3 text-sm uppercase tracking-widest">
+                  <Calendar className="w-5 h-5 text-orange-500" />{" "}
+                  ตารางค่างวดพรีวิว
+                </h3>
+                <span className="px-4 py-1.5 bg-white rounded-xl border border-gray-100 text-[10px] font-black text-orange-500 shadow-sm">
+                  {count} งวด
+                </span>
+              </div>
+
+              <div className="overflow-y-auto">
+                <table className="w-full text-left">
+                  <thead className="sticky top-0 bg-white border-b border-gray-50 z-10">
+                    <tr className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
+                      <th className="px-6 md:px-10 py-5">งวดที่</th>
+                      <th className="px-6 md:px-10 py-5 text-center">
+                        วันที่ชำระ
+                      </th>
+                      <th className="px-6 md:px-10 py-5 text-right">ยอดเงิน</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {Array.from({ length: count }).map((_, i) => {
+                      let date = new Date(formData.startDate);
+                      if (formData.type === "day") {
+                        date.setDate(
+                          date.getDate() + i * Number(formData.frequency || 1),
+                        );
+                      } else {
+                        date.setMonth(date.getMonth() + i);
+                      }
+                      const dateStr = `${date.getDate()}/${date.getMonth() + 1}/${date.getFullYear().toString().slice(-2)}`;
+                      return (
+                        <tr
+                          key={i}
+                          className="hover:bg-orange-50/10 transition-all group"
+                        >
+                          <td className="px-6 md:px-10 py-4 md:py-6 text-xs font-black text-gray-300 group-hover:text-orange-500">
+                            {String(i + 1).padStart(2, "0")}
+                          </td>
+                          <td className="px-6 md:px-10 py-4 md:py-6 text-sm font-bold text-gray-600 text-center">
+                            {dateStr}
+                          </td>
+                          <td className="px-6 md:px-10 py-4 md:py-6 text-sm font-black text-gray-800 text-right">
+                            ฿{installmentAmount.toLocaleString()}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================== */}
+      {/* 🟠 UI: GROUP LOAN (แบบ Checkbox Modal) */}
+      {/* ========================================== */}
+      {loanMode === "group" && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-in fade-in zoom-in-95 duration-300 items-start">
+          <div className="lg:col-span-7 xl:col-span-8 space-y-6">
+            <div className="bg-white p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-gray-50 space-y-8 relative z-10">
+              <h3 className="font-black text-gray-800 flex items-center gap-2 text-sm uppercase tracking-widest border-l-4 border-orange-500 pl-4">
+                1. กติกาของกลุ่ม (ใช้ร่วมกันทุกคน)
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+                <div className="md:col-span-8">
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
-                    ลำดับวงกู้
+                    ชื่อกลุ่ม / วงแชร์ *
+                  </label>
+                  <input
+                    name="groupName"
+                    type="text"
+                    value={groupConfig.groupName}
+                    onChange={handleGroupConfigChange}
+                    className="w-full mt-1 px-5 py-4 bg-orange-50/30 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-orange-500 font-black text-orange-600 text-lg transition-all"
+                    placeholder="เช่น แชร์แม่ชมวงที่ 1"
+                  />
+                </div>
+
+                <div className="md:col-span-4">
+                  <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
+                    ลำดับวงกู้ *
                   </label>
                   <div className="relative mt-1">
                     <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
                     <input
                       name="loanNumber"
                       type="text"
-                      value={formData.loanNumber}
-                      onChange={handleChange}
+                      value={groupConfig.loanNumber}
+                      onChange={handleGroupConfigChange}
                       className="w-full pl-10 pr-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-orange-500 font-black text-orange-500 transition-all text-center"
-                      placeholder="เช่น 1, 2"
+                      placeholder="เช่น 1"
                     />
                   </div>
                 </div>
-              </div>
 
-              <div>
-                <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400 mb-1 block">
-                  บัญชีธนาคารที่ใช้ปล่อยกู้
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setIsBankModalOpen(true)}
-                  className="w-full flex items-center justify-between px-5 py-4 bg-gray-50 hover:bg-white border border-transparent rounded-2xl transition-all group text-left shadow-sm hover:shadow-md"
-                  style={{ borderColor: `${selectedBankInfo.color}40` }}
-                >
-                  <div className="flex items-center gap-4">
-                    <div
-                      className="w-12 h-12 rounded-xl flex items-center justify-center transition-all"
-                      style={{
-                        backgroundColor: `${selectedBankInfo.color}15`,
-                        border: `1px solid ${selectedBankInfo.color}30`,
-                      }}
-                    >
-                      <Landmark
-                        className="w-6 h-6"
-                        style={{ color: selectedBankInfo.color }}
-                      />
-                    </div>
-                    <div>
-                      <p className="text-sm font-black text-gray-800">
-                        {selectedBankInfo.owner}
-                      </p>
-                      <p
-                        className="text-[11px] font-black uppercase tracking-widest mt-0.5"
-                        style={{ color: selectedBankInfo.color }}
-                      >
-                        ธนาคาร: {selectedBankInfo.bank}
-                      </p>
-                    </div>
-                  </div>
-                  <ChevronDown className="w-5 h-5 text-gray-300 group-hover:text-gray-500 transition-colors" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 md:gap-6">
-                <div>
+                <div className="md:col-span-6">
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
-                    ยอดปล่อยกู้
+                    ยอดปล่อยกู้ (ต่อคน) *
                   </label>
                   <input
                     name="principal"
                     type="number"
-                    value={formData.principal === 0 ? "" : formData.principal}
-                    onChange={handleChange}
-                    className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-800 text-xl md:text-2xl focus:bg-white focus:border-orange-500 transition-all text-gray-700"
+                    value={
+                      groupConfig.principal === 0 ? "" : groupConfig.principal
+                    }
+                    onChange={handleGroupConfigChange}
+                    className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-800 text-xl focus:bg-white focus:border-orange-500 transition-all"
                   />
                 </div>
-                <div>
+
+                <div className="md:col-span-6">
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
                     ดอกเบี้ย (%)
                   </label>
@@ -604,22 +1150,61 @@ export default function NewLoanPage() {
                     type="number"
                     step="0.01"
                     value={
-                      formData.interestPercent === 0
+                      groupConfig.interestPercent === 0
                         ? ""
-                        : formData.interestPercent
+                        : groupConfig.interestPercent
                     }
-                    onChange={handleChange}
-                    className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none text-green-600 font-black text-xl md:text-2xl focus:bg-white focus:border-green-500 transition-all"
+                    onChange={handleGroupConfigChange}
+                    className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none text-green-600 font-black text-xl focus:bg-white focus:border-green-500 transition-all"
                   />
+                </div>
+
+                <div className="md:col-span-12">
+                  <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400 mb-1 block">
+                    บัญชีธนาคารต้นทาง
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsBankModalOpen(true)}
+                    className="w-full flex items-center justify-between px-5 py-4 bg-gray-50 hover:bg-white border border-transparent rounded-2xl transition-all group text-left shadow-sm hover:shadow-md"
+                    style={{ borderColor: `${selectedBankInfo.color}40` }}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div
+                        className="w-8 h-8 rounded-xl flex items-center justify-center transition-all"
+                        style={{
+                          backgroundColor: `${selectedBankInfo.color}15`,
+                          border: `1px solid ${selectedBankInfo.color}30`,
+                        }}
+                      >
+                        <Landmark
+                          className="w-4 h-4"
+                          style={{ color: selectedBankInfo.color }}
+                        />
+                      </div>
+                      <div>
+                        <p className="text-xs font-black text-gray-800">
+                          {selectedBankInfo.owner}
+                        </p>
+                        <p
+                          className="text-[9px] font-black uppercase tracking-widest mt-0.5"
+                          style={{ color: selectedBankInfo.color }}
+                        >
+                          ธนาคาร: {selectedBankInfo.bank}
+                        </p>
+                      </div>
+                    </div>
+                    <ChevronDown className="w-4 h-4 text-gray-300 group-hover:text-gray-500 transition-colors" />
+                  </button>
                 </div>
               </div>
 
               <div className="p-4 md:p-6 bg-gray-50 rounded-[2rem] border border-gray-100">
                 <label className="text-[12px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-4">
-                  <Clock className="w-4 h-4 text-orange-500" /> รอบการส่งเงิน
+                  <Clock className="w-4 h-4 text-orange-500" />{" "}
+                  รอบการส่งเงินของกลุ่ม
                 </label>
-
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   {[
                     { label: "รายวัน", val: 1, type: "day" },
                     { label: "5 วัน", val: 5, type: "day" },
@@ -629,11 +1214,11 @@ export default function NewLoanPage() {
                     <button
                       key={f.label}
                       type="button"
-                      onClick={() => setFreq(f.val, f.type)}
+                      onClick={() => setGroupFreq(f.val, f.type)}
                       className={`py-3 rounded-xl text-[10px] font-black transition-all border ${
-                        !isCustomFrequency &&
-                        formData.frequency === f.val &&
-                        formData.type === f.type
+                        !isGroupCustomFreq &&
+                        groupConfig.frequency === f.val &&
+                        groupConfig.type === f.type
                           ? "bg-[#1F2335] border-[#1F2335] text-white shadow-lg"
                           : "bg-white border-gray-200 text-gray-400 hover:border-orange-200"
                       }`}
@@ -641,15 +1226,14 @@ export default function NewLoanPage() {
                       {f.label}
                     </button>
                   ))}
-
                   <button
                     type="button"
                     onClick={() => {
-                      setIsCustomFrequency(true);
-                      setFormData((prev) => ({ ...prev, type: "day" }));
+                      setIsGroupCustomFreq(true);
+                      setGroupConfig((prev) => ({ ...prev, type: "day" }));
                     }}
                     className={`py-3 rounded-xl text-[10px] font-black transition-all border ${
-                      isCustomFrequency
+                      isGroupCustomFreq
                         ? "bg-orange-500 border-orange-500 text-white shadow-lg"
                         : "bg-white border-gray-200 text-gray-400 hover:border-orange-200"
                     }`}
@@ -657,20 +1241,19 @@ export default function NewLoanPage() {
                     กำหนดเอง
                   </button>
                 </div>
-
-                {isCustomFrequency && (
-                  <div className="mt-4 flex items-center gap-3 animate-in slide-in-from-top-2 duration-300">
+                {isGroupCustomFreq && (
+                  <div className="mt-4 flex items-center gap-3">
                     <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
                       ส่งทุกๆ
                     </span>
                     <input
                       type="number"
                       name="frequency"
-                      value={formData.frequency === 0 ? "" : formData.frequency}
-                      onChange={handleChange}
-                      className="w-24 px-4 py-2 text-center bg-white border border-gray-200 rounded-xl outline-none font-black text-orange-500 focus:border-orange-500 transition-all shadow-inner"
-                      placeholder="เช่น 3"
-                      min="1"
+                      value={
+                        groupConfig.frequency === 0 ? "" : groupConfig.frequency
+                      }
+                      onChange={handleGroupConfigChange}
+                      className="w-24 px-4 py-2 text-center bg-white border border-gray-200 rounded-xl outline-none font-black text-orange-500 focus:border-orange-500 transition-all"
                     />
                     <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
                       วัน
@@ -688,9 +1271,11 @@ export default function NewLoanPage() {
                     name="installments"
                     type="number"
                     value={
-                      formData.installments === 0 ? "" : formData.installments
+                      groupConfig.installments === 0
+                        ? ""
+                        : groupConfig.installments
                     }
-                    onChange={handleChange}
+                    onChange={handleGroupConfigChange}
                     className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-700 focus:bg-white focus:border-orange-500 transition-all"
                   />
                 </div>
@@ -701,109 +1286,355 @@ export default function NewLoanPage() {
                   <input
                     name="startDate"
                     type="date"
-                    value={formData.startDate}
-                    onChange={handleChange}
+                    value={groupConfig.startDate}
+                    onChange={handleGroupConfigChange}
                     className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-700 focus:bg-white focus:border-orange-500 transition-all"
                   />
                 </div>
               </div>
+            </div>
 
-              <div className="bg-[#1F2335] p-6 md:p-8 rounded-[2.5rem] text-white shadow-2xl relative overflow-hidden space-y-6 md:space-y-8 mt-4">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/10 rounded-full -mr-16 -mt-16 blur-3xl"></div>
-                <div className="relative z-10 grid grid-cols-2 gap-y-6 md:gap-y-8 gap-x-4">
-                  <div>
-                    <span className="text-[12px] md:text-[14px] font-black text-gray-500 uppercase tracking-widest block mb-1">
-                      ยอดเก็บ / งวด
-                    </span>
-                    <span className="font-black text-2xl md:text-4xl text-orange-400 tracking-tighter">
-                      ฿{installmentAmount.toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-[12px] md:text-[14px] font-black text-gray-500 uppercase tracking-widest block mb-1">
-                      กำไร / งวด
-                    </span>
-                    <span className="font-black text-2xl md:text-4xl text-green-400 tracking-tighter">
-                      ฿{profitPerInstallment.toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="col-span-2 border-t border-white/5 pt-6 md:pt-8 flex justify-between items-end">
+            {/* 🌟 2. สมาชิกในกลุ่ม (Checkbox Result) */}
+            <div className="bg-white p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-gray-50 space-y-6 relative z-20">
+              <div className="flex justify-between items-center border-b border-gray-50 pb-4">
+                <h3 className="font-black text-gray-800 flex items-center gap-2 text-sm uppercase tracking-widest border-l-4 border-orange-500 pl-4">
+                  2. สมาชิกในกลุ่ม ({selectedMembers.length} คน)
+                </h3>
+                <button
+                  onClick={openMemberModal}
+                  className="text-[10px] font-black uppercase tracking-widest text-white bg-orange-500 hover:bg-orange-600 px-5 py-3 rounded-xl transition-all flex items-center gap-2 shadow-md active:scale-95"
+                >
+                  <PlusCircle className="w-4 h-4" /> เลือกสมาชิกเข้ากลุ่ม
+                </button>
+              </div>
+
+              {selectedMembers.length === 0 ? (
+                <div className="text-center py-10 bg-gray-50 border-2 border-dashed border-gray-200 rounded-3xl">
+                  <Users className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+                  <p className="text-xs font-black text-gray-400 uppercase tracking-widest">
+                    ยังไม่มีสมาชิกในกลุ่มนี้
+                  </p>
+                  <p className="text-[10px] font-bold text-gray-400 mt-1">
+                    คลิกปุ่ม เลือกสมาชิก ด้านบนเพื่อเพิ่ม
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {selectedMembers.map((member, index) => (
+                    <div
+                      key={member.customerId}
+                      className="bg-orange-50/50 hover:bg-orange-50 border border-orange-100 p-4 rounded-2xl flex justify-between items-center transition-colors group"
+                    >
+                      <div className="flex items-center gap-3 overflow-hidden">
+                        <div className="w-6 h-6 rounded-full bg-orange-200 flex items-center justify-center shrink-0">
+                          <span className="text-[10px] font-black text-orange-700">
+                            {index + 1}
+                          </span>
+                        </div>
+                        <span className="font-bold text-sm text-gray-800 truncate">
+                          {member.customerName}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => removeSelectedMember(member.customerId)}
+                        className="text-orange-300 hover:text-red-500 transition-colors p-1"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* แสดงตัวอย่างสรุปยอดเงินของ 1 คน ให้เห็นภาพ */}
+              {selectedMembers.length > 0 && (
+                <div className="mt-4 bg-orange-50/50 border border-orange-100 p-5 rounded-2xl">
+                  <p className="text-[11px] font-black text-orange-600 uppercase tracking-widest mb-3">
+                    รายละเอียดเงินของสมาชิก (ต่อ 1 คน)
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
-                      <span className="text-[12px] md:text-[14px] font-black text-gray-500 uppercase tracking-widest block mb-1">
-                        ยอดรับจริงทั้งหมด
-                      </span>
-                      <span className="font-black text-xl md:text-2xl">
-                        ฿{actualTotalToCollect.toLocaleString()}
-                      </span>
+                      <p className="text-[10px] text-gray-500 font-bold">
+                        ยอดเก็บ/งวด
+                      </p>
+                      <p className="text-sm font-black text-gray-800">
+                        ฿{groupInstAmount.toLocaleString()}
+                      </p>
                     </div>
-                    <div className="text-right">
-                      <span className="text-[12px] md:text-[14px] font-black text-orange-400 uppercase tracking-widest block mb-1">
+                    <div>
+                      <p className="text-[10px] text-gray-500 font-bold">
+                        กำไร/งวด
+                      </p>
+                      <p className="text-sm font-black text-green-600">
+                        ฿{groupProfPerInst.toLocaleString()}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-gray-500 font-bold">
+                        รับจริงทั้งหมด
+                      </p>
+                      <p className="text-sm font-black text-gray-800">
+                        ฿{groupActualTotal.toLocaleString()}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-gray-500 font-bold">
                         กำไรสุทธิ
-                      </span>
-                      <span className="font-black text-xl md:text-2xl text-orange-500">
-                        ฿{totalProfit.toLocaleString()}
-                      </span>
+                      </p>
+                      <p className="text-sm font-black text-orange-600">
+                        ฿{groupTotProfit.toLocaleString()}
+                      </p>
                     </div>
                   </div>
+                </div>
+              )}
+            </div>
+
+            {/* 🌟 3. สรุปยอดรวมกลุ่ม */}
+            <div className="bg-[#1F2335] p-6 md:p-8 rounded-[2.5rem] text-white shadow-2xl relative overflow-hidden z-10">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/20 rounded-full -mr-16 -mt-16 blur-3xl"></div>
+
+              <div className="relative z-10 grid grid-cols-2 md:grid-cols-5 gap-y-6 md:gap-y-8 gap-x-4">
+                <div className="col-span-2 md:col-span-5 border-b border-white/5 pb-6 flex flex-col md:flex-row justify-between gap-4">
+                  <div>
+                    <span className="text-[12px] md:text-[14px] font-black text-gray-400 uppercase tracking-widest block mb-1">
+                      ยอดเงินต้นรวมทั้งกลุ่ม
+                    </span>
+                    <span className="font-black text-3xl md:text-4xl text-white tracking-tighter">
+                      ฿{totalGroupPrincipal.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="md:text-right">
+                    <span className="text-[10px] md:text-[12px] font-black text-orange-400 uppercase tracking-widest block mb-1">
+                      ยอดปล่อยกู้ / คน
+                    </span>
+                    <span className="font-black text-xl md:text-2xl text-orange-400 tracking-tighter">
+                      ฿{groupP.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-[10px] md:text-[12px] font-black text-gray-400 uppercase tracking-widest block mb-1">
+                    ยอดเก็บรวม/งวด
+                  </span>
+                  <span className="font-black text-xl md:text-2xl text-orange-400 tracking-tighter">
+                    ฿{totalGroupInstallmentAmount.toLocaleString()}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[10px] md:text-[12px] font-black text-gray-400 uppercase tracking-widest block mb-1">
+                    กำไรรวม/งวด
+                  </span>
+                  <span className="font-black text-xl md:text-2xl text-green-400 tracking-tighter">
+                    ฿{totalGroupProfitPerInst.toLocaleString()}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[10px] md:text-[12px] font-black text-gray-500 uppercase tracking-widest block mb-1">
+                    รับจริงทั้งหมด
+                  </span>
+                  <span className="font-black text-xl md:text-2xl">
+                    ฿{totalGroupExpectedCollect.toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="col-span-2 md:col-span-2 md:text-right">
+                  <span className="text-[10px] md:text-[12px] font-black text-orange-400 uppercase tracking-widest block mb-1">
+                    กำไรสุทธิรวม
+                  </span>
+                  <span className="font-black text-xl md:text-2xl text-orange-500">
+                    ฿{totalGroupProfit.toLocaleString()}
+                  </span>
                 </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-50 overflow-hidden flex flex-col h-full min-h-[500px]">
-          <div className="p-6 md:p-8 border-b border-gray-50 bg-gray-50/30 flex justify-between items-center">
-            <h3 className="font-black text-gray-800 flex items-center gap-3 text-sm uppercase tracking-widest">
-              <Calendar className="w-5 h-5 text-orange-500" /> ตารางค่างวดพรีวิว
-            </h3>
-            <span className="px-4 py-1.5 bg-white rounded-xl border border-gray-100 text-[10px] font-black text-orange-500 shadow-sm">
-              {count} งวด
-            </span>
-          </div>
+          <div className="lg:col-span-5 xl:col-span-4 z-0">
+            {/* 🌟 ปรับตารางให้พอดีไม่ยืด */}
+            <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-50 overflow-hidden flex flex-col h-fit max-h-[70vh]">
+              <div className="p-6 md:p-8 border-b border-gray-50 bg-gray-50/30 flex justify-between items-center">
+                <h3 className="font-black text-gray-800 flex items-center gap-3 text-sm uppercase tracking-widest">
+                  <Calendar className="w-5 h-5 text-orange-500" /> ตารางพรีวิว
+                  (ต่อคน)
+                </h3>
+                <span className="px-4 py-1.5 bg-white rounded-xl border border-gray-100 text-[10px] font-black text-orange-500 shadow-sm">
+                  {groupCount} งวด
+                </span>
+              </div>
 
-          <div className="flex-1 overflow-y-auto">
-            <table className="w-full text-left">
-              <thead className="sticky top-0 bg-white border-b border-gray-50 z-10">
-                <tr className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
-                  <th className="px-6 md:px-10 py-5">งวดที่</th>
-                  <th className="px-6 md:px-10 py-5 text-center">วันที่ชำระ</th>
-                  <th className="px-6 md:px-10 py-5 text-right">ยอดเงิน</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {Array.from({ length: count }).map((_, i) => {
-                  let date = new Date(formData.startDate);
-                  if (formData.type === "day") {
-                    date.setDate(
-                      date.getDate() + i * Number(formData.frequency || 1),
-                    );
-                  } else {
-                    date.setMonth(date.getMonth() + i);
-                  }
-                  const dateStr = `${date.getDate()}/${date.getMonth() + 1}/${date.getFullYear().toString().slice(-2)}`;
-                  return (
-                    <tr
-                      key={i}
-                      className="hover:bg-orange-50/10 transition-all group"
-                    >
-                      <td className="px-6 md:px-10 py-4 md:py-6 text-xs font-black text-gray-300 group-hover:text-orange-500">
-                        {String(i + 1).padStart(2, "0")}
-                      </td>
-                      <td className="px-6 md:px-10 py-4 md:py-6 text-sm font-bold text-gray-600 text-center">
-                        {dateStr}
-                      </td>
-                      <td className="px-6 md:px-10 py-4 md:py-6 text-sm font-black text-gray-800 text-right">
-                        ฿{installmentAmount.toLocaleString()}
-                      </td>
+              <div className="overflow-y-auto">
+                <table className="w-full text-left">
+                  <thead className="sticky top-0 bg-white border-b border-gray-50 z-10">
+                    <tr className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
+                      <th className="px-6 py-5">งวดที่</th>
+                      <th className="px-6 py-5 text-center">วันที่ชำระ</th>
+                      <th className="px-6 py-5 text-right">ยอดเก็บรวม</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {Array.from({ length: groupCount }).map((_, i) => {
+                      let date = new Date(groupConfig.startDate);
+                      if (groupConfig.type === "day") {
+                        date.setDate(
+                          date.getDate() +
+                            i * Number(groupConfig.frequency || 1),
+                        );
+                      } else {
+                        date.setMonth(date.getMonth() + i);
+                      }
+                      const dateStr = `${date.getDate()}/${date.getMonth() + 1}/${date.getFullYear().toString().slice(-2)}`;
+                      return (
+                        <tr
+                          key={i}
+                          className="hover:bg-orange-50/10 transition-all group"
+                        >
+                          <td className="px-6 py-4 text-xs font-black text-gray-300 group-hover:text-orange-500">
+                            {String(i + 1).padStart(2, "0")}
+                          </td>
+                          <td className="px-6 py-4 text-sm font-bold text-gray-600 text-center">
+                            {dateStr}
+                          </td>
+                          <td className="px-6 py-4 text-sm font-black text-gray-800 text-right">
+                            ฿{groupInstAmount.toLocaleString()}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
+      {/* ========================================== */}
+      {/* 🌟 MODAL: เลือกสมาชิกแบบ Checkbox (Idea 2)  */}
+      {/* ========================================== */}
+      {isMemberModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-gray-900/70 backdrop-blur-sm"
+            onClick={() => setIsMemberModalOpen(false)}
+          ></div>
+          <div className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl flex flex-col h-[85vh] md:h-[80vh] animate-in zoom-in-95 duration-200">
+            {/* Header Modal */}
+            <div className="flex justify-between items-center px-6 md:px-8 py-6 border-b border-gray-100 bg-gray-50/50 rounded-t-[2.5rem]">
+              <div>
+                <h2 className="text-xl md:text-2xl font-black text-gray-800 flex items-center gap-3">
+                  <Users className="w-6 h-6 text-orange-500" /> เลือกสมาชิก
+                </h2>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
+                  เลือกคนที่ต้องการดึงเข้ากลุ่ม
+                </p>
+              </div>
+              <button
+                onClick={() => setIsMemberModalOpen(false)}
+                className="p-3 bg-white hover:bg-rose-50 text-gray-400 hover:text-rose-500 rounded-2xl shadow-sm border border-gray-100 transition-all active:scale-95"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* ค้นหาใน Modal */}
+            <div className="px-6 md:px-8 py-4 border-b border-gray-100">
+              <div className="relative">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-300" />
+                <input
+                  type="text"
+                  value={memberSearchQuery}
+                  onChange={(e) => setMemberSearchQuery(e.target.value)}
+                  className="w-full pl-12 pr-4 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-orange-500 font-bold transition-all text-gray-700"
+                  placeholder="ค้นหาชื่อ หรือ รหัสลูกค้า..."
+                />
+              </div>
+            </div>
+
+            {/* รายชื่อลูกค้า */}
+            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-2 bg-gray-50/30">
+              {filteredModalCustomers.length === 0 ? (
+                <div className="text-center py-10">
+                  <p className="text-sm font-bold text-gray-400">
+                    ไม่พบรายชื่อลูกค้านี้
+                  </p>
+                </div>
+              ) : (
+                filteredModalCustomers.map((c) => {
+                  const isChecked = tempSelectedIds.includes(c.id);
+                  return (
+                    <div
+                      key={c.id}
+                      onClick={() => toggleMemberSelection(c.id)}
+                      className={`flex items-center justify-between p-4 rounded-2xl border-2 transition-all cursor-pointer ${
+                        isChecked
+                          ? "border-orange-500 bg-orange-50/50 shadow-sm"
+                          : "border-transparent bg-white hover:border-orange-200 shadow-sm"
+                      }`}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div
+                          className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${isChecked ? "bg-orange-500 text-white" : "bg-gray-100 text-gray-400"}`}
+                        >
+                          {isChecked ? (
+                            <CheckCircle2 className="w-5 h-5" />
+                          ) : (
+                            <User className="w-5 h-5" />
+                          )}
+                        </div>
+                        <div>
+                          <p
+                            className={`font-black ${isChecked ? "text-orange-700" : "text-gray-800"}`}
+                          >
+                            {c.code && (
+                              <span className="text-orange-500 mr-1">
+                                [{c.code}]
+                              </span>
+                            )}
+                            {formatCustomerName(c)}
+                          </p>
+                          <p className="text-[11px] font-bold text-gray-400 mt-0.5">
+                            📞 {c.phone || "ไม่มีเบอร์"}
+                          </p>
+                        </div>
+                      </div>
+                      <div>
+                        {isChecked ? (
+                          <CheckSquare className="w-6 h-6 text-orange-500" />
+                        ) : (
+                          <Square className="w-6 h-6 text-gray-300" />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Footer Modal */}
+            <div className="p-6 md:p-8 bg-white border-t border-gray-100 rounded-b-[2.5rem] flex items-center justify-between">
+              <p className="text-sm font-black text-gray-500">
+                เลือกแล้ว{" "}
+                <span className="text-xl text-orange-500">
+                  {tempSelectedIds.length}
+                </span>{" "}
+                คน
+              </p>
+              <button
+                onClick={confirmMemberSelection}
+                className="bg-gray-900 hover:bg-black text-white px-8 py-4 rounded-2xl font-black shadow-xl transition-all active:scale-95 text-xs uppercase tracking-widest"
+              >
+                ยืนยันการเลือก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- MODAL: เลือกบัญชีธนาคาร --- */}
       {isBankModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div
@@ -843,16 +1674,27 @@ export default function NewLoanPage() {
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                     {banks.map((b) => {
-                      const isSelected = formData.bankIndex === b.index;
+                      const isSelected =
+                        loanMode === "single"
+                          ? formData.bankIndex === b.index
+                          : groupConfig.bankIndex === b.index;
+
                       return (
                         <button
                           key={b.index}
                           type="button"
                           onClick={() => {
-                            setFormData((prev) => ({
-                              ...prev,
-                              bankIndex: b.index,
-                            }));
+                            if (loanMode === "single") {
+                              setFormData((prev) => ({
+                                ...prev,
+                                bankIndex: b.index,
+                              }));
+                            } else {
+                              setGroupConfig((prev) => ({
+                                ...prev,
+                                bankIndex: b.index,
+                              }));
+                            }
                             setIsBankModalOpen(false);
                           }}
                           className={`relative p-4 md:p-5 rounded-3xl border flex flex-col items-start text-left transition-all duration-300 group ${
@@ -866,9 +1708,7 @@ export default function NewLoanPage() {
                                   borderColor: b.color,
                                   backgroundColor: `${b.color}15`,
                                 }
-                              : {
-                                  borderColor: "#f3f4f6",
-                                }
+                              : { borderColor: "#f3f4f6" }
                           }
                         >
                           <div className="flex justify-between w-full items-center mb-3">
