@@ -80,7 +80,6 @@ export default function DashboardHome() {
       let totalMarket = 0;
       let activeLoansList = [];
       const loanMap = new Map();
-
       loansSnap.forEach((d) => {
         const data = d.data();
         loanMap.set(d.id, data);
@@ -90,24 +89,25 @@ export default function DashboardHome() {
         }
       });
 
-      // 2. ดึงเป้าเก็บและเป้ากำไร
+      // 2. ดึงเป้าเก็บและกำไร (คำนวณกำไรจากตรงนี้แทนบิล)
       const scheduleQ = query(
         collection(db, "schedules"),
         where("dueDate", "==", selectedDate),
       );
       const scheduleSnap = await getDocs(scheduleQ);
+
       let dayTotalGoal = 0;
       let expectedProfitToday = 0;
       let tasksCount = 0;
       let tasksAmount = 0;
       let collectedAmount = 0;
+      let actualProfitFromSchedules = 0; // 🌟 เพิ่มตัวแปรเก็บกำไรจริง
       let dailyTargetsList = [];
 
       scheduleSnap.forEach((doc) => {
         const data = doc.data();
         const parentLoan = loanMap.get(data.loanId);
 
-        // 🚨 ตัวกำจัดผี: ถ้าสถานะ pending แต่ว่า "วงกู้ถูกปิดไปแล้ว" หรือ "โดนลบไปแล้ว" ให้เด้งข้ามไปเลย ไม่นับ!
         if (
           data.status === "pending" &&
           (!parentLoan || parentLoan.status === "closed")
@@ -117,9 +117,7 @@ export default function DashboardHome() {
 
         dayTotalGoal += data.amount || 0;
         expectedProfitToday += data.profitShare || 0;
-
         const lNum = data.loanNumber || parentLoan?.loanNumber || "-";
-
         dailyTargetsList.push({ id: doc.id, ...data, loanNumber: lNum });
 
         if (data.status === "pending") {
@@ -127,22 +125,24 @@ export default function DashboardHome() {
           tasksAmount += data.amount || 0;
         } else if (data.status === "paid") {
           collectedAmount += data.amount || 0;
+          // 🌟 หัวใจสำคัญ: บวกกำไรเฉพาะงวดที่จ่ายแล้วจริงๆ เท่านั้น
+          actualProfitFromSchedules += data.profitShare || 0;
         }
       });
 
-      // 3. กำไรที่เก็บได้จริง (Transactions)
+      // 3. กำไรจากค่าปรับ (ดึงจาก Transactions เฉพาะส่วนที่เป็น Penalty)
       const transDayQ = query(
         collection(db, "transactions"),
         where("paymentDate", "==", selectedDate),
       );
       const transDaySnap = await getDocs(transDayQ);
-      let dailyProfit = 0;
+      let penaltyToday = 0;
       transDaySnap.forEach((doc) => {
         const data = doc.data();
-        dailyProfit += (data.profitShare || 0) + (data.penalty || 0);
+        penaltyToday += data.penalty || 0; // เอาเฉพาะค่าปรับจากบิล
       });
 
-      // 4. กำไรสะสมของเดือน
+      // 4. กำไรสะสมของเดือน (ยังคงใช้ Transactions ได้ เพราะต้องการยอดรวมประวัติ)
       const transMonthQ = query(
         collection(db, "transactions"),
         where("paymentDate", ">=", firstDayOfMonth),
@@ -160,7 +160,7 @@ export default function DashboardHome() {
         expectedToday: dayTotalGoal,
         collectedAmount: collectedAmount,
         expectedProfitToday: expectedProfitToday,
-        profitToday: dailyProfit,
+        profitToday: actualProfitFromSchedules + penaltyToday, // 🌟 กำไรจริง = กำไรงวดที่จ่ายแล้ว + ค่าปรับ
         profitMonth: monthlyProfit,
         pendingTasks: tasksCount,
         pendingAmount: tasksAmount,
