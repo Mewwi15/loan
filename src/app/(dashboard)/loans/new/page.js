@@ -189,7 +189,7 @@ export default function NewLoanPage() {
     loanName: "",
     loanNumber: "1",
     bankIndex: 0,
-    principal: 0,
+    principal: "", // 🌟 แก้ค่าเรื่มต้นให้ปล่อยว่างได้
     interestPercent: 10,
     installments: 20,
     startDate: new Date().toISOString().split("T")[0],
@@ -205,7 +205,7 @@ export default function NewLoanPage() {
     groupName: "",
     loanNumber: "1",
     bankIndex: 0,
-    principal: 0, // ยอดกู้มาตรฐาน
+    principal: "", // 🌟 แก้ค่าเรื่มต้นให้ปล่อยว่างได้
     interestPercent: 10,
     installments: 20,
     startDate: new Date().toISOString().split("T")[0],
@@ -213,7 +213,6 @@ export default function NewLoanPage() {
     type: "day",
   });
 
-  // 🌟 เพิ่ม State ให้เก็บค่า "เงินต้นเฉพาะรายบุคคล" ด้วย (customPrincipal)
   const [selectedMembers, setSelectedMembers] = useState([]); // [{ customerId, customerName, customPrincipal: "" }]
   const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
   const [memberSearchQuery, setMemberSearchQuery] = useState("");
@@ -277,7 +276,9 @@ export default function NewLoanPage() {
   const handleChange = (e) => {
     const { name, value, type } = e.target;
     let finalValue = value;
-    if (type === "number") finalValue = value === "" ? 0 : Number(value);
+    // 🌟 แก้ให้รับค่าว่างได้ เพื่อให้พิมพ์ 0 ได้อิสระ ไม่ดึงกลับไปเป็นค่าว่าง
+    if (type === "number") finalValue = value === "" ? "" : Number(value);
+
     setFormData((prev) => {
       const updated = { ...prev, [name]: finalValue };
       if (name === "customerName") updated.customerId = "";
@@ -306,7 +307,7 @@ export default function NewLoanPage() {
       return alert("❌ กรุณาเลือกลูกค้าจากรายการค้นหา (Dropdown) ครับ");
     if (principal <= 0) return alert("กรุณาระบุยอดปล่อยกู้");
     if (!targetLoanNumber) return alert("กรุณาระบุลำดับวงกู้");
-    if (formData.frequency <= 0)
+    if (Number(formData.frequency) <= 0)
       return alert("กรุณาระบุรอบการส่งเงินที่ถูกต้อง");
 
     setLoading(true);
@@ -375,7 +376,7 @@ export default function NewLoanPage() {
         totalProfit: totalProfit,
         profitPerInstallment: profitPerInstallment,
         startDate: formData.startDate,
-        frequency: formData.frequency,
+        frequency: Number(formData.frequency) || 1,
         frequencyType: formData.type,
         status: "active",
         createdAt: serverTimestamp(),
@@ -390,7 +391,7 @@ export default function NewLoanPage() {
         let dueDate = new Date(formData.startDate);
         if (formData.type === "day") {
           dueDate.setDate(
-            dueDate.getDate() + i * Number(formData.frequency || 1),
+            dueDate.getDate() + i * (Number(formData.frequency) || 1),
           );
         } else {
           dueDate.setMonth(dueDate.getMonth() + i);
@@ -429,7 +430,8 @@ export default function NewLoanPage() {
   const handleGroupConfigChange = (e) => {
     const { name, value, type } = e.target;
     let finalValue = value;
-    if (type === "number") finalValue = value === "" ? 0 : Number(value);
+    // 🌟 แก้ให้รับค่าว่างได้
+    if (type === "number") finalValue = value === "" ? "" : Number(value);
     setGroupConfig((prev) => ({ ...prev, [name]: finalValue }));
   };
 
@@ -438,7 +440,6 @@ export default function NewLoanPage() {
     setGroupConfig((prev) => ({ ...prev, frequency: val, type: type }));
   };
 
-  // 🌟 ฟังก์ชันปรับยอดเงินต้นรายคน (Inline Override)
   const updateMemberCustomPrincipal = (customerId, value) => {
     setSelectedMembers((prev) =>
       prev.map((m) =>
@@ -447,7 +448,6 @@ export default function NewLoanPage() {
     );
   };
 
-  // เปิด Modal เช็คบ็อกซ์
   const openMemberModal = () => {
     setTempSelectedIds(selectedMembers.map((m) => m.customerId));
     setMemberSearchQuery("");
@@ -462,7 +462,6 @@ export default function NewLoanPage() {
 
   const confirmMemberSelection = () => {
     const newMembers = tempSelectedIds.map((id) => {
-      // ถ้ารายชื่อนี้เคยถูกเลือกแล้ว ให้ใช้ข้อมูลเดิม (เพื่อรักษายอดที่อาจจะแก้ไว้)
       const existing = selectedMembers.find((m) => m.customerId === id);
       if (existing) return existing;
 
@@ -470,7 +469,7 @@ export default function NewLoanPage() {
       return {
         customerId: customer.id,
         customerName: formatCustomerName(customer),
-        customPrincipal: "", // ตั้งค่าว่างไว้ เพื่อให้ใช้ยอด Default
+        customPrincipal: "",
       };
     });
     setSelectedMembers(newMembers);
@@ -493,7 +492,6 @@ export default function NewLoanPage() {
     );
   });
 
-  // 🌟 คำนวณยอดกลุ่มแบบรวมศูนย์ (คำนวณแยกอิสระรายบุคคล)
   const groupDefaultPrincipal = Number(groupConfig.principal) || 0;
   const groupPercent = Number(groupConfig.interestPercent) || 0;
   const groupCount = Math.max(Number(groupConfig.installments) || 1, 1);
@@ -504,9 +502,7 @@ export default function NewLoanPage() {
   let totalGroupProfit = 0;
   let totalGroupProfitPerInst = 0;
 
-  // วนลูปคำนวณของแต่ละคน แล้วเอามารวมกัน
   const membersCalculations = selectedMembers.map((m) => {
-    // ถ้ารายบุคคลไม่ได้ระบุยอดไว้ ให้ใช้ยอด Default
     const p =
       m.customPrincipal !== ""
         ? Number(m.customPrincipal)
@@ -543,7 +539,7 @@ export default function NewLoanPage() {
       return alert(
         "กรุณาระบุ 'ยอดปล่อยกู้ (ต่อคน)' สำหรับเป็นยอดมาตรฐานด้วยครับ",
       );
-    if (groupConfig.installments <= 0 || groupConfig.frequency <= 0)
+    if (groupConfig.installments <= 0 || Number(groupConfig.frequency) <= 0)
       return alert("รูปแบบงวดไม่ถูกต้อง");
 
     if (selectedMembers.length === 0)
@@ -585,7 +581,6 @@ export default function NewLoanPage() {
       const selectedBankForGroup =
         BANK_OPTIONS[groupConfig.bankIndex] || BANK_OPTIONS[0];
 
-      // สร้างข้อมูลรายบุคคล โดยใช้ข้อมูลที่คำนวณแยกให้แต่ละคน (membersCalculations)
       for (const member of membersCalculations) {
         const batch = writeBatch(db);
 
@@ -608,7 +603,6 @@ export default function NewLoanPage() {
           bankName: selectedBankForGroup.bank,
           bankAccount: selectedBankForGroup.acc,
           bankColor: selectedBankForGroup.color,
-          // 🔥 ใช้ยอดที่คำนวณแยกรายคน
           principal: member.calculatedPrincipal,
           interestRate: groupPercent,
           totalAmount: member.total,
@@ -619,7 +613,7 @@ export default function NewLoanPage() {
           totalProfit: member.profit,
           profitPerInstallment: member.profPerInst,
           startDate: groupConfig.startDate,
-          frequency: groupConfig.frequency,
+          frequency: Number(groupConfig.frequency) || 1,
           frequencyType: groupConfig.type,
           status: "active",
           isGroupLoan: true,
@@ -635,7 +629,7 @@ export default function NewLoanPage() {
           let dueDate = new Date(groupConfig.startDate);
           if (groupConfig.type === "day") {
             dueDate.setDate(
-              dueDate.getDate() + i * Number(groupConfig.frequency || 1),
+              dueDate.getDate() + i * (Number(groupConfig.frequency) || 1),
             );
           } else {
             dueDate.setMonth(dueDate.getMonth() + i);
@@ -650,7 +644,7 @@ export default function NewLoanPage() {
             loanNumber: targetLoanNumber,
             installmentNo: i + 1,
             dueDate: dueDate.toISOString().split("T")[0],
-            amount: member.instAmt, // ยอดส่งของแต่ละคน
+            amount: member.instAmt,
             profitShare: member.profPerInst,
             status: "pending",
           });
@@ -681,7 +675,6 @@ export default function NewLoanPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500">
-      {/* --- HEADER & TABS --- */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-6 pt-10 gap-4">
         <div>
           <h1 className="text-3xl font-black text-gray-800 tracking-tight flex items-center gap-3">
@@ -736,9 +729,6 @@ export default function NewLoanPage() {
         </button>
       </div>
 
-      {/* ========================================== */}
-      {/* 🟢 UI: SINGLE LOAN */}
-      {/* ========================================== */}
       {loanMode === "single" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-in fade-in zoom-in-95 duration-300 items-start">
           <div className="lg:col-span-7 space-y-8">
@@ -749,7 +739,6 @@ export default function NewLoanPage() {
 
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-                  {/* ลูกค้า Single Loan */}
                   <div className="md:col-span-12" ref={dropdownRef}>
                     <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
                       ชื่อลูกค้า (ค้นหาจากชื่อเล่น/ชื่อจริง) *
@@ -897,7 +886,7 @@ export default function NewLoanPage() {
                     <input
                       name="principal"
                       type="number"
-                      value={formData.principal === 0 ? "" : formData.principal}
+                      value={formData.principal} // 🌟 นำเงื่อนไขการล้างช่องทิ้งไป
                       onChange={handleChange}
                       className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-800 text-xl md:text-2xl focus:bg-white focus:border-orange-500 transition-all text-gray-700"
                     />
@@ -910,11 +899,7 @@ export default function NewLoanPage() {
                       name="interestPercent"
                       type="number"
                       step="0.01"
-                      value={
-                        formData.interestPercent === 0
-                          ? ""
-                          : formData.interestPercent
-                      }
+                      value={formData.interestPercent} // 🌟 นำเงื่อนไขการล้างช่องทิ้งไป ให้พิมพ์ 0 ได้
                       onChange={handleChange}
                       className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none text-green-600 font-black text-xl md:text-2xl focus:bg-white focus:border-green-500 transition-all"
                     />
@@ -972,9 +957,7 @@ export default function NewLoanPage() {
                       <input
                         type="number"
                         name="frequency"
-                        value={
-                          formData.frequency === 0 ? "" : formData.frequency
-                        }
+                        value={formData.frequency} // 🌟
                         onChange={handleChange}
                         className="w-24 px-4 py-2 text-center bg-white border border-gray-200 rounded-xl outline-none font-black text-orange-500 focus:border-orange-500 transition-all shadow-inner"
                         placeholder="เช่น 3"
@@ -995,9 +978,7 @@ export default function NewLoanPage() {
                     <input
                       name="installments"
                       type="number"
-                      value={
-                        formData.installments === 0 ? "" : formData.installments
-                      }
+                      value={formData.installments} // 🌟
                       onChange={handleChange}
                       className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-700 focus:bg-white focus:border-orange-500 transition-all"
                     />
@@ -1087,7 +1068,8 @@ export default function NewLoanPage() {
                       let date = new Date(formData.startDate);
                       if (formData.type === "day") {
                         date.setDate(
-                          date.getDate() + i * Number(formData.frequency || 1),
+                          date.getDate() +
+                            i * (Number(formData.frequency) || 1),
                         );
                       } else {
                         date.setMonth(date.getMonth() + i);
@@ -1168,9 +1150,7 @@ export default function NewLoanPage() {
                   <input
                     name="principal"
                     type="number"
-                    value={
-                      groupConfig.principal === 0 ? "" : groupConfig.principal
-                    }
+                    value={groupConfig.principal} // 🌟
                     onChange={handleGroupConfigChange}
                     className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-800 text-xl focus:bg-white focus:border-orange-500 transition-all"
                     placeholder="ใส่ยอดเริ่มต้นให้ทุกคน"
@@ -1185,11 +1165,7 @@ export default function NewLoanPage() {
                     name="interestPercent"
                     type="number"
                     step="0.01"
-                    value={
-                      groupConfig.interestPercent === 0
-                        ? ""
-                        : groupConfig.interestPercent
-                    }
+                    value={groupConfig.interestPercent} // 🌟 อนุญาตให้เป็น 0
                     onChange={handleGroupConfigChange}
                     className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none text-green-600 font-black text-xl focus:bg-white focus:border-green-500 transition-all"
                   />
@@ -1285,9 +1261,7 @@ export default function NewLoanPage() {
                     <input
                       type="number"
                       name="frequency"
-                      value={
-                        groupConfig.frequency === 0 ? "" : groupConfig.frequency
-                      }
+                      value={groupConfig.frequency} // 🌟
                       onChange={handleGroupConfigChange}
                       className="w-24 px-4 py-2 text-center bg-white border border-gray-200 rounded-xl outline-none font-black text-orange-500 focus:border-orange-500 transition-all"
                     />
@@ -1306,11 +1280,7 @@ export default function NewLoanPage() {
                   <input
                     name="installments"
                     type="number"
-                    value={
-                      groupConfig.installments === 0
-                        ? ""
-                        : groupConfig.installments
-                    }
+                    value={groupConfig.installments} // 🌟
                     onChange={handleGroupConfigChange}
                     className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-700 focus:bg-white focus:border-orange-500 transition-all"
                   />
@@ -1506,7 +1476,7 @@ export default function NewLoanPage() {
                       if (groupConfig.type === "day") {
                         date.setDate(
                           date.getDate() +
-                            i * Number(groupConfig.frequency || 1),
+                            i * (Number(groupConfig.frequency) || 1),
                         );
                       } else {
                         date.setMonth(date.getMonth() + i);
