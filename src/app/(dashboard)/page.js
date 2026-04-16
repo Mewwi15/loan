@@ -81,7 +81,7 @@ export default function DashboardHome() {
         }
       });
 
-      // 2. ดึงเป้าเก็บและกำไร
+      // 2. ดึงเป้าเก็บและกำไรรายวัน
       const scheduleQ = query(
         collection(db, "schedules"),
         where("dueDate", "==", selectedDate),
@@ -133,31 +133,55 @@ export default function DashboardHome() {
         penaltyToday += data.penalty || 0;
       });
 
-      // 4. กำไรสะสมของเดือน (แสดงครบทุกวัน แม้วันนั้นจะไม่ได้กำไรก็ตาม)
+      // ===============================================
+      // 🌟 4. กำไรสะสมของเดือน (ดึงจาก Schedules เพื่อหลบบิลผี)
+      // ===============================================
+      const monthSchedulesQ = query(
+        collection(db, "schedules"),
+        where("dueDate", ">=", firstDayOfMonth),
+        where("dueDate", "<=", lastDayOfMonth),
+      );
+      const monthSchedulesSnap = await getDocs(monthSchedulesQ);
+
+      let monthlyProfit = 0;
+
+      // 🌟 สร้าง Map เติมวันที่ให้ครบทุกวันในเดือนก่อน (ตั้งแต่ 1 ถึงสิ้นเดือน)
+      const dailyProfitMap = new Map();
+      for (let i = 1; i <= lastDay; i++) {
+        const dateStr = `${year}-${month}-${String(i).padStart(2, "0")}`;
+        dailyProfitMap.set(dateStr, 0);
+      }
+
+      // 🌟 เอายอดกำไรจากตารางงวด "เฉพาะที่จ่ายแล้ว" มาบวก
+      monthSchedulesSnap.forEach((doc) => {
+        const data = doc.data();
+        if (data.status === "paid") {
+          const profit = data.profitShare || 0;
+          monthlyProfit += profit;
+
+          const pDate = data.dueDate; // ยึดตามวันดิว
+          if (pDate && dailyProfitMap.has(pDate)) {
+            dailyProfitMap.set(pDate, dailyProfitMap.get(pDate) + profit);
+          }
+        }
+      });
+
+      // 🌟 บวก "ค่าปรับ" (Penalty) จาก Transactions เข้าไปด้วย (ถ้ามี)
       const transMonthQ = query(
         collection(db, "transactions"),
         where("paymentDate", ">=", firstDayOfMonth),
         where("paymentDate", "<=", lastDayOfMonth),
       );
       const transMonthSnap = await getDocs(transMonthQ);
-      let monthlyProfit = 0;
-
-      // 🌟 สร้าง Map แบบเติมวันที่ให้ครบทุกวันในเดือนก่อน (ตั้งแต่ 1 ถึงสิ้นเดือน)
-      const dailyProfitMap = new Map();
-      for (let i = 1; i <= lastDay; i++) {
-        const dateStr = `${year}-${month}-${String(i).padStart(2, "0")}`;
-        dailyProfitMap.set(dateStr, 0); // ตั้งค่าเริ่มต้นทุกวันเป็น 0
-      }
-
-      // 🌟 นำยอด Transaction มาบวกใส่วันที่ที่มีข้อมูล
       transMonthSnap.forEach((doc) => {
         const data = doc.data();
-        const profit = (data.profitShare || 0) + (data.penalty || 0);
-        monthlyProfit += profit;
-
-        const pDate = data.paymentDate;
-        if (pDate && dailyProfitMap.has(pDate)) {
-          dailyProfitMap.set(pDate, dailyProfitMap.get(pDate) + profit);
+        const penalty = data.penalty || 0;
+        if (penalty > 0) {
+          monthlyProfit += penalty;
+          const pDate = data.paymentDate;
+          if (pDate && dailyProfitMap.has(pDate)) {
+            dailyProfitMap.set(pDate, dailyProfitMap.get(pDate) + penalty);
+          }
         }
       });
 
@@ -527,7 +551,7 @@ export default function DashboardHome() {
                       </tr>
                     ))}
 
-                  {/* --- กรณียอดเก็บต่องวด (ใช้ Modal Data ชุด dailyTargets) --- */}
+                  {/* --- กรณียอดเก็บต่องวด --- */}
                   {activeModal === "target" &&
                     modalData.dailyTargets.map((item, idx) => (
                       <tr
@@ -549,7 +573,7 @@ export default function DashboardHome() {
                       </tr>
                     ))}
 
-                  {/* --- กรณีกำไรรายวัน (ใช้ Modal Data ชุด dailyTargets ตัวเดียวกัน แต่โชว์ profitShare) --- */}
+                  {/* --- กรณีกำไรรายวัน --- */}
                   {activeModal === "profit" &&
                     modalData.dailyTargets.map((item, idx) => (
                       <tr
