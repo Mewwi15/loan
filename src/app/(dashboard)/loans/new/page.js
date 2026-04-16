@@ -205,7 +205,7 @@ export default function NewLoanPage() {
     groupName: "",
     loanNumber: "1",
     bankIndex: 0,
-    principal: 0, // ยอดกู้ต่อคน
+    principal: 0, // ยอดกู้มาตรฐาน
     interestPercent: 10,
     installments: 20,
     startDate: new Date().toISOString().split("T")[0],
@@ -213,8 +213,8 @@ export default function NewLoanPage() {
     type: "day",
   });
 
-  // 🌟 State สำหรับ Checkbox Modal (ไอเดียที่ 2)
-  const [selectedMembers, setSelectedMembers] = useState([]); // [{ customerId, customerName }]
+  // 🌟 เพิ่ม State ให้เก็บค่า "เงินต้นเฉพาะรายบุคคล" ด้วย (customPrincipal)
+  const [selectedMembers, setSelectedMembers] = useState([]); // [{ customerId, customerName, customPrincipal: "" }]
   const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
   const [memberSearchQuery, setMemberSearchQuery] = useState("");
   const [tempSelectedIds, setTempSelectedIds] = useState([]);
@@ -414,7 +414,7 @@ export default function NewLoanPage() {
       await batch.commit();
       alert("✅ บันทึกสัญญาเรียบร้อยแล้ว!");
       window.history.replaceState(null, "", window.location.pathname);
-      router.push("/war-room");
+      router.push("/");
     } catch (error) {
       console.error("Error:", error);
       alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
@@ -438,34 +438,45 @@ export default function NewLoanPage() {
     setGroupConfig((prev) => ({ ...prev, frequency: val, type: type }));
   };
 
-  // 🌟 เปิด Modal เช็คบ็อกซ์
+  // 🌟 ฟังก์ชันปรับยอดเงินต้นรายคน (Inline Override)
+  const updateMemberCustomPrincipal = (customerId, value) => {
+    setSelectedMembers((prev) =>
+      prev.map((m) =>
+        m.customerId === customerId ? { ...m, customPrincipal: value } : m,
+      ),
+    );
+  };
+
+  // เปิด Modal เช็คบ็อกซ์
   const openMemberModal = () => {
     setTempSelectedIds(selectedMembers.map((m) => m.customerId));
     setMemberSearchQuery("");
     setIsMemberModalOpen(true);
   };
 
-  // 🌟 ติ๊กเลือก/เอาออก จากรายการ
   const toggleMemberSelection = (id) => {
     setTempSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
     );
   };
 
-  // 🌟 ยืนยันการเลือก
   const confirmMemberSelection = () => {
     const newMembers = tempSelectedIds.map((id) => {
+      // ถ้ารายชื่อนี้เคยถูกเลือกแล้ว ให้ใช้ข้อมูลเดิม (เพื่อรักษายอดที่อาจจะแก้ไว้)
+      const existing = selectedMembers.find((m) => m.customerId === id);
+      if (existing) return existing;
+
       const customer = customersList.find((c) => c.id === id);
       return {
         customerId: customer.id,
         customerName: formatCustomerName(customer),
+        customPrincipal: "", // ตั้งค่าว่างไว้ เพื่อให้ใช้ยอด Default
       };
     });
     setSelectedMembers(newMembers);
     setIsMemberModalOpen(false);
   };
 
-  // 🌟 ลบออกจากการ์ดด้านนอก
   const removeSelectedMember = (idToRemove) => {
     setSelectedMembers((prev) =>
       prev.filter((m) => m.customerId !== idToRemove),
@@ -482,25 +493,45 @@ export default function NewLoanPage() {
     );
   });
 
-  // 🌟 คำนวณยอดกลุ่มแบบรวมศูนย์ (ใช้ตัวแปรให้ตรงเป๊ะกับ JSX)
-  const groupP = Number(groupConfig.principal) || 0;
+  // 🌟 คำนวณยอดกลุ่มแบบรวมศูนย์ (คำนวณแยกอิสระรายบุคคล)
+  const groupDefaultPrincipal = Number(groupConfig.principal) || 0;
   const groupPercent = Number(groupConfig.interestPercent) || 0;
   const groupCount = Math.max(Number(groupConfig.installments) || 1, 1);
 
-  // คำนวณ "ต่อคน"
-  const groupRawTotalAmount = groupP + (groupP * groupPercent) / 100;
-  const groupInstAmount = Math.ceil(groupRawTotalAmount / groupCount);
-  const groupActualTotal = groupInstAmount * groupCount;
-  const groupTotProfit = Math.max(groupActualTotal - groupP, 0);
-  const groupProfPerInst = Math.ceil(groupTotProfit / groupCount);
+  let totalGroupPrincipal = 0;
+  let totalGroupCollectPerInst = 0;
+  let totalGroupExpectedCollect = 0;
+  let totalGroupProfit = 0;
+  let totalGroupProfitPerInst = 0;
 
-  // คำนวณรวมทั้งกลุ่ม (คูณด้วยสมาชิกทั้งหมดที่เลือกมา)
-  const totalMembers = selectedMembers.length;
-  const totalGroupPrincipal = groupP * totalMembers;
-  const totalGroupExpectedCollect = groupActualTotal * totalMembers;
-  const totalGroupInstallmentAmount = groupInstAmount * totalMembers;
-  const totalGroupProfit = groupTotProfit * totalMembers;
-  const totalGroupProfitPerInst = groupProfPerInst * totalMembers;
+  // วนลูปคำนวณของแต่ละคน แล้วเอามารวมกัน
+  const membersCalculations = selectedMembers.map((m) => {
+    // ถ้ารายบุคคลไม่ได้ระบุยอดไว้ ให้ใช้ยอด Default
+    const p =
+      m.customPrincipal !== ""
+        ? Number(m.customPrincipal)
+        : groupDefaultPrincipal;
+
+    const instAmt = Math.ceil((p + (p * groupPercent) / 100) / groupCount);
+    const total = instAmt * groupCount;
+    const profit = Math.max(total - p, 0);
+    const profPerInst = Math.ceil(profit / groupCount);
+
+    totalGroupPrincipal += p;
+    totalGroupCollectPerInst += instAmt;
+    totalGroupExpectedCollect += total;
+    totalGroupProfit += profit;
+    totalGroupProfitPerInst += profPerInst;
+
+    return {
+      ...m,
+      calculatedPrincipal: p,
+      instAmt,
+      total,
+      profit,
+      profPerInst,
+    };
+  });
 
   const handleSaveGroupLoan = async () => {
     const targetLoanNumber = groupConfig.loanNumber.toString().trim();
@@ -508,7 +539,10 @@ export default function NewLoanPage() {
     if (!groupConfig.groupName.trim())
       return alert("กรุณาตั้งชื่อกลุ่ม / วงแชร์");
     if (!targetLoanNumber) return alert("กรุณาระบุลำดับวงกู้ของกลุ่ม");
-    if (groupP <= 0) return alert("กรุณาระบุยอดปล่อยกู้ต่อคนให้ถูกต้อง");
+    if (groupDefaultPrincipal <= 0)
+      return alert(
+        "กรุณาระบุ 'ยอดปล่อยกู้ (ต่อคน)' สำหรับเป็นยอดมาตรฐานด้วยครับ",
+      );
     if (groupConfig.installments <= 0 || groupConfig.frequency <= 0)
       return alert("รูปแบบงวดไม่ถูกต้อง");
 
@@ -540,7 +574,7 @@ export default function NewLoanPage() {
       } else {
         if (
           !window.confirm(
-            `ยืนยันการสร้างวงกลุ่ม "${groupConfig.groupName}" (วงที่ ${targetLoanNumber})\nยอดปล่อยกู้ ${groupP.toLocaleString()} บ./คน (จำนวน ${selectedMembers.length} คน) ?`,
+            `ยืนยันการสร้างวงกลุ่ม "${groupConfig.groupName}" (วงที่ ${targetLoanNumber})\nยอดปล่อยกู้รวม ${totalGroupPrincipal.toLocaleString()} บาท (จำนวน ${selectedMembers.length} คน) ?`,
           )
         ) {
           setLoading(false);
@@ -551,8 +585,8 @@ export default function NewLoanPage() {
       const selectedBankForGroup =
         BANK_OPTIONS[groupConfig.bankIndex] || BANK_OPTIONS[0];
 
-      // สร้างข้อมูลรายบุคคลตามสมาชิกที่ติ๊กเลือกมา
-      for (const member of selectedMembers) {
+      // สร้างข้อมูลรายบุคคล โดยใช้ข้อมูลที่คำนวณแยกให้แต่ละคน (membersCalculations)
+      for (const member of membersCalculations) {
         const batch = writeBatch(db);
 
         const targetCustomer = customersList.find(
@@ -574,15 +608,16 @@ export default function NewLoanPage() {
           bankName: selectedBankForGroup.bank,
           bankAccount: selectedBankForGroup.acc,
           bankColor: selectedBankForGroup.color,
-          principal: groupP,
+          // 🔥 ใช้ยอดที่คำนวณแยกรายคน
+          principal: member.calculatedPrincipal,
           interestRate: groupPercent,
-          totalAmount: groupActualTotal,
-          remainingBalance: groupActualTotal,
+          totalAmount: member.total,
+          remainingBalance: member.total,
           totalInstallments: groupCount,
           currentInstallment: 0,
-          installmentAmount: groupInstAmount,
-          totalProfit: groupTotProfit,
-          profitPerInstallment: groupProfPerInst,
+          installmentAmount: member.instAmt,
+          totalProfit: member.profit,
+          profitPerInstallment: member.profPerInst,
           startDate: groupConfig.startDate,
           frequency: groupConfig.frequency,
           frequencyType: groupConfig.type,
@@ -593,7 +628,7 @@ export default function NewLoanPage() {
 
         batch.update(doc(db, "customers", targetCustomer.id), {
           activeLoans: increment(1),
-          totalDebt: increment(groupActualTotal),
+          totalDebt: increment(member.total),
         });
 
         for (let i = 0; i < groupCount; i++) {
@@ -615,8 +650,8 @@ export default function NewLoanPage() {
             loanNumber: targetLoanNumber,
             installmentNo: i + 1,
             dueDate: dueDate.toISOString().split("T")[0],
-            amount: groupInstAmount,
-            profitShare: groupProfPerInst,
+            amount: member.instAmt, // ยอดส่งของแต่ละคน
+            profitShare: member.profPerInst,
             status: "pending",
           });
         }
@@ -624,7 +659,7 @@ export default function NewLoanPage() {
       }
 
       alert("✅ สร้างวงกู้กลุ่มและกระจายข้อมูลสำเร็จเรียบร้อยแล้ว!");
-      router.push("/war-room");
+      router.push("/");
     } catch (error) {
       console.error("Error creating group loan:", error);
       alert(`เกิดข้อผิดพลาด: ${error.message}`);
@@ -1084,7 +1119,7 @@ export default function NewLoanPage() {
       )}
 
       {/* ========================================== */}
-      {/* 🟠 UI: GROUP LOAN (แบบ Checkbox Modal) */}
+      {/* 🟠 UI: GROUP LOAN (ระบบปรับเงินต้นรายบุคคล) */}
       {/* ========================================== */}
       {loanMode === "group" && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-in fade-in zoom-in-95 duration-300 items-start">
@@ -1128,7 +1163,7 @@ export default function NewLoanPage() {
 
                 <div className="md:col-span-6">
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
-                    ยอดปล่อยกู้ (ต่อคน) *
+                    ยอดปล่อยกู้เริ่มต้น (ต่อคน) *
                   </label>
                   <input
                     name="principal"
@@ -1138,6 +1173,7 @@ export default function NewLoanPage() {
                     }
                     onChange={handleGroupConfigChange}
                     className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-800 text-xl focus:bg-white focus:border-orange-500 transition-all"
+                    placeholder="ใส่ยอดเริ่มต้นให้ทุกคน"
                   />
                 </div>
 
@@ -1294,12 +1330,17 @@ export default function NewLoanPage() {
               </div>
             </div>
 
-            {/* 🌟 2. สมาชิกในกลุ่ม (Checkbox Result) */}
+            {/* 🌟 2. สมาชิกในกลุ่ม (พร้อมช่องกรอกเงินต้นแยกรายคน) */}
             <div className="bg-white p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-gray-50 space-y-6 relative z-20">
               <div className="flex justify-between items-center border-b border-gray-50 pb-4">
-                <h3 className="font-black text-gray-800 flex items-center gap-2 text-sm uppercase tracking-widest border-l-4 border-orange-500 pl-4">
-                  2. สมาชิกในกลุ่ม ({selectedMembers.length} คน)
-                </h3>
+                <div>
+                  <h3 className="font-black text-gray-800 flex items-center gap-2 text-sm uppercase tracking-widest border-l-4 border-orange-500 pl-4">
+                    2. สมาชิกในกลุ่ม ({selectedMembers.length} คน)
+                  </h3>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1 ml-5">
+                    สามารถปรับยอดกู้แยกรายบุคคลได้
+                  </p>
+                </div>
                 <button
                   onClick={openMemberModal}
                   className="text-[10px] font-black uppercase tracking-widest text-white bg-orange-500 hover:bg-orange-600 px-5 py-3 rounded-xl transition-all flex items-center gap-2 shadow-md active:scale-95"
@@ -1315,103 +1356,87 @@ export default function NewLoanPage() {
                     ยังไม่มีสมาชิกในกลุ่มนี้
                   </p>
                   <p className="text-[10px] font-bold text-gray-400 mt-1">
-                    คลิกปุ่ม เลือกสมาชิก ด้านบนเพื่อเพิ่ม
+                    คลิกปุ่ม เลือกสมาชิกเข้ากลุ่ม ด้านบนเพื่อเพิ่ม
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {selectedMembers.map((member, index) => (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {membersCalculations.map((m, index) => (
                     <div
-                      key={member.customerId}
-                      className="bg-orange-50/50 hover:bg-orange-50 border border-orange-100 p-4 rounded-2xl flex justify-between items-center transition-colors group"
+                      key={m.customerId}
+                      className="bg-gray-50 border border-gray-100 p-5 rounded-[1.5rem] flex flex-col gap-3 transition-colors hover:border-orange-200"
                     >
-                      <div className="flex items-center gap-3 overflow-hidden">
-                        <div className="w-6 h-6 rounded-full bg-orange-200 flex items-center justify-center shrink-0">
-                          <span className="text-[10px] font-black text-orange-700">
-                            {index + 1}
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-3 overflow-hidden">
+                          <div className="w-6 h-6 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
+                            <span className="text-[10px] font-black text-orange-600">
+                              {index + 1}
+                            </span>
+                          </div>
+                          <span className="font-bold text-sm text-gray-800 truncate">
+                            {m.customerName}
                           </span>
                         </div>
-                        <span className="font-bold text-sm text-gray-800 truncate">
-                          {member.customerName}
+                        <button
+                          onClick={() => removeSelectedMember(m.customerId)}
+                          className="text-gray-300 hover:text-red-500 transition-colors p-1"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* 🌟 ช่องให้กรอกเงินต้นแยกรายบุคคล */}
+                      <div className="flex items-center gap-3 mt-1">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                          เงินต้น:
+                        </label>
+                        <input
+                          type="number"
+                          value={m.customPrincipal}
+                          onChange={(e) =>
+                            updateMemberCustomPrincipal(
+                              m.customerId,
+                              e.target.value,
+                            )
+                          }
+                          placeholder={`ยอดตั้งต้น: ${groupDefaultPrincipal}`}
+                          className="flex-1 bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-black text-orange-500 outline-none focus:border-orange-500 transition-all placeholder:text-gray-300 placeholder:font-bold"
+                        />
+                      </div>
+
+                      {/* 🌟 แสดงยอดส่งของคนๆ นั้นให้เห็นทันทีที่แก้ตัวเลข */}
+                      <div className="flex justify-between items-center border-t border-gray-200 pt-3 mt-1">
+                        <span className="text-[10px] font-bold text-gray-400">
+                          ส่งงวดละ:{" "}
+                          <span className="font-black text-gray-700">
+                            ฿{m.instAmt.toLocaleString()}
+                          </span>
+                        </span>
+                        <span className="text-[10px] font-bold text-gray-400">
+                          กำไร:{" "}
+                          <span className="font-black text-green-500">
+                            ฿{m.profit.toLocaleString()}
+                          </span>
                         </span>
                       </div>
-                      <button
-                        onClick={() => removeSelectedMember(member.customerId)}
-                        className="text-orange-300 hover:text-red-500 transition-colors p-1"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
                     </div>
                   ))}
                 </div>
               )}
-
-              {/* แสดงตัวอย่างสรุปยอดเงินของ 1 คน ให้เห็นภาพ */}
-              {selectedMembers.length > 0 && (
-                <div className="mt-4 bg-orange-50/50 border border-orange-100 p-5 rounded-2xl">
-                  <p className="text-[11px] font-black text-orange-600 uppercase tracking-widest mb-3">
-                    รายละเอียดเงินของสมาชิก (ต่อ 1 คน)
-                  </p>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div>
-                      <p className="text-[10px] text-gray-500 font-bold">
-                        ยอดเก็บ/งวด
-                      </p>
-                      <p className="text-sm font-black text-gray-800">
-                        ฿{groupInstAmount.toLocaleString()}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-gray-500 font-bold">
-                        กำไร/งวด
-                      </p>
-                      <p className="text-sm font-black text-green-600">
-                        ฿{groupProfPerInst.toLocaleString()}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-gray-500 font-bold">
-                        รับจริงทั้งหมด
-                      </p>
-                      <p className="text-sm font-black text-gray-800">
-                        ฿{groupActualTotal.toLocaleString()}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-gray-500 font-bold">
-                        กำไรสุทธิ
-                      </p>
-                      <p className="text-sm font-black text-orange-600">
-                        ฿{groupTotProfit.toLocaleString()}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
 
-            {/* 🌟 3. สรุปยอดรวมกลุ่ม */}
+            {/* 🌟 3. สรุปยอดรวมกลุ่ม (รวมจากยอดของแต่ละคน) */}
             <div className="bg-[#1F2335] p-6 md:p-8 rounded-[2.5rem] text-white shadow-2xl relative overflow-hidden z-10">
               <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/20 rounded-full -mr-16 -mt-16 blur-3xl"></div>
 
-              <div className="relative z-10 grid grid-cols-2 md:grid-cols-5 gap-y-6 md:gap-y-8 gap-x-4">
-                <div className="col-span-2 md:col-span-5 border-b border-white/5 pb-6 flex flex-col md:flex-row justify-between gap-4">
-                  <div>
-                    <span className="text-[12px] md:text-[14px] font-black text-gray-400 uppercase tracking-widest block mb-1">
-                      ยอดเงินต้นรวมทั้งกลุ่ม
-                    </span>
-                    <span className="font-black text-3xl md:text-4xl text-white tracking-tighter">
-                      ฿{totalGroupPrincipal.toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="md:text-right">
-                    <span className="text-[10px] md:text-[12px] font-black text-orange-400 uppercase tracking-widest block mb-1">
-                      ยอดปล่อยกู้ / คน
-                    </span>
-                    <span className="font-black text-xl md:text-2xl text-orange-400 tracking-tighter">
-                      ฿{groupP.toLocaleString()}
-                    </span>
-                  </div>
+              <div className="relative z-10 grid grid-cols-2 md:grid-cols-4 gap-y-6 md:gap-y-8 gap-x-4">
+                <div className="col-span-2 md:col-span-4 border-b border-white/5 pb-6">
+                  <span className="text-[12px] md:text-[14px] font-black text-gray-400 uppercase tracking-widest block mb-1">
+                    ยอดเงินต้นรวมทั้งกลุ่ม
+                  </span>
+                  <span className="font-black text-3xl md:text-4xl text-white tracking-tighter">
+                    ฿{totalGroupPrincipal.toLocaleString()}
+                  </span>
                 </div>
 
                 <div>
@@ -1419,7 +1444,7 @@ export default function NewLoanPage() {
                     ยอดเก็บรวม/งวด
                   </span>
                   <span className="font-black text-xl md:text-2xl text-orange-400 tracking-tighter">
-                    ฿{totalGroupInstallmentAmount.toLocaleString()}
+                    ฿{totalGroupCollectPerInst.toLocaleString()}
                   </span>
                 </div>
 
@@ -1441,7 +1466,7 @@ export default function NewLoanPage() {
                   </span>
                 </div>
 
-                <div className="col-span-2 md:col-span-2 md:text-right">
+                <div className="md:text-right">
                   <span className="text-[10px] md:text-[12px] font-black text-orange-400 uppercase tracking-widest block mb-1">
                     กำไรสุทธิรวม
                   </span>
@@ -1459,7 +1484,7 @@ export default function NewLoanPage() {
               <div className="p-6 md:p-8 border-b border-gray-50 bg-gray-50/30 flex justify-between items-center">
                 <h3 className="font-black text-gray-800 flex items-center gap-3 text-sm uppercase tracking-widest">
                   <Calendar className="w-5 h-5 text-orange-500" /> ตารางพรีวิว
-                  (ต่อคน)
+                  (รวมทั้งกลุ่ม)
                 </h3>
                 <span className="px-4 py-1.5 bg-white rounded-xl border border-gray-100 text-[10px] font-black text-orange-500 shadow-sm">
                   {groupCount} งวด
@@ -1499,7 +1524,7 @@ export default function NewLoanPage() {
                             {dateStr}
                           </td>
                           <td className="px-6 py-4 text-sm font-black text-gray-800 text-right">
-                            ฿{groupInstAmount.toLocaleString()}
+                            ฿{totalGroupCollectPerInst.toLocaleString()}
                           </td>
                         </tr>
                       );
