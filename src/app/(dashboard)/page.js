@@ -26,10 +26,11 @@ export default function DashboardHome() {
     new Date().toISOString().split("T")[0],
   );
 
-  const [activeModal, setActiveModal] = useState(null); // 'principal' | 'target' | 'profit' | null
+  const [activeModal, setActiveModal] = useState(null); // 'principal' | 'target' | 'profit' | 'profitMonth' | null
   const [modalData, setModalData] = useState({
     activeLoans: [],
     dailyTargets: [],
+    monthlyProfits: [], // เก็บกำไรแต่ละวันในเดือน
   });
 
   const [stats, setStats] = useState({
@@ -59,21 +60,12 @@ export default function DashboardHome() {
   const fetchDashboardData = useCallback(async () => {
     setLoading(true);
     try {
-      const dateObj = new Date(selectedDate);
-      const firstDayOfMonth = new Date(
-        dateObj.getFullYear(),
-        dateObj.getMonth(),
-        1,
-      )
-        .toISOString()
-        .split("T")[0];
-      const lastDayOfMonth = new Date(
-        dateObj.getFullYear(),
-        dateObj.getMonth() + 1,
-        0,
-      )
-        .toISOString()
-        .split("T")[0];
+      // 🌟 แก้บั๊ก Timezone ของประเทศไทย
+      const [year, month] = selectedDate.split("-");
+      const firstDayOfMonth = `${year}-${month}-01`;
+
+      const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+      const lastDayOfMonth = `${year}-${month}-${String(lastDay).padStart(2, "0")}`;
 
       // 1. ดึงข้อมูล Loans ทั้งหมด
       const loansSnap = await getDocs(collection(db, "loans"));
@@ -89,7 +81,7 @@ export default function DashboardHome() {
         }
       });
 
-      // 2. ดึงเป้าเก็บและกำไร (คำนวณกำไรจากตรงนี้แทนบิล)
+      // 2. ดึงเป้าเก็บและกำไร
       const scheduleQ = query(
         collection(db, "schedules"),
         where("dueDate", "==", selectedDate),
@@ -101,7 +93,7 @@ export default function DashboardHome() {
       let tasksCount = 0;
       let tasksAmount = 0;
       let collectedAmount = 0;
-      let actualProfitFromSchedules = 0; // 🌟 เพิ่มตัวแปรเก็บกำไรจริง
+      let actualProfitFromSchedules = 0;
       let dailyTargetsList = [];
 
       scheduleSnap.forEach((doc) => {
@@ -125,12 +117,11 @@ export default function DashboardHome() {
           tasksAmount += data.amount || 0;
         } else if (data.status === "paid") {
           collectedAmount += data.amount || 0;
-          // 🌟 หัวใจสำคัญ: บวกกำไรเฉพาะงวดที่จ่ายแล้วจริงๆ เท่านั้น
           actualProfitFromSchedules += data.profitShare || 0;
         }
       });
 
-      // 3. กำไรจากค่าปรับ (ดึงจาก Transactions เฉพาะส่วนที่เป็น Penalty)
+      // 3. กำไรจากค่าปรับเฉพาะของวันนี้
       const transDayQ = query(
         collection(db, "transactions"),
         where("paymentDate", "==", selectedDate),
@@ -139,10 +130,10 @@ export default function DashboardHome() {
       let penaltyToday = 0;
       transDaySnap.forEach((doc) => {
         const data = doc.data();
-        penaltyToday += data.penalty || 0; // เอาเฉพาะค่าปรับจากบิล
+        penaltyToday += data.penalty || 0;
       });
 
-      // 4. กำไรสะสมของเดือน (ยังคงใช้ Transactions ได้ เพราะต้องการยอดรวมประวัติ)
+      // 4. กำไรสะสมของเดือน (แสดงครบทุกวัน แม้วันนั้นจะไม่ได้กำไรก็ตาม)
       const transMonthQ = query(
         collection(db, "transactions"),
         where("paymentDate", ">=", firstDayOfMonth),
@@ -150,17 +141,37 @@ export default function DashboardHome() {
       );
       const transMonthSnap = await getDocs(transMonthQ);
       let monthlyProfit = 0;
+
+      // 🌟 สร้าง Map แบบเติมวันที่ให้ครบทุกวันในเดือนก่อน (ตั้งแต่ 1 ถึงสิ้นเดือน)
+      const dailyProfitMap = new Map();
+      for (let i = 1; i <= lastDay; i++) {
+        const dateStr = `${year}-${month}-${String(i).padStart(2, "0")}`;
+        dailyProfitMap.set(dateStr, 0); // ตั้งค่าเริ่มต้นทุกวันเป็น 0
+      }
+
+      // 🌟 นำยอด Transaction มาบวกใส่วันที่ที่มีข้อมูล
       transMonthSnap.forEach((doc) => {
         const data = doc.data();
-        monthlyProfit += (data.profitShare || 0) + (data.penalty || 0);
+        const profit = (data.profitShare || 0) + (data.penalty || 0);
+        monthlyProfit += profit;
+
+        const pDate = data.paymentDate;
+        if (pDate && dailyProfitMap.has(pDate)) {
+          dailyProfitMap.set(pDate, dailyProfitMap.get(pDate) + profit);
+        }
       });
+
+      // แปลง Map เป็น Array และเรียงวันที่
+      const monthlyProfitsList = Array.from(dailyProfitMap.entries())
+        .map(([date, profitValue]) => ({ date, profitValue }))
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
 
       setStats({
         totalPrincipalInMarket: totalMarket,
         expectedToday: dayTotalGoal,
         collectedAmount: collectedAmount,
         expectedProfitToday: expectedProfitToday,
-        profitToday: actualProfitFromSchedules + penaltyToday, // 🌟 กำไรจริง = กำไรงวดที่จ่ายแล้ว + ค่าปรับ
+        profitToday: actualProfitFromSchedules + penaltyToday,
         profitMonth: monthlyProfit,
         pendingTasks: tasksCount,
         pendingAmount: tasksAmount,
@@ -173,6 +184,7 @@ export default function DashboardHome() {
       setModalData({
         activeLoans: sortLoansAsc(activeLoansList),
         dailyTargets: sortLoansAsc(dailyTargetsList),
+        monthlyProfits: monthlyProfitsList,
       });
     } catch (error) {
       console.error("Firebase Dashboard Error:", error);
@@ -287,18 +299,24 @@ export default function DashboardHome() {
           </span>
         </div>
 
-        {/* กำไรรวมรายเดือน */}
-        <div className="bg-[#1F2335] rounded-[2rem] p-8 shadow-xl flex flex-col items-center text-center relative overflow-hidden text-white border border-white/5">
+        {/* 🌟 กำไรรวมรายเดือน */}
+        <div
+          onClick={() => setActiveModal("profitMonth")}
+          className="bg-[#1F2335] rounded-[2rem] p-8 shadow-xl flex flex-col items-center text-center relative overflow-hidden text-white border border-white/5 cursor-pointer hover:shadow-2xl hover:-translate-y-1 hover:border-orange-500/50 transition-all group"
+        >
           <div className="absolute top-0 right-0 w-20 h-20 bg-orange-500/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
-          <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center mb-4">
+          <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
             <TrendingUp className="w-6 h-6 text-orange-400" />
           </div>
-          <p className="text-[14px] font-black uppercase text-orange-400 tracking-widest mb-1">
-            กำไรรวมรายเดือน
+          <p className="text-[14px] font-black uppercase text-orange-400 tracking-widest mb-1 flex items-center gap-1">
+            กำไรรวมรายเดือน <FileText className="w-3 h-3 text-orange-300" />
           </p>
           <p className="text-2xl font-black">
             ฿{stats.profitMonth.toLocaleString()}
           </p>
+          <span className="text-[9px] font-bold text-orange-300 opacity-0 group-hover:opacity-100 transition-opacity mt-2 uppercase tracking-widest bg-orange-500/20 px-2 py-0.5 rounded-full">
+            คลิกดูยอดแต่ละวัน
+          </span>
         </div>
       </div>
 
@@ -438,11 +456,19 @@ export default function DashboardHome() {
                       (ยอดเขียว)
                     </>
                   )}
+                  {activeModal === "profitMonth" && (
+                    <>
+                      <TrendingUp className="w-6 h-6 text-orange-500" />{" "}
+                      กำไรแต่ละวัน
+                    </>
+                  )}
                 </h2>
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
                   {activeModal === "principal"
                     ? "แสดงเฉพาะวงกู้ที่กำลังดำเนินการ (หน้าวอ)"
-                    : `ดึงจากตารางดิว ประจำวันที่ ${formatDateThai(selectedDate)}`}
+                    : activeModal === "profitMonth"
+                      ? `สรุปยอดกำไรรายวัน ประจำเดือน ${new Date(selectedDate).toLocaleDateString("th-TH", { month: "long", year: "numeric" })}`
+                      : `ดึงจากตารางดิว ประจำวันที่ ${formatDateThai(selectedDate)}`}
                 </p>
               </div>
               <button
@@ -458,14 +484,24 @@ export default function DashboardHome() {
               <table className="w-full text-left">
                 <thead className="sticky top-0 bg-white shadow-sm z-10">
                   <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                    <th className="px-6 py-4">#</th>
-                    <th className="px-6 py-4">ชื่อลูกค้า</th>
-                    <th className="px-6 py-4 text-center">วงที่</th>
-                    <th className="px-6 py-4 text-right">
-                      {activeModal === "principal" && "จำนวนเงิน (คงเหลือ)"}
-                      {activeModal === "target" && "ยอดเก็บต่องวด"}
-                      {activeModal === "profit" && "ยอดเขียว (กำไร)"}
-                    </th>
+                    {activeModal === "profitMonth" ? (
+                      <>
+                        <th className="px-6 py-4">#</th>
+                        <th className="px-6 py-4 text-center">วันที่</th>
+                        <th className="px-6 py-4 text-right">กำไรที่เก็บได้</th>
+                      </>
+                    ) : (
+                      <>
+                        <th className="px-6 py-4">#</th>
+                        <th className="px-6 py-4">ชื่อลูกค้า</th>
+                        <th className="px-6 py-4 text-center">วงที่</th>
+                        <th className="px-6 py-4 text-right">
+                          {activeModal === "principal" && "จำนวนเงิน (คงเหลือ)"}
+                          {activeModal === "target" && "ยอดเก็บต่องวด"}
+                          {activeModal === "profit" && "ยอดเขียว (กำไร)"}
+                        </th>
+                      </>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -535,10 +571,37 @@ export default function DashboardHome() {
                       </tr>
                     ))}
 
+                  {/* 🌟 กรณีกำไรรายเดือน (แสดงรายวัน 1-31) */}
+                  {activeModal === "profitMonth" &&
+                    modalData.monthlyProfits.map((item, idx) => (
+                      <tr
+                        key={item.date}
+                        className={`transition-colors ${item.profitValue > 0 ? "hover:bg-orange-50/50" : "opacity-60 bg-gray-50/30"}`}
+                      >
+                        <td className="px-6 py-4 text-xs font-bold text-gray-300">
+                          {idx + 1}
+                        </td>
+                        <td
+                          className={`px-6 py-4 text-sm font-black text-center ${item.profitValue > 0 ? "text-gray-700" : "text-gray-400"}`}
+                        >
+                          {formatDateThai(item.date)}
+                        </td>
+                        <td
+                          className={`px-6 py-4 font-black text-right ${item.profitValue > 0 ? "text-orange-500" : "text-gray-400"}`}
+                        >
+                          {item.profitValue > 0
+                            ? `+฿${item.profitValue.toLocaleString()}`
+                            : "฿0"}
+                        </td>
+                      </tr>
+                    ))}
+
                   {/* ว่างเปล่า */}
                   {((activeModal === "principal" &&
                     modalData.activeLoans.length === 0) ||
-                    (activeModal !== "principal" &&
+                    (activeModal === "target" &&
+                      modalData.dailyTargets.length === 0) ||
+                    (activeModal === "profit" &&
                       modalData.dailyTargets.length === 0)) && (
                     <tr>
                       <td
@@ -553,7 +616,7 @@ export default function DashboardHome() {
               </table>
             </div>
 
-            {/* 🌟 Footer: สรุปยอดบรรทัดสุดท้าย (และคำนวณส่วนที่ยังขาด) */}
+            {/* 🌟 Footer: สรุปยอดบรรทัดสุดท้าย */}
             <div className="p-6 md:p-8 bg-[#1F2335] text-white flex flex-col md:flex-row md:justify-between items-start md:items-center rounded-b-[2.5rem] gap-4">
               <div>
                 <p className="text-[12px] font-black uppercase tracking-widest text-gray-400 mb-1">
@@ -575,6 +638,14 @@ export default function DashboardHome() {
                     </span>
                   </p>
                 )}
+                {activeModal === "profitMonth" && (
+                  <p className="text-[10px] font-bold text-gray-400">
+                    รวมข้อมูลจาก:{" "}
+                    <span className="text-orange-400 font-black">
+                      {modalData.monthlyProfits.length} วัน
+                    </span>
+                  </p>
+                )}
               </div>
 
               <div className="text-left md:text-right w-full md:w-auto">
@@ -584,7 +655,9 @@ export default function DashboardHome() {
                       ? "text-blue-400"
                       : activeModal === "target"
                         ? "text-orange-400"
-                        : "text-green-400"
+                        : activeModal === "profitMonth"
+                          ? "text-orange-500"
+                          : "text-green-400"
                   }`}
                 >
                   {activeModal === "principal" &&
@@ -593,6 +666,8 @@ export default function DashboardHome() {
                     `฿${stats.expectedToday.toLocaleString()}`}
                   {activeModal === "profit" &&
                     `฿${stats.expectedProfitToday.toLocaleString()}`}
+                  {activeModal === "profitMonth" &&
+                    `฿${stats.profitMonth.toLocaleString()}`}
                 </p>
 
                 {/* 🌟 แจ้งเตือนส่วนที่ขาดเป้า */}
