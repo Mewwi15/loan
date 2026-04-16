@@ -32,6 +32,8 @@ import {
   Edit,
   Landmark,
   Save,
+  ChevronDown,
+  User,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -174,14 +176,15 @@ export default function CustomerDetailPage({ params }) {
   const [loans, setLoans] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // State สำหรับ Modal ตารางงวด (พรีวิวเฉยๆ)
+  // State สำหรับ Modal ตารางงวด
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [loanSchedule, setLoanSchedule] = useState([]);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
 
-  // 🌟 State สำหรับฟอร์ม "แก้ไขสัญญาเต็มรูปแบบ"
+  // 🌟 State สำหรับฟอร์มแก้ไขสัญญาและบัญชีธนาคาร
   const [editContractModalOpen, setEditContractModalOpen] = useState(false);
+  const [isBankModalOpen, setIsBankModalOpen] = useState(false);
   const [isSavingContract, setIsSavingContract] = useState(false);
   const [isCustomFreq, setIsCustomFreq] = useState(false);
   const [originalTotalAmount, setOriginalTotalAmount] = useState(0);
@@ -207,7 +210,6 @@ export default function CustomerDetailPage({ params }) {
         const customerData = customerDoc.data();
         setCustomer(customerData);
 
-        // 🌟 แก้ไข: เตรียมชื่อค้นหาแบบใหม่ และใช้ customerId เป็นหลัก
         const formattedName =
           customerData.nickname && customerData.name
             ? `${customerData.nickname} (${customerData.name})`
@@ -219,12 +221,10 @@ export default function CustomerDetailPage({ params }) {
         if (formattedName && !searchNames.includes(formattedName))
           searchNames.push(formattedName);
 
-        // 1. ดึงข้อมูลด้วย ID (สำหรับข้อมูลใหม่ที่ผูก ID ตรงๆ)
         const qById = query(
           collection(db, "loans"),
           where("customerId", "==", customerId),
         );
-        // 2. ดึงข้อมูลด้วย ชื่อ (รองรับข้อมูลเก่า)
         const qByName = query(
           collection(db, "loans"),
           where("customerName", "in", searchNames),
@@ -235,7 +235,6 @@ export default function CustomerDetailPage({ params }) {
           getDocs(qByName),
         ]);
 
-        // 🌟 รวมข้อมูลและลบตัวซ้ำ (Duplicate)
         const loanMap = new Map();
         snapById.docs.forEach((doc) =>
           loanMap.set(doc.id, { id: doc.id, ...doc.data() }),
@@ -244,16 +243,10 @@ export default function CustomerDetailPage({ params }) {
           loanMap.set(doc.id, { id: doc.id, ...doc.data() }),
         );
 
-        // 🌟 จัดเรียงจากน้อยไปมาก (อิงตามเลขวงกู้ loanNumber)
         const loanList = Array.from(loanMap.values()).sort((a, b) => {
           const numA = Number(a.loanNumber);
           const numB = Number(b.loanNumber);
-
-          // ถ้าเป็นตัวเลขทั้งคู่ ให้เรียงตามตัวเลข (1, 2, 3...)
-          if (!isNaN(numA) && !isNaN(numB)) {
-            return numA - numB;
-          }
-          // ถ้ามีตัวอักษรปนมา ให้เรียงตามตัวอักษรเพื่อไม่ให้พัง
+          if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
           return String(a.loanNumber).localeCompare(String(b.loanNumber));
         });
 
@@ -270,7 +263,7 @@ export default function CustomerDetailPage({ params }) {
     fetchData();
   }, [fetchData]);
 
-  // ฟังก์ชันคำนวณตัวเลขสำหรับฟอร์มแก้ไข
+  // คำนวณตัวเลข
   const principal = Number(formData.principal) || 0;
   const percent = Number(formData.interestPercent) || 0;
   const count = Math.max(Number(formData.installments) || 1, 1);
@@ -282,7 +275,12 @@ export default function CustomerDetailPage({ params }) {
 
   const selectedBankInfo = BANK_OPTIONS[formData.bankIndex] || BANK_OPTIONS[0];
 
-  // 🌟 เปิดฟอร์มแก้ไขสัญญา
+  const groupedBanks = BANK_OPTIONS.reduce((acc, bank, index) => {
+    if (!acc[bank.owner]) acc[bank.owner] = [];
+    acc[bank.owner].push({ ...bank, index });
+    return acc;
+  }, {});
+
   const openEditContract = (loan) => {
     const bIndex = BANK_OPTIONS.findIndex((b) => b.acc === loan.bankAccount);
 
@@ -291,7 +289,7 @@ export default function CustomerDetailPage({ params }) {
       loanId: loan.id,
       loanName: loan.loanName || loan.customerName,
       loanNumber: loan.loanNumber || "1",
-      bankIndex: bIndex >= 0 ? bIndex : 0,
+      bankIndex: bIndex >= 0 ? bIndex : 0, // ดึงธนาคารเดิมมาแสดง
       principal: loan.principal || 0,
       interestPercent: loan.interestRate || 0,
       installments: loan.totalInstallments || 20,
@@ -309,9 +307,7 @@ export default function CustomerDetailPage({ params }) {
   const handleFormChange = (e) => {
     const { name, value, type } = e.target;
     let finalValue = value;
-    if (type === "number") {
-      finalValue = value === "" ? 0 : Number(value);
-    }
+    if (type === "number") finalValue = value === "" ? 0 : Number(value);
     setFormData((prev) => ({ ...prev, [name]: finalValue }));
   };
 
@@ -320,7 +316,6 @@ export default function CustomerDetailPage({ params }) {
     setFormData((prev) => ({ ...prev, frequency: val, type: type }));
   };
 
-  // 🌟 บันทึกการแก้ไขสัญญาแบบเต็มระบบ (โละตารางเก่า สร้างตารางใหม่)
   const handleUpdateContract = async () => {
     if (
       !window.confirm(
@@ -333,31 +328,27 @@ export default function CustomerDetailPage({ params }) {
     const batch = writeBatch(db);
 
     try {
-      // 1. ลบตารางงวดเดิมของวงนี้ทั้งหมด
       const oldSchedulesQ = query(
         collection(db, "schedules"),
         where("loanId", "==", formData.loanId),
       );
       const oldSchedulesSnap = await getDocs(oldSchedulesQ);
-      oldSchedulesSnap.forEach((d) => {
-        batch.delete(d.ref);
-      });
+      oldSchedulesSnap.forEach((d) => batch.delete(d.ref));
 
-      // 2. อัปเดตข้อมูลวงกู้ใหม่
       const loanRef = doc(db, "loans", formData.loanId);
       batch.update(loanRef, {
         loanName: formData.loanName,
         loanNumber: formData.loanNumber,
-        bankOwner: selectedBankInfo.owner,
+        bankOwner: selectedBankInfo.owner, // บันทึกธนาคารใหม่ลงฐานข้อมูล
         bankName: selectedBankInfo.bank,
         bankAccount: selectedBankInfo.acc,
         bankColor: selectedBankInfo.color,
         principal: principal,
         interestRate: percent,
         totalAmount: actualTotalToCollect,
-        remainingBalance: actualTotalToCollect, // รีเซ็ตยอดคงเหลือ
+        remainingBalance: actualTotalToCollect,
         totalInstallments: count,
-        currentInstallment: 0, // รีเซ็ตงวดปัจจุบัน
+        currentInstallment: 0,
         installmentAmount: installmentAmount,
         totalProfit: totalProfit,
         profitPerInstallment: profitPerInstallment,
@@ -366,7 +357,6 @@ export default function CustomerDetailPage({ params }) {
         frequencyType: formData.type,
       });
 
-      // 3. สร้างตารางค่างวดใหม่
       for (let i = 0; i < count; i++) {
         let dueDate = new Date(formData.startDate);
         if (formData.type === "day") {
@@ -392,10 +382,8 @@ export default function CustomerDetailPage({ params }) {
         });
       }
 
-      // 4. หักลบกลบหนี้ในข้อมูลลูกค้า (เอาหนี้เก่าออก เอาหนี้ใหม่ใส่)
       const diffDebt = actualTotalToCollect - originalTotalAmount;
-      const customerRef = doc(db, "customers", customerId);
-      batch.update(customerRef, {
+      batch.update(doc(db, "customers", customerId), {
         totalDebt: increment(diffDebt),
       });
 
@@ -412,26 +400,43 @@ export default function CustomerDetailPage({ params }) {
     }
   };
 
+  // 🌟 ฟังก์ชันปิดวงกู้แบบล้างบาง (กวาดลบตารางค่างวดที่ยังไม่จ่ายทิ้งด้วย)
   const handleCloseLoan = async (loanId, remainingBalance) => {
     if (
       !window.confirm(
-        "ยืนยันการปิดวงกู้นี้? \n(วงกู้จะหายไปจากหน้านี้ และขึ้นสล็อต 'ว่าง' ในหน้าวอร์รูม)",
+        "ยืนยันการปิดวงกู้นี้? \n(ระบบจะทำการลบ 'ตารางค่างวดที่ยังไม่จ่ายทิ้งทั้งหมด' เพื่อไม่ให้เป็นขยะค้างในระบบ และย้ายวงกู้ไปประวัติที่ปิดแล้ว)",
       )
     )
       return;
 
     try {
-      await updateDoc(doc(db, "loans", loanId), {
+      const batch = writeBatch(db);
+
+      // 1. ค้นหาตารางค่างวดที่ยังเป็น pending ของวงนี้ และสั่งลบทิ้งทั้งหมด
+      const pendingSchedulesQ = query(
+        collection(db, "schedules"),
+        where("loanId", "==", loanId),
+        where("status", "==", "pending"),
+      );
+      const pendingSnap = await getDocs(pendingSchedulesQ);
+      pendingSnap.forEach((d) => batch.delete(d.ref));
+
+      // 2. อัปเดตสถานะวงกู้หลัก
+      batch.update(doc(db, "loans", loanId), {
         status: "closed",
         remainingBalance: 0,
       });
 
-      await updateDoc(doc(db, "customers", customerId), {
+      // 3. หักลบกลบหนี้ออกจากโปรไฟล์ลูกค้า
+      batch.update(doc(db, "customers", customerId), {
         activeLoans: increment(-1),
         totalDebt: increment(-remainingBalance),
       });
 
-      alert("ปิดวงกู้สำเร็จ!");
+      // 4. Commit รวดเดียวจบ
+      await batch.commit();
+
+      alert("ปิดวงกู้และทำความสะอาดตารางงวดเรียบร้อย!");
       fetchData();
     } catch (error) {
       console.error("Error closing loan:", error);
@@ -650,7 +655,7 @@ export default function CustomerDetailPage({ params }) {
         </div>
       )}
 
-      {/* 🌟 1. MODAL: ฟอร์มแก้ไขสัญญาแบบเต็ม (เหมือนหน้า New Loan) */}
+      {/* 🌟 1. MODAL: ฟอร์มแก้ไขสัญญาแบบเต็ม (เพิ่มตัวเลือกธนาคาร) */}
       {editContractModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div
@@ -702,6 +707,46 @@ export default function CustomerDetailPage({ params }) {
                     className="w-full mt-1 px-4 py-3.5 bg-gray-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-blue-500 font-black transition-all text-gray-700"
                   />
                 </div>
+              </div>
+
+              {/* 🌟 ปุ่มสำหรับแก้ไขบัญชีธนาคาร */}
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest ml-1 text-gray-400 block mb-1">
+                  บัญชีธนาคารที่ใช้ปล่อยกู้
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setIsBankModalOpen(true)}
+                  className="w-full flex items-center justify-between px-5 py-4 bg-gray-50 hover:bg-white border border-transparent rounded-2xl transition-all group text-left shadow-sm hover:shadow-md"
+                  style={{ borderColor: `${selectedBankInfo.color}40` }}
+                >
+                  <div className="flex items-center gap-4">
+                    <div
+                      className="w-12 h-12 rounded-xl flex items-center justify-center transition-all"
+                      style={{
+                        backgroundColor: `${selectedBankInfo.color}15`,
+                        border: `1px solid ${selectedBankInfo.color}30`,
+                      }}
+                    >
+                      <Landmark
+                        className="w-6 h-6"
+                        style={{ color: selectedBankInfo.color }}
+                      />
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-gray-800">
+                        {selectedBankInfo.owner}
+                      </p>
+                      <p
+                        className="text-[11px] font-black uppercase tracking-widest mt-0.5"
+                        style={{ color: selectedBankInfo.color }}
+                      >
+                        ธนาคาร: {selectedBankInfo.bank}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronDown className="w-5 h-5 text-gray-300 group-hover:text-gray-500 transition-colors" />
+                </button>
               </div>
 
               <div className="grid grid-cols-2 gap-6">
@@ -884,6 +929,118 @@ export default function CustomerDetailPage({ params }) {
                 )}
                 อัปเดตและสร้างตารางใหม่
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🌟 1.5 MODAL: เลือกบัญชีธนาคาร (ซ้อนในฟอร์มแก้ไขสัญญา) */}
+      {isBankModalOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-gray-900/80 backdrop-blur-sm"
+            onClick={() => setIsBankModalOpen(false)}
+          ></div>
+          <div className="relative w-full max-w-4xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center px-6 md:px-8 py-6 border-b border-gray-50 bg-gray-50/80">
+              <div>
+                <h2 className="text-xl md:text-2xl font-black text-gray-800">
+                  เลือกบัญชีโอนออก
+                </h2>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
+                  แหล่งที่มาของเงินต้นสำหรับการปล่อยกู้
+                </p>
+              </div>
+              <button
+                onClick={() => setIsBankModalOpen(false)}
+                className="p-3 bg-white hover:bg-rose-50 text-gray-400 hover:text-rose-500 rounded-2xl shadow-sm border border-gray-100 transition-all active:scale-95"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-6 md:p-8 space-y-10 flex-1">
+              {Object.entries(groupedBanks).map(([owner, banks]) => (
+                <div key={owner}>
+                  <div className="flex items-center gap-3 mb-5">
+                    <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center">
+                      <User className="w-4 h-4 text-orange-600" />
+                    </div>
+                    <h4 className="text-sm font-black text-gray-700 tracking-wide">
+                      {owner}
+                    </h4>
+                    <div className="flex-1 h-px bg-gray-100 ml-4"></div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {banks.map((b) => {
+                      const isSelected = formData.bankIndex === b.index;
+
+                      return (
+                        <button
+                          key={b.index}
+                          type="button"
+                          onClick={() => {
+                            setFormData((prev) => ({
+                              ...prev,
+                              bankIndex: b.index,
+                            }));
+                            setIsBankModalOpen(false);
+                          }}
+                          className={`relative p-4 md:p-5 rounded-3xl border flex flex-col items-start text-left transition-all duration-300 group ${
+                            isSelected
+                              ? "shadow-md scale-[1.02]"
+                              : "bg-white hover:shadow-lg hover:-translate-y-1"
+                          }`}
+                          style={
+                            isSelected
+                              ? {
+                                  borderColor: b.color,
+                                  backgroundColor: `${b.color}15`,
+                                }
+                              : { borderColor: "#f3f4f6" }
+                          }
+                        >
+                          <div className="flex justify-between w-full items-center mb-3">
+                            <div
+                              className="w-10 h-10 rounded-full flex items-center justify-center transition-colors"
+                              style={{
+                                backgroundColor: isSelected
+                                  ? `${b.color}20`
+                                  : "#f9fafb",
+                              }}
+                            >
+                              <Landmark
+                                className="w-5 h-5 transition-colors"
+                                style={{
+                                  color:
+                                    isSelected || "group-hover"
+                                      ? b.color
+                                      : "#d1d5db",
+                                }}
+                              />
+                            </div>
+                            {isSelected && (
+                              <div className="w-6 h-6 rounded-full flex items-center justify-center bg-white shadow-sm">
+                                <CheckCircle2
+                                  className="w-4 h-4"
+                                  style={{ color: b.color }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                          <span
+                            className="font-black text-base md:text-lg transition-colors mt-1"
+                            style={{ color: isSelected ? b.color : "#374151" }}
+                          >
+                            {b.bank}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>

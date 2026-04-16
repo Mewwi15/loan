@@ -8,7 +8,6 @@ import {
   TrendingUp,
   Wallet,
   Coins,
-  CalendarDays,
   Bell,
   ArrowRight,
   PieChart,
@@ -16,19 +15,28 @@ import {
   Loader2,
   ChevronRight,
   Activity,
-  Calendar as CalendarIcon, // เพิ่มไอคอนปฏิทิน
+  Calendar as CalendarIcon,
+  X,
+  FileText,
 } from "lucide-react";
 
 export default function DashboardHome() {
   const [loading, setLoading] = useState(true);
-  // --- 1. เพิ่ม State สำหรับเลือกวันที่ (Default เป็นวันนี้) ---
   const [selectedDate, setSelectedDate] = useState(
     new Date().toISOString().split("T")[0],
   );
 
+  const [activeModal, setActiveModal] = useState(null); // 'principal' | 'target' | 'profit' | null
+  const [modalData, setModalData] = useState({
+    activeLoans: [],
+    dailyTargets: [],
+  });
+
   const [stats, setStats] = useState({
     totalPrincipalInMarket: 0,
     expectedToday: 0,
+    collectedAmount: 0,
+    expectedProfitToday: 0,
     profitToday: 0,
     profitMonth: 0,
     pendingTasks: 0,
@@ -36,10 +44,21 @@ export default function DashboardHome() {
     collectionRate: 0,
   });
 
+  // 🌟 ฟังก์ชันสำหรับเรียงวงจากน้อยไปมาก
+  const sortLoansAsc = (arr) => {
+    return arr.sort((a, b) => {
+      const numA = Number(a.loanNumber);
+      const numB = Number(b.loanNumber);
+      if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+      return String(a.loanNumber || "").localeCompare(
+        String(b.loanNumber || ""),
+      );
+    });
+  };
+
   const fetchDashboardData = useCallback(async () => {
     setLoading(true);
     try {
-      // คำนวณช่วงของเดือนตามวันที่เลือก (สำหรับกำไรรายเดือน)
       const dateObj = new Date(selectedDate);
       const firstDayOfMonth = new Date(
         dateObj.getFullYear(),
@@ -56,37 +75,62 @@ export default function DashboardHome() {
         .toISOString()
         .split("T")[0];
 
-      // 1. เงินต้นในตลาด (นับถึงปัจจุบัน)
+      // 1. ดึงข้อมูล Loans ทั้งหมด
       const loansSnap = await getDocs(collection(db, "loans"));
       let totalMarket = 0;
+      let activeLoansList = [];
+      const loanMap = new Map();
+
       loansSnap.forEach((d) => {
         const data = d.data();
-        if (data.status === "active") totalMarket += data.remainingBalance || 0;
+        loanMap.set(d.id, data);
+        if (data.status === "active") {
+          totalMarket += data.remainingBalance || 0;
+          activeLoansList.push({ id: d.id, ...data });
+        }
       });
 
-      // 2. เป้าเก็บของวันที่เลือก
+      // 2. ดึงเป้าเก็บและเป้ากำไร
       const scheduleQ = query(
         collection(db, "schedules"),
         where("dueDate", "==", selectedDate),
       );
       const scheduleSnap = await getDocs(scheduleQ);
       let dayTotalGoal = 0;
+      let expectedProfitToday = 0;
       let tasksCount = 0;
       let tasksAmount = 0;
       let collectedAmount = 0;
+      let dailyTargetsList = [];
 
       scheduleSnap.forEach((doc) => {
         const data = doc.data();
-        dayTotalGoal += data.amount;
+        const parentLoan = loanMap.get(data.loanId);
+
+        // 🚨 ตัวกำจัดผี: ถ้าสถานะ pending แต่ว่า "วงกู้ถูกปิดไปแล้ว" หรือ "โดนลบไปแล้ว" ให้เด้งข้ามไปเลย ไม่นับ!
+        if (
+          data.status === "pending" &&
+          (!parentLoan || parentLoan.status === "closed")
+        ) {
+          return;
+        }
+
+        dayTotalGoal += data.amount || 0;
+        expectedProfitToday += data.profitShare || 0;
+
+        const lNum = data.loanNumber || parentLoan?.loanNumber || "-";
+
+        dailyTargetsList.push({ id: doc.id, ...data, loanNumber: lNum });
+
         if (data.status === "pending") {
           tasksCount++;
-          tasksAmount += data.amount;
+          tasksAmount += data.amount || 0;
         } else if (data.status === "paid") {
-          collectedAmount += data.amount;
+          collectedAmount += data.amount || 0;
         }
       });
 
-      // 3. กำไรของวันที่เลือก
+      // 3. กำไรที่เก็บได้จริง (Transactions)
       const transDayQ = query(
         collection(db, "transactions"),
         where("paymentDate", "==", selectedDate),
@@ -98,7 +142,7 @@ export default function DashboardHome() {
         dailyProfit += (data.profitShare || 0) + (data.penalty || 0);
       });
 
-      // 4. กำไรสะสมของเดือนนั้นๆ (ตามวันที่เลือก)
+      // 4. กำไรสะสมของเดือน
       const transMonthQ = query(
         collection(db, "transactions"),
         where("paymentDate", ">=", firstDayOfMonth),
@@ -114,6 +158,8 @@ export default function DashboardHome() {
       setStats({
         totalPrincipalInMarket: totalMarket,
         expectedToday: dayTotalGoal,
+        collectedAmount: collectedAmount,
+        expectedProfitToday: expectedProfitToday,
         profitToday: dailyProfit,
         profitMonth: monthlyProfit,
         pendingTasks: tasksCount,
@@ -123,16 +169,29 @@ export default function DashboardHome() {
             ? Math.floor((collectedAmount / dayTotalGoal) * 100)
             : 0,
       });
+
+      setModalData({
+        activeLoans: sortLoansAsc(activeLoansList),
+        dailyTargets: sortLoansAsc(dailyTargetsList),
+      });
     } catch (error) {
       console.error("Firebase Dashboard Error:", error);
     } finally {
       setLoading(false);
     }
-  }, [selectedDate]); // ให้ดึงข้อมูลใหม่ทุกครั้งที่ selectedDate เปลี่ยน
+  }, [selectedDate]);
 
   useEffect(() => {
     fetchDashboardData();
   }, [fetchDashboardData]);
+
+  const formatDateThai = (dateString) => {
+    return new Date(dateString).toLocaleDateString("th-TH", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+  };
 
   if (loading)
     return (
@@ -145,7 +204,7 @@ export default function DashboardHome() {
     );
 
   return (
-    <div className="w-full pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500">
+    <div className="w-full pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500 relative">
       {/* --- Header & Date Picker --- */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6 mb-8 pt-10">
         <div className="w-full lg:w-auto">
@@ -154,15 +213,10 @@ export default function DashboardHome() {
             แผงควบคุมกำไร
           </h1>
           <p className="text-sm font-bold text-gray-400 mt-2 uppercase tracking-widest">
-            {new Date(selectedDate).toLocaleDateString("th-TH", {
-              year: "numeric",
-              month: "long",
-              day: "numeric",
-            })}
+            {formatDateThai(selectedDate)}
           </p>
         </div>
 
-        {/* ช่องเลือกวันที่แบบสวยๆ */}
         <div className="w-full lg:w-auto flex items-center bg-white p-2 rounded-2xl shadow-sm border border-gray-100 gap-3 px-4">
           <CalendarIcon className="w-5 h-5 text-orange-500" />
           <input
@@ -176,42 +230,64 @@ export default function DashboardHome() {
 
       {/* --- Top Cards Grid --- */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">
-        <div className="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-50 flex flex-col items-center text-center">
-          <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center mb-4">
+        {/* 🌟 เงินต้นในตลาด */}
+        <div
+          onClick={() => setActiveModal("principal")}
+          className="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-50 flex flex-col items-center text-center cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-blue-200 transition-all group"
+        >
+          <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
             <Wallet className="w-6 h-6 text-blue-500" />
           </div>
-          <p className="text-[14px] font-black uppercase text-gray-400 tracking-widest mb-1">
-            เงินต้นในตลาด
+          <p className="text-[14px] font-black uppercase text-gray-400 tracking-widest mb-1 flex items-center gap-1">
+            เงินต้นในตลาด <FileText className="w-3 h-3 text-gray-300" />
           </p>
           <p className="text-2xl font-black text-gray-800">
             ฿{stats.totalPrincipalInMarket.toLocaleString()}
           </p>
+          <span className="text-[9px] font-bold text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity mt-2 uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded-full">
+            คลิกดูรายวง
+          </span>
         </div>
 
-        <div className="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-50 flex flex-col items-center text-center">
-          <div className="w-12 h-12 bg-orange-50 rounded-2xl flex items-center justify-center mb-4">
+        {/* 🌟 เป้าเก็บวันนี้ */}
+        <div
+          onClick={() => setActiveModal("target")}
+          className="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-50 flex flex-col items-center text-center cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-orange-200 transition-all group"
+        >
+          <div className="w-12 h-12 bg-orange-50 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
             <Target className="w-6 h-6 text-orange-500" />
           </div>
-          <p className="text-[14px] font-black uppercase text-gray-400 tracking-widest mb-1">
-            เป้าเก็บวันนี้
+          <p className="text-[14px] font-black uppercase text-gray-400 tracking-widest mb-1 flex items-center gap-1">
+            เป้าเก็บวันนี้ <FileText className="w-3 h-3 text-gray-300" />
           </p>
           <p className="text-2xl font-black text-gray-800">
             ฿{stats.expectedToday.toLocaleString()}
           </p>
+          <span className="text-[9px] font-bold text-orange-400 opacity-0 group-hover:opacity-100 transition-opacity mt-2 uppercase tracking-widest bg-orange-50 px-2 py-0.5 rounded-full">
+            คลิกดูยอดต่องวด
+          </span>
         </div>
 
-        <div className="bg-white rounded-[2rem] p-8 shadow-sm border border-green-100 flex flex-col items-center text-center">
-          <div className="w-12 h-12 bg-green-50 rounded-2xl flex items-center justify-center mb-4">
+        {/* 🌟 กำไรรวมรายวัน */}
+        <div
+          onClick={() => setActiveModal("profit")}
+          className="bg-white rounded-[2rem] p-8 shadow-sm border border-green-50 flex flex-col items-center text-center cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-green-200 transition-all group"
+        >
+          <div className="w-12 h-12 bg-green-50 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
             <Coins className="w-6 h-6 text-green-500" />
           </div>
-          <p className="text-[14px] font-black uppercase text-green-600 tracking-widest mb-1">
-            กำไรรวมรายวัน
+          <p className="text-[14px] font-black uppercase text-green-600 tracking-widest mb-1 flex items-center gap-1">
+            กำไรรวมรายวัน <FileText className="w-3 h-3 text-green-300" />
           </p>
           <p className="text-2xl font-black text-green-600">
             ฿{stats.profitToday.toLocaleString()}
           </p>
+          <span className="text-[9px] font-bold text-green-500 opacity-0 group-hover:opacity-100 transition-opacity mt-2 uppercase tracking-widest bg-green-50 px-2 py-0.5 rounded-full">
+            คลิกดูรายละเอียด
+          </span>
         </div>
 
+        {/* กำไรรวมรายเดือน */}
         <div className="bg-[#1F2335] rounded-[2rem] p-8 shadow-xl flex flex-col items-center text-center relative overflow-hidden text-white border border-white/5">
           <div className="absolute top-0 right-0 w-20 h-20 bg-orange-500/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
           <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center mb-4">
@@ -226,9 +302,9 @@ export default function DashboardHome() {
         </div>
       </div>
 
+      {/* --- ก้อนล่างสุด (ภารกิจ & วิเคราะห์) --- */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
         <div className="xl:col-span-2 space-y-8">
-          {/* ปุ่มแจ้งเตือนทวงหนี้ (Debt Follow-up Alert) */}
           <div
             className={`bg-white rounded-[2.5rem] shadow-sm border p-8 flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden transition-all ${stats.pendingTasks > 0 ? "border-rose-100" : "border-gray-100 opacity-60"}`}
           >
@@ -264,7 +340,6 @@ export default function DashboardHome() {
             )}
           </div>
 
-          {/* ประสิทธิภาพการจัดเก็บ */}
           <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-50 p-8 flex flex-col">
             <h3 className="text-lg font-black text-gray-800 mb-8 flex items-center gap-2">
               <PieChart className="w-5 h-5 text-orange-500" />{" "}
@@ -289,7 +364,6 @@ export default function DashboardHome() {
           </div>
         </div>
 
-        {/* --- ระบบวิเคราะห์ด้านข้าง --- */}
         <div className="bg-[#1F2335] rounded-[2.5rem] shadow-2xl p-10 text-white relative overflow-hidden flex flex-col justify-between min-h-[450px]">
           <div className="absolute top-0 right-0 w-40 h-40 bg-orange-500 opacity-20 rounded-full -mr-20 -mt-20 blur-3xl"></div>
           <div>
@@ -331,6 +405,235 @@ export default function DashboardHome() {
           </Link>
         </div>
       </div>
+
+      {/* ======================================================== */}
+      {/* 🌟🌟 MODALS: หน้าต่างแสดงรายละเอียด 🌟🌟 */}
+      {/* ======================================================== */}
+      {activeModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-gray-900/70 backdrop-blur-sm"
+            onClick={() => setActiveModal(null)}
+          ></div>
+
+          <div className="relative bg-white w-full max-w-3xl rounded-[2.5rem] shadow-2xl flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200 overflow-hidden">
+            {/* Header Modal */}
+            <div className="p-6 md:p-8 border-b border-gray-100 flex justify-between items-center bg-gray-50/80">
+              <div>
+                <h2 className="text-xl md:text-2xl font-black text-gray-800 flex items-center gap-3">
+                  {activeModal === "principal" && (
+                    <>
+                      <Wallet className="w-6 h-6 text-blue-500" /> เงินต้นในตลาด
+                    </>
+                  )}
+                  {activeModal === "target" && (
+                    <>
+                      <Target className="w-6 h-6 text-orange-500" />{" "}
+                      เป้าเก็บรายวัน
+                    </>
+                  )}
+                  {activeModal === "profit" && (
+                    <>
+                      <Coins className="w-6 h-6 text-green-500" /> เป้ากำไร
+                      (ยอดเขียว)
+                    </>
+                  )}
+                </h2>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
+                  {activeModal === "principal"
+                    ? "แสดงเฉพาะวงกู้ที่กำลังดำเนินการ (หน้าวอ)"
+                    : `ดึงจากตารางดิว ประจำวันที่ ${formatDateThai(selectedDate)}`}
+                </p>
+              </div>
+              <button
+                onClick={() => setActiveModal(null)}
+                className="p-2.5 bg-white border border-gray-100 hover:bg-rose-50 text-gray-400 hover:text-rose-500 rounded-xl transition-all shadow-sm"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body: Table Content */}
+            <div className="overflow-y-auto flex-1 bg-white p-2">
+              <table className="w-full text-left">
+                <thead className="sticky top-0 bg-white shadow-sm z-10">
+                  <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                    <th className="px-6 py-4">#</th>
+                    <th className="px-6 py-4">ชื่อลูกค้า</th>
+                    <th className="px-6 py-4 text-center">วงที่</th>
+                    <th className="px-6 py-4 text-right">
+                      {activeModal === "principal" && "จำนวนเงิน (คงเหลือ)"}
+                      {activeModal === "target" && "ยอดเก็บต่องวด"}
+                      {activeModal === "profit" && "ยอดเขียว (กำไร)"}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {/* --- กรณีเงินต้นในตลาด --- */}
+                  {activeModal === "principal" &&
+                    modalData.activeLoans.map((item, idx) => (
+                      <tr
+                        key={item.id}
+                        className="hover:bg-blue-50/50 transition-colors"
+                      >
+                        <td className="px-6 py-4 text-xs font-bold text-gray-300">
+                          {idx + 1}
+                        </td>
+                        <td className="px-6 py-4 font-black text-gray-700">
+                          {item.customerName || "-"}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-bold text-gray-500 text-center">
+                          {item.loanNumber || "-"}
+                        </td>
+                        <td className="px-6 py-4 font-black text-blue-500 text-right">
+                          ฿{(item.remainingBalance || 0).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+
+                  {/* --- กรณียอดเก็บต่องวด (ใช้ Modal Data ชุด dailyTargets) --- */}
+                  {activeModal === "target" &&
+                    modalData.dailyTargets.map((item, idx) => (
+                      <tr
+                        key={item.id}
+                        className="hover:bg-orange-50/50 transition-colors"
+                      >
+                        <td className="px-6 py-4 text-xs font-bold text-gray-300">
+                          {idx + 1}
+                        </td>
+                        <td className="px-6 py-4 font-black text-gray-700">
+                          {item.customerName || "-"}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-bold text-gray-500 text-center">
+                          {item.loanNumber || "-"}
+                        </td>
+                        <td className="px-6 py-4 font-black text-orange-500 text-right">
+                          ฿{(item.amount || 0).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+
+                  {/* --- กรณีกำไรรายวัน (ใช้ Modal Data ชุด dailyTargets ตัวเดียวกัน แต่โชว์ profitShare) --- */}
+                  {activeModal === "profit" &&
+                    modalData.dailyTargets.map((item, idx) => (
+                      <tr
+                        key={item.id}
+                        className="hover:bg-green-50/50 transition-colors"
+                      >
+                        <td className="px-6 py-4 text-xs font-bold text-gray-300">
+                          {idx + 1}
+                        </td>
+                        <td className="px-6 py-4 font-black text-gray-700">
+                          {item.customerName || "-"}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-bold text-gray-500 text-center">
+                          {item.loanNumber || "-"}
+                        </td>
+                        <td className="px-6 py-4 font-black text-green-500 text-right">
+                          +฿{(item.profitShare || 0).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+
+                  {/* ว่างเปล่า */}
+                  {((activeModal === "principal" &&
+                    modalData.activeLoans.length === 0) ||
+                    (activeModal !== "principal" &&
+                      modalData.dailyTargets.length === 0)) && (
+                    <tr>
+                      <td
+                        colSpan="4"
+                        className="px-6 py-10 text-center text-sm font-bold text-gray-400"
+                      >
+                        ไม่มีข้อมูลในระบบ
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* 🌟 Footer: สรุปยอดบรรทัดสุดท้าย (และคำนวณส่วนที่ยังขาด) */}
+            <div className="p-6 md:p-8 bg-[#1F2335] text-white flex flex-col md:flex-row md:justify-between items-start md:items-center rounded-b-[2.5rem] gap-4">
+              <div>
+                <p className="text-[12px] font-black uppercase tracking-widest text-gray-400 mb-1">
+                  สรุปผลบวกจากตารางด้านบน
+                </p>
+                {activeModal === "target" && (
+                  <p className="text-[10px] font-bold text-gray-400">
+                    เก็บได้จริงแล้ววันนี้:{" "}
+                    <span className="text-green-400 font-black">
+                      ฿{stats.collectedAmount.toLocaleString()}
+                    </span>
+                  </p>
+                )}
+                {activeModal === "profit" && (
+                  <p className="text-[10px] font-bold text-gray-400">
+                    กำไรที่เก็บได้จริงวันนี้:{" "}
+                    <span className="text-green-400 font-black">
+                      ฿{stats.profitToday.toLocaleString()}
+                    </span>
+                  </p>
+                )}
+              </div>
+
+              <div className="text-left md:text-right w-full md:w-auto">
+                <p
+                  className={`text-3xl font-black ${
+                    activeModal === "principal"
+                      ? "text-blue-400"
+                      : activeModal === "target"
+                        ? "text-orange-400"
+                        : "text-green-400"
+                  }`}
+                >
+                  {activeModal === "principal" &&
+                    `฿${stats.totalPrincipalInMarket.toLocaleString()}`}
+                  {activeModal === "target" &&
+                    `฿${stats.expectedToday.toLocaleString()}`}
+                  {activeModal === "profit" &&
+                    `฿${stats.expectedProfitToday.toLocaleString()}`}
+                </p>
+
+                {/* 🌟 แจ้งเตือนส่วนที่ขาดเป้า */}
+                {activeModal === "target" &&
+                  stats.expectedToday - stats.collectedAmount > 0 && (
+                    <p className="text-xs font-black text-rose-400 mt-1 uppercase tracking-widest bg-rose-500/20 px-3 py-1.5 rounded-lg inline-block w-full md:w-auto text-center">
+                      ขาดอีก ฿
+                      {(
+                        stats.expectedToday - stats.collectedAmount
+                      ).toLocaleString()}
+                    </p>
+                  )}
+                {activeModal === "target" &&
+                  stats.expectedToday > 0 &&
+                  stats.expectedToday - stats.collectedAmount <= 0 && (
+                    <p className="text-xs font-black text-green-400 mt-1 uppercase tracking-widest bg-green-500/20 px-3 py-1.5 rounded-lg inline-block w-full md:w-auto text-center">
+                      ✅ เก็บครบเป้าแล้ว
+                    </p>
+                  )}
+
+                {activeModal === "profit" &&
+                  stats.expectedProfitToday - stats.profitToday > 0 && (
+                    <p className="text-xs font-black text-rose-400 mt-1 uppercase tracking-widest bg-rose-500/20 px-3 py-1.5 rounded-lg inline-block w-full md:w-auto text-center">
+                      ขาดอีก ฿
+                      {(
+                        stats.expectedProfitToday - stats.profitToday
+                      ).toLocaleString()}
+                    </p>
+                  )}
+                {activeModal === "profit" &&
+                  stats.expectedProfitToday > 0 &&
+                  stats.expectedProfitToday - stats.profitToday <= 0 && (
+                    <p className="text-xs font-black text-green-400 mt-1 uppercase tracking-widest bg-green-500/20 px-3 py-1.5 rounded-lg inline-block w-full md:w-auto text-center">
+                      ✅ กำไรครบเป้าแล้ว
+                    </p>
+                  )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
