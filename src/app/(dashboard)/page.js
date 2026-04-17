@@ -19,6 +19,7 @@ import {
   X,
   FileText,
   Banknote,
+  HandCoins,
 } from "lucide-react";
 
 export default function DashboardHome() {
@@ -47,6 +48,8 @@ export default function DashboardHome() {
     pendingAmount: 0,
     collectionRate: 0,
   });
+
+  const [dueShares, setDueShares] = useState([]);
 
   const sortLoansAsc = (arr) => {
     return arr.sort((a, b) => {
@@ -98,6 +101,37 @@ export default function DashboardHome() {
       const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
       const lastDayOfMonth = `${year}-${month}-${String(lastDay).padStart(2, "0")}`;
 
+      const sharesQ = query(
+        collection(db, "shares"),
+        where("status", "==", "active"),
+      );
+      const sharesSnap = await getDocs(sharesQ);
+      const dueSharesTemp = [];
+
+      sharesSnap.forEach((docSnap) => {
+        const s = docSnap.data();
+        if (s.startDate) {
+          const d = new Date(s.startDate);
+          const periodsToAdd = (s.currentPeriod || 1) - 1;
+
+          if (s.frequencyType === "day") {
+            d.setDate(d.getDate() + periodsToAdd * Number(s.frequency || 1));
+          } else if (s.frequencyType === "month") {
+            d.setMonth(d.getMonth() + periodsToAdd * Number(s.frequency || 1));
+          }
+
+          const sYear = d.getFullYear();
+          const sMonth = String(d.getMonth() + 1).padStart(2, "0");
+          const sDay = String(d.getDate()).padStart(2, "0");
+          const calcDueDate = `${sYear}-${sMonth}-${sDay}`;
+
+          if (calcDueDate <= selectedDate) {
+            dueSharesTemp.push({ id: docSnap.id, ...s, calcDueDate });
+          }
+        }
+      });
+      setDueShares(dueSharesTemp);
+
       const loansSnap = await getDocs(collection(db, "loans"));
       let totalMarket = 0;
       let totalDisbursed = 0;
@@ -139,7 +173,6 @@ export default function DashboardHome() {
         );
         if (rawDisbDate >= firstDayOfMonth && rawDisbDate <= lastDayOfMonth) {
           totalDisbursed += loan.principal || 0;
-          // 🌟 แอบเก็บ rawDisbDate (YYYY-MM-DD) ไว้ใน object เพื่อเอาไว้ใช้เรียงลำดับ
           disbursedLoansList.push({ ...loan, rawDisbDate });
         }
       });
@@ -324,7 +357,6 @@ export default function DashboardHome() {
 
       setModalData({
         activeLoans: sortLoansAsc(activeLoansList),
-        // 🌟 เปลี่ยนการเรียง "ยอดปล่อย" ให้เรียงตาม "วันที่ปล่อยยอด" (วันที่ 1 ถึงสิ้นเดือน)
         disbursedLoans: disbursedLoansList.sort(
           (a, b) => new Date(a.rawDisbDate) - new Date(b.rawDisbDate),
         ),
@@ -385,7 +417,6 @@ export default function DashboardHome() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6 mb-8">
-        {/* 🌟 1. ยอดปล่อยรวม (เฉพาะเดือนที่เลือก) */}
         <div
           onClick={() => setActiveModal("disbursed")}
           className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-50 flex flex-col items-center text-center cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-purple-200 transition-all group"
@@ -404,7 +435,6 @@ export default function DashboardHome() {
           </span>
         </div>
 
-        {/* 2. เงินต้นในตลาด (คงเหลือ) */}
         <div
           onClick={() => setActiveModal("principal")}
           className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-50 flex flex-col items-center text-center cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-blue-200 transition-all group"
@@ -423,7 +453,6 @@ export default function DashboardHome() {
           </span>
         </div>
 
-        {/* 3. เป้าเก็บวันนี้ */}
         <div
           onClick={() => setActiveModal("target")}
           className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-50 flex flex-col items-center text-center cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-orange-200 transition-all group"
@@ -442,7 +471,6 @@ export default function DashboardHome() {
           </span>
         </div>
 
-        {/* 4. กำไรรวมรายวัน */}
         <div
           onClick={() => setActiveModal("profit")}
           className="bg-white rounded-[2rem] p-6 shadow-sm border border-green-50 flex flex-col items-center text-center cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-green-200 transition-all group"
@@ -461,7 +489,6 @@ export default function DashboardHome() {
           </span>
         </div>
 
-        {/* 5. กำไรรวมรายเดือน */}
         <div
           onClick={() => setActiveModal("profitMonth")}
           className="bg-[#1F2335] rounded-[2rem] p-6 shadow-xl flex flex-col items-center text-center relative overflow-hidden text-white border border-white/5 cursor-pointer hover:shadow-2xl hover:-translate-y-1 hover:border-orange-500/50 transition-all group"
@@ -484,6 +511,52 @@ export default function DashboardHome() {
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
         <div className="xl:col-span-2 space-y-8">
+          {/* 🌟 ภารกิจวงแชร์ (หมุนวง) - ปรับ Layout ให้จัดกลุ่มสวยงาม ประหยัดพื้นที่ */}
+          {dueShares.length > 0 && (
+            <div className="bg-white rounded-[2.5rem] shadow-sm border border-orange-100 p-6 md:p-8 flex flex-col gap-6 relative overflow-hidden transition-all">
+              <div className="absolute left-0 top-0 bottom-0 w-2 bg-orange-500"></div>
+
+              <div className="flex items-center gap-5 pl-2">
+                <div className="w-14 h-14 rounded-3xl flex items-center justify-center bg-orange-50 text-orange-500 shrink-0">
+                  <HandCoins className="w-7 h-7" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-gray-800 mb-1">
+                    ถึงกำหนดหมุนวงแชร์!
+                  </h3>
+                  <p className="text-sm font-bold text-gray-500">
+                    มีวงแชร์ที่ต้องจัดการจับฉลาก หรือเช็คยอด {dueShares.length}{" "}
+                    วง
+                  </p>
+                </div>
+              </div>
+
+              {/* 🌟 แสดงเป็น Grid และจำกัดความสูงไม่ให้การ์ดยืดเกินไป */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[220px] overflow-y-auto pr-2 custom-scrollbar pl-2">
+                {dueShares.map((s) => (
+                  <Link
+                    key={s.id}
+                    href={`/shares/${s.id}`}
+                    className="bg-white border border-orange-200 hover:bg-orange-50 hover:border-orange-400 text-orange-700 px-4 py-3 rounded-xl font-bold text-xs transition-colors flex items-center justify-between gap-3 shadow-sm"
+                  >
+                    <span className="truncate flex-1">
+                      {s.name}{" "}
+                      <span className="opacity-70 font-semibold">
+                        (งวด {s.currentPeriod})
+                      </span>
+                    </span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className="text-[10px] bg-orange-100 px-2 py-0.5 rounded-md">
+                        ไปที่วง
+                      </span>
+                      <ChevronRight className="w-4 h-4" />
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div
             className={`bg-white rounded-[2.5rem] shadow-sm border p-8 flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden transition-all ${stats.pendingTasks > 0 ? "border-rose-100" : "border-gray-100 opacity-60"}`}
           >

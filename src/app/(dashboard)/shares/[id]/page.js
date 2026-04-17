@@ -19,6 +19,7 @@ import Link from "next/link";
 import {
   ArrowLeft,
   Check,
+  CheckSquare,
   Loader2,
   Award,
   Wallet,
@@ -104,6 +105,43 @@ export default function ShareCommandCenterPage() {
       }
     } catch (error) {
       console.error("Error toggling paid status:", error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // 🌟 ฟังก์ชันติ๊กรับยอดทั้งหมด (Check All)
+  const handleCheckAll = async () => {
+    if (share.status === "completed") return;
+
+    // หากรองมือที่ยังไม่ได้จ่าย และไม่ใช่มือท้าวแชร์
+    const unpaidHands = hands.filter(
+      (h) =>
+        h.handNumber !== 1 && !h.paidPeriods?.includes(share.currentPeriod),
+    );
+
+    if (unpaidHands.length === 0) {
+      alert("เช็คยอดครบทุกมือแล้วครับ!");
+      return;
+    }
+
+    const confirmMsg = `ยืนยันการติ๊กรับยอดให้ครบทั้ง ${unpaidHands.length} มือที่เหลือในงวดนี้ ใช่หรือไม่?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsProcessing(true);
+    try {
+      const batch = writeBatch(db);
+      unpaidHands.forEach((h) => {
+        const handRef = doc(db, "share_hands", h.id);
+        batch.update(handRef, {
+          paidPeriods: arrayUnion(share.currentPeriod),
+          totalPaid: increment(share.installmentAmount),
+        });
+      });
+      await batch.commit();
+    } catch (error) {
+      console.error("Error checking all hands:", error);
+      alert("เกิดข้อผิดพลาดในการเช็คยอดทั้งหมด");
     } finally {
       setIsProcessing(false);
     }
@@ -203,7 +241,7 @@ export default function ShareCommandCenterPage() {
   };
 
   // ==========================================
-  // 🌟 ฟังก์ชันบันทึกภาพ (รวมคนสละสิทธิ์ด้วย)
+  // 🌟 ฟังก์ชันบันทึกภาพ
   // ==========================================
   const handleDownloadImage = () => {
     if (!printAreaRef.current) return;
@@ -233,7 +271,7 @@ export default function ShareCommandCenterPage() {
   if (loading || !share) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-gray-500">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        <Loader2 className="w-8 h-8 animate-spin text-blue-600 pointer-events-none" />
         <p className="font-semibold text-sm">กำลังโหลดข้อมูล...</p>
       </div>
     );
@@ -241,19 +279,35 @@ export default function ShareCommandCenterPage() {
 
   const currentPeriod = share.currentPeriod;
 
-  // 🧮 คำนวณกำไร/ยอดรวม
   const totalCollectedPerPeriod = share.installmentAmount * share.totalHands;
   const adminProfit = totalCollectedPerPeriod - share.poolAmount;
 
-  // 🌟 มาตรฐานการหักค้ำ (ใช้โชว์ข้อมูลด้านบนอ้างอิงของลูกแชร์)
   const standardGuaranteeDeduction = share.installmentAmount * 3;
   const memberActualReceived = share.poolAmount - standardGuaranteeDeduction;
 
   const currentHandSaved = currentPeriod * share.installmentAmount;
-
-  // 🌟 ยอดหนี้มือตายของลูกแชร์ (ใช้อ้างอิง)
   const memberCurrentHandDebt = memberActualReceived - currentHandSaved;
   const displayDeadDebt = memberCurrentHandDebt > 0 ? memberCurrentHandDebt : 0;
+
+  // 🌟 คำนวณยอดสุทธิ (Net Balance) ของลูกค้าแต่ละคนในวงนี้แบบ Real-time
+  const customerNetBalances = {};
+  hands.forEach((h) => {
+    const cid = h.customerId;
+    if (!customerNetBalances[cid]) customerNetBalances[cid] = 0;
+
+    const isTao = h.handNumber === 1;
+    const isAlive = h.status === "alive";
+    const totalPaid = Number(h.totalPaid) || 0;
+
+    if (isAlive) {
+      customerNetBalances[cid] += totalPaid;
+    } else {
+      const deduction = isTao ? 0 : standardGuaranteeDeduction;
+      const actualRec = share.poolAmount - deduction;
+      const debt = actualRec - totalPaid > 0 ? actualRec - totalPaid : 0;
+      customerNetBalances[cid] -= debt;
+    }
+  });
 
   const eligibleCandidates = hands.filter(
     (h) =>
@@ -266,10 +320,10 @@ export default function ShareCommandCenterPage() {
     h.paidPeriods?.includes(currentPeriod),
   ).length;
   const totalCollectedThisPeriod =
-    collectedCount * share.installmentAmount + share.installmentAmount; // บวกของท้าวแชร์
+    collectedCount * share.installmentAmount + share.installmentAmount;
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8 pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500 bg-gray-50/30 min-h-screen">
+    <div className="max-w-7xl mx-auto space-y-8 pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500 bg-gray-50/30 min-h-screen touch-manipulation">
       {/* --- Header Section --- */}
       <div className="pt-8 pb-6 border-b border-gray-200 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div className="w-full md:w-auto">
@@ -277,7 +331,7 @@ export default function ShareCommandCenterPage() {
             href="/shares"
             className="inline-flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-blue-600 transition-colors mb-4"
           >
-            <ArrowLeft className="w-4 h-4" /> ย้อนกลับ
+            <ArrowLeft className="w-4 h-4 pointer-events-none" /> ย้อนกลับ
           </Link>
           <h1 className="text-3xl font-black text-gray-900 mb-6">
             {share.name}
@@ -373,18 +427,31 @@ export default function ShareCommandCenterPage() {
 
       {/* --- ตารางที่ 1: เช็คชื่อประจำงวด --- */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="p-5 border-b border-gray-200 bg-white flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
-            <Wallet className="w-5 h-5 text-blue-600" />
+        <div className="p-5 border-b border-gray-200 bg-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
+              <Wallet className="w-5 h-5 text-blue-600 pointer-events-none" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">
+                ตารางเก็บยอด (งวดที่ {share.currentPeriod})
+              </h2>
+              <p className="text-xs font-medium text-gray-500 mt-0.5">
+                ติ๊กเพื่อยืนยันการรับเงินเข้ากองกลาง
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-lg font-bold text-gray-900">
-              ตารางเก็บยอด (งวดที่ {share.currentPeriod})
-            </h2>
-            <p className="text-xs font-medium text-gray-500 mt-0.5">
-              ติ๊กเพื่อยืนยันการรับเงินเข้ากองกลาง
-            </p>
-          </div>
+
+          {/* 🌟 เพิ่มปุ่มติ๊กรับยอดทั้งหมด */}
+          <button
+            type="button"
+            onClick={handleCheckAll}
+            disabled={isProcessing || share.status === "completed"}
+            className="w-full sm:w-auto bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+          >
+            <CheckSquare className="w-4 h-4 pointer-events-none" />{" "}
+            ติ๊กรับยอดทั้งหมด
+          </button>
         </div>
 
         <div className="overflow-x-auto">
@@ -421,7 +488,6 @@ export default function ShareCommandCenterPage() {
                   ? hand.totalPaid - share.installmentAmount
                   : hand.totalPaid;
 
-                // 🌟 ท้าวแชร์ (isTao) จะไม่โดนหักค้ำท้าย
                 const handGuaranteeDeduction = isTao
                   ? 0
                   : standardGuaranteeDeduction;
@@ -457,18 +523,18 @@ export default function ShareCommandCenterPage() {
                         </p>
                       )}
 
-                      {/* 🌟 ป้ายบอกรับเงิน (ลูกแชร์ = โดนหัก / ท้าว = ได้เต็ม) */}
                       {hand.wonAtPeriod && !isTao && (
                         <div className="mt-1.5 inline-flex items-center gap-1 bg-red-50 border border-red-100 px-2 py-0.5 rounded text-[10px] font-bold text-red-600">
-                          <Award className="w-3 h-3" /> รับงวด{" "}
-                          {hand.wonAtPeriod} | หักค้ำ 3 งวด (฿
+                          <Award className="w-3 h-3 pointer-events-none" />{" "}
+                          รับงวด {hand.wonAtPeriod} | หักค้ำ 3 งวด (฿
                           {handGuaranteeDeduction.toLocaleString()}) | รับจริง ฿
                           {handActualReceived.toLocaleString()}
                         </div>
                       )}
                       {hand.wonAtPeriod && isTao && (
                         <div className="mt-1.5 inline-flex items-center gap-1 bg-green-50 border border-green-100 px-2 py-0.5 rounded text-[10px] font-bold text-green-600">
-                          <Crown className="w-3 h-3" /> รับงวด 1 | รับเต็ม ฿
+                          <Crown className="w-3 h-3 pointer-events-none" />{" "}
+                          รับงวด 1 | รับเต็ม ฿
                           {handActualReceived.toLocaleString()} (ไม่หักค้ำ)
                         </div>
                       )}
@@ -547,22 +613,26 @@ export default function ShareCommandCenterPage() {
 
                     <td className="px-5 py-4 text-center">
                       {isTao ? (
-                        <span className="text-[11px] text-gray-400 font-semibold bg-gray-100 px-3 py-1.5 rounded-lg">
+                        <span className="text-[11px] text-gray-400 font-semibold bg-gray-100 px-3 py-1.5 rounded-lg cursor-not-allowed">
                           ข้าม
                         </span>
                       ) : (
                         <button
+                          type="button"
                           onClick={() => togglePaidStatus(hand)}
                           disabled={
                             isProcessing || share.status === "completed"
                           }
-                          className={`w-10 h-10 mx-auto rounded-xl flex items-center justify-center transition-all border ${
+                          className={`w-10 h-10 mx-auto rounded-xl flex items-center justify-center transition-all border cursor-pointer ${
                             hasPaidThisPeriod
                               ? "bg-green-600 border-green-600 text-white shadow-sm"
                               : "bg-white border-gray-300 text-gray-300 hover:border-green-500 hover:text-green-600"
                           } disabled:opacity-50`}
                         >
-                          <Check className="w-5 h-5" strokeWidth={2.5} />
+                          <Check
+                            className="w-5 h-5 pointer-events-none"
+                            strokeWidth={2.5}
+                          />
                         </button>
                       )}
                     </td>
@@ -579,7 +649,7 @@ export default function ShareCommandCenterPage() {
         <div className="p-5 border-b border-gray-200 bg-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center">
-              <Users className="w-5 h-5 text-orange-600" />
+              <Users className="w-5 h-5 text-orange-600 pointer-events-none" />
             </div>
             <div>
               <h2 className="text-lg font-bold text-gray-900">
@@ -597,10 +667,12 @@ export default function ShareCommandCenterPage() {
           <div className="flex gap-2 w-full sm:w-auto">
             {share.currentPeriod > 1 && eligibleCandidates.length > 0 && (
               <button
+                type="button"
                 onClick={() => setShowExportModal(true)}
-                className="flex-1 sm:flex-none bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 px-4 py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-colors"
+                className="flex-1 sm:flex-none bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 px-4 py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
               >
-                <Camera className="w-4 h-4" /> สร้างรูปรายชื่อ
+                <Camera className="w-4 h-4 pointer-events-none" />{" "}
+                สร้างรูปรายชื่อ
               </button>
             )}
 
@@ -614,7 +686,7 @@ export default function ShareCommandCenterPage() {
 
         {share.currentPeriod === 1 ? (
           <div className="p-10 text-center flex flex-col items-center justify-center bg-orange-50/30">
-            <Crown className="w-16 h-16 text-orange-400 mb-4" />
+            <Crown className="w-16 h-16 text-orange-400 mb-4 pointer-events-none" />
             <h3 className="text-xl font-black text-gray-800 mb-2">
               ท้าวแชร์รับเงินงวดที่ 1
             </h3>
@@ -623,17 +695,18 @@ export default function ShareCommandCenterPage() {
             </p>
 
             <button
+              type="button"
               onClick={handleNextPeriodForTao}
               disabled={isProcessing || share.status === "completed"}
-              className="bg-gray-900 hover:bg-black text-white px-8 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg transition-all disabled:opacity-50"
+              className="bg-gray-900 hover:bg-black text-white px-8 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg transition-all disabled:opacity-50 cursor-pointer"
             >
               รับเงินเรียบร้อย - ขึ้นงวดที่ 2{" "}
-              <ArrowLeft className="w-4 h-4 rotate-180" />
+              <ArrowLeft className="w-4 h-4 rotate-180 pointer-events-none" />
             </button>
           </div>
         ) : eligibleCandidates.length === 0 ? (
           <div className="p-10 text-center text-gray-400">
-            <Ban className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <Ban className="w-8 h-8 mx-auto mb-2 opacity-50 pointer-events-none" />
             <p className="font-medium text-sm text-gray-600">
               ไม่มีรายชื่อในงวดนี้
             </p>
@@ -650,8 +723,9 @@ export default function ShareCommandCenterPage() {
                     #
                   </th>
                   <th className="px-6 py-4 font-semibold">ชื่อลูกค้า</th>
+                  {/* 🌟 เปลี่ยนหัวตารางเป็น "ยอดสุทธิ (ทั้งวง)" */}
                   <th className="px-6 py-4 font-semibold text-right">
-                    ยอดสะสม
+                    ยอดสุทธิ (ทั้งวง)
                   </th>
                   <th className="px-6 py-4 font-semibold text-center w-[200px]">
                     จัดการ
@@ -662,6 +736,10 @@ export default function ShareCommandCenterPage() {
                 {eligibleCandidates.map((cand) => {
                   const hasSkipped =
                     cand.skippedPeriods?.includes(currentPeriod);
+
+                  // 🌟 ดึงยอดสุทธิของลูกค้าคนนี้มาโชว์
+                  const netBal = customerNetBalances[cand.customerId] || 0;
+                  const isPositive = netBal >= 0;
 
                   return (
                     <tr
@@ -687,38 +765,47 @@ export default function ShareCommandCenterPage() {
                           )}
                         </div>
                       </td>
+
+                      {/* 🌟 แสดงยอดสุทธิสีเขียว-แดง */}
                       <td
-                        className={`px-6 py-4 text-right font-bold ${hasSkipped ? "text-red-400" : "text-gray-700"}`}
+                        className={`px-6 py-4 text-right font-bold ${isPositive ? "text-green-600" : "text-red-600"}`}
                       >
-                        ฿{cand.totalPaid.toLocaleString()}
+                        {isPositive ? "+" : "-"} ฿
+                        {Math.abs(netBal).toLocaleString()}
                       </td>
+
                       <td className="px-6 py-4">
                         {hasSkipped ? (
                           <button
+                            type="button"
                             onClick={() => toggleSkipStatus(cand)}
                             disabled={isProcessing}
-                            className="w-full bg-white border border-red-200 text-red-600 hover:bg-red-50 px-3 py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm"
+                            className="w-full bg-white border border-red-200 text-red-600 hover:bg-red-50 px-3 py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
                           >
-                            <Undo2 className="w-3.5 h-3.5" /> ยกเลิกสละสิทธิ์
+                            <Undo2 className="w-3.5 h-3.5 pointer-events-none" />{" "}
+                            ยกเลิกสละสิทธิ์
                           </button>
                         ) : (
                           <div className="flex gap-2">
                             <button
+                              type="button"
                               onClick={() => toggleSkipStatus(cand)}
                               disabled={isProcessing}
-                              className="w-10 bg-white border border-gray-200 hover:border-red-400 hover:text-red-500 hover:bg-red-50 text-gray-400 flex items-center justify-center rounded-lg transition-all shadow-sm shrink-0"
+                              className="w-10 bg-white border border-gray-200 hover:border-red-400 hover:text-red-500 hover:bg-red-50 text-gray-400 flex items-center justify-center rounded-lg transition-all shadow-sm shrink-0 cursor-pointer"
                               title="สละสิทธิ์งวดนี้"
                             >
-                              <Ban className="w-4 h-4" />
+                              <Ban className="w-4 h-4 pointer-events-none" />
                             </button>
                             <button
+                              type="button"
                               onClick={() => handleDeclareWinner(cand)}
                               disabled={
                                 isProcessing || share.status === "completed"
                               }
-                              className="flex-1 bg-gray-900 hover:bg-orange-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm"
+                              className="flex-1 bg-gray-900 hover:bg-orange-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
                             >
-                              <Trophy className="w-3.5 h-3.5" /> ได้รับเงิน
+                              <Trophy className="w-3.5 h-3.5 pointer-events-none" />{" "}
+                              ได้รับเงิน
                             </button>
                           </div>
                         )}
@@ -745,13 +832,15 @@ export default function ShareCommandCenterPage() {
           <div className="relative w-full max-w-md bg-white rounded-[2rem] shadow-2xl flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200 z-10">
             <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100 bg-white rounded-t-[2rem]">
               <h3 className="font-bold text-gray-800 flex items-center gap-2">
-                <Camera className="w-5 h-5 text-blue-600" /> สร้างรูปรายชื่อ
+                <Camera className="w-5 h-5 text-blue-600 pointer-events-none" />{" "}
+                สร้างรูปรายชื่อ
               </h3>
               <button
+                type="button"
                 onClick={() => setShowExportModal(false)}
-                className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 p-2 rounded-xl transition-colors"
+                className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 p-2 rounded-xl transition-colors cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <X className="w-5 h-5 pointer-events-none" />
               </button>
             </div>
 
@@ -822,14 +911,15 @@ export default function ShareCommandCenterPage() {
 
             <div className="p-4 bg-white border-t border-gray-100 flex gap-3 rounded-b-[2rem] shrink-0">
               <button
+                type="button"
                 onClick={handleDownloadImage}
                 disabled={isCapturing}
-                className="flex-1 bg-blue-600 text-white px-4 py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-blue-700 shadow-md transition-colors disabled:opacity-50"
+                className="flex-1 bg-blue-600 text-white px-4 py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-blue-700 shadow-md transition-colors disabled:opacity-50 cursor-pointer"
               >
                 {isCapturing ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <Loader2 className="w-5 h-5 animate-spin pointer-events-none" />
                 ) : (
-                  <Download className="w-5 h-5" />
+                  <Download className="w-5 h-5 pointer-events-none" />
                 )}
                 {isCapturing ? "กำลังประมวลผล..." : "ดาวน์โหลดเป็นรูปภาพ"}
               </button>
