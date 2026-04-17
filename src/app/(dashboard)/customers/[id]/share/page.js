@@ -294,7 +294,7 @@ export default function CustomerSharesProfilePage() {
                       <td className="px-6 py-4 text-center">
                         <Link
                           href={`/shares/${hand.shareId}`}
-                          className="inline-flex items-center justify-center w-full px-3 py-2 bg-white border border-gray-200 hover:border-blue-400 text-blue-600 hover:text-blue-600 rounded-lg text-xs font-bold transition-all shadow-sm"
+                          className="inline-flex items-center justify-center w-full px-3 py-2 bg-white border border-gray-200 hover:border-blue-400  hover:text-blue-600 rounded-lg text-xs font-bold transition-all shadow-sm"
                         >
                           ไปที่วง
                         </Link>

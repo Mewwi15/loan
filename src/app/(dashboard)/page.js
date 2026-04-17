@@ -18,6 +18,7 @@ import {
   Calendar as CalendarIcon,
   X,
   FileText,
+  Banknote,
 } from "lucide-react";
 
 export default function DashboardHome() {
@@ -26,15 +27,17 @@ export default function DashboardHome() {
     new Date().toISOString().split("T")[0],
   );
 
-  const [activeModal, setActiveModal] = useState(null); // 'principal' | 'target' | 'profit' | 'profitMonth' | null
+  const [activeModal, setActiveModal] = useState(null);
   const [modalData, setModalData] = useState({
     activeLoans: [],
+    disbursedLoans: [],
     dailyTargets: [],
-    monthlyProfits: [], // เก็บกำไรแต่ละวันในเดือน
+    monthlyProfits: [],
   });
 
   const [stats, setStats] = useState({
     totalPrincipalInMarket: 0,
+    totalDisbursedPrincipal: 0,
     expectedToday: 0,
     collectedAmount: 0,
     expectedProfitToday: 0,
@@ -45,7 +48,6 @@ export default function DashboardHome() {
     collectionRate: 0,
   });
 
-  // 🌟 ฟังก์ชันสำหรับเรียงวงจากน้อยไปมาก
   const sortLoansAsc = (arr) => {
     return arr.sort((a, b) => {
       const numA = Number(a.loanNumber);
@@ -57,41 +59,65 @@ export default function DashboardHome() {
     });
   };
 
-  // 🌟 ฟังก์ชันเช็คว่าชื่อมีวงเล็บหรือไม่ (ใช้เลือกชื่อที่สมบูรณ์ที่สุด)
   const hasParen = (n) => n && typeof n === "string" && n.includes("(");
+
+  const getDisbursementDate = (startDate, frequency, type) => {
+    if (!startDate) return "-";
+    const date = new Date(startDate);
+    if (type === "day") {
+      date.setDate(date.getDate() - Number(frequency || 1));
+    } else if (type === "month") {
+      date.setMonth(date.getMonth() - Number(frequency || 1));
+    }
+    return date.toLocaleDateString("th-TH", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  };
+
+  const getRawDisbursementDate = (startDate, frequency, type) => {
+    if (!startDate) return "";
+    const d = new Date(startDate);
+    if (type === "day") {
+      d.setDate(d.getDate() - Number(frequency || 1));
+    } else if (type === "month") {
+      d.setMonth(d.getMonth() - Number(frequency || 1));
+    }
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
 
   const fetchDashboardData = useCallback(async () => {
     setLoading(true);
     try {
-      // แก้บั๊ก Timezone ของประเทศไทย
       const [year, month] = selectedDate.split("-");
       const firstDayOfMonth = `${year}-${month}-01`;
       const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
       const lastDayOfMonth = `${year}-${month}-${String(lastDay).padStart(2, "0")}`;
 
-      // ===============================================
-      // 1. ดึงข้อมูล Loans และยุบรวมวงที่สร้างซ้ำซ้อน
-      // ===============================================
       const loansSnap = await getDocs(collection(db, "loans"));
       let totalMarket = 0;
+      let totalDisbursed = 0;
       const loanMap = new Map();
       const activeLoansMap = new Map();
+      const disbursedLoansList = [];
 
       loansSnap.forEach((d) => {
         const data = d.data();
-        if (!data.customerId) return; // ล็อกชั้นที่ 1: ต้องมี ID ลูกค้า
+        if (!data.customerId) return;
 
         loanMap.set(d.id, data);
 
         if (data.status === "active") {
-          // สร้าง Key เพื่อเช็คว่าลูกค้าคนนี้ วงที่นี้ นับไปหรือยัง
           const key = `${data.customerId}_${data.loanNumber}`;
           const existing = activeLoansMap.get(key);
 
           if (!existing) {
             activeLoansMap.set(key, { id: d.id, ...data });
           } else {
-            // ถ้าซ้ำ ให้เลือกอันที่มีวงเล็บ
             if (
               !hasParen(existing.customerName) &&
               hasParen(data.customerName)
@@ -105,11 +131,19 @@ export default function DashboardHome() {
       const activeLoansList = Array.from(activeLoansMap.values());
       activeLoansList.forEach((loan) => {
         totalMarket += loan.remainingBalance || 0;
+
+        const rawDisbDate = getRawDisbursementDate(
+          loan.startDate,
+          loan.frequency,
+          loan.frequencyType,
+        );
+        if (rawDisbDate >= firstDayOfMonth && rawDisbDate <= lastDayOfMonth) {
+          totalDisbursed += loan.principal || 0;
+          // 🌟 แอบเก็บ rawDisbDate (YYYY-MM-DD) ไว้ใน object เพื่อเอาไว้ใช้เรียงลำดับ
+          disbursedLoansList.push({ ...loan, rawDisbDate });
+        }
       });
 
-      // ===============================================
-      // 2. ดึงเป้าเก็บและกำไรรายวัน (พร้อมระบบยุบรวมบิลซ้ำ)
-      // ===============================================
       const scheduleQ = query(
         collection(db, "schedules"),
         where("dueDate", "==", selectedDate),
@@ -122,20 +156,16 @@ export default function DashboardHome() {
         const data = doc.data();
         const parentLoan = loanMap.get(data.loanId);
 
-        // ล็อกชั้นที่ 2: ต้องมีวงแม่และ ID ลูกค้า
         if (!data.customerId || !parentLoan) return;
         if (data.status === "pending" && parentLoan.status === "closed") return;
 
         const lNum = data.loanNumber || parentLoan.loanNumber || "-";
-
-        // 🌟 Key กรองบิลซ้ำ: รหัสลูกค้า + เลขวง + งวดที่
         const key = `${data.customerId}_${lNum}_${data.installmentNo}`;
         const existing = dailyTargetsMap.get(key);
 
         if (!existing) {
           dailyTargetsMap.set(key, { id: doc.id, ...data, loanNumber: lNum });
         } else {
-          // ถ้ามีบิลซ้ำ
           if (existing.status !== "paid" && data.status === "paid") {
             dailyTargetsMap.set(key, { id: doc.id, ...data, loanNumber: lNum });
           } else if (existing.status === data.status) {
@@ -161,7 +191,6 @@ export default function DashboardHome() {
       let actualProfitFromSchedules = 0;
       const dailyTargetsList = Array.from(dailyTargetsMap.values());
 
-      // คำนวณจากบิลที่ผ่านการ "ยุบรวมและกรองเรียบร้อยแล้ว"
       dailyTargetsList.forEach((data) => {
         dayTotalGoal += data.amount || 0;
         expectedProfitToday += data.profitShare || 0;
@@ -175,7 +204,6 @@ export default function DashboardHome() {
         }
       });
 
-      // 3. กำไรจากค่าปรับเฉพาะของวันนี้ (พร้อมกรองบิลซ้ำ)
       const transDayQ = query(
         collection(db, "transactions"),
         where("paymentDate", "==", selectedDate),
@@ -186,7 +214,6 @@ export default function DashboardHome() {
       transDaySnap.forEach((doc) => {
         const data = doc.data();
         if (!data.customerId || !loanMap.has(data.loanId)) return;
-        // ป้องกันแอดมินกดเบิ้ลค่าปรับ
         const key = `${data.customerId}_${data.loanId}_${data.installmentNo}`;
         transDayMap.set(key, data);
       });
@@ -194,9 +221,6 @@ export default function DashboardHome() {
       let penaltyToday = 0;
       transDayMap.forEach((data) => (penaltyToday += data.penalty || 0));
 
-      // ===============================================
-      // 4. กำไรสะสมของเดือน (พร้อมระบบยุบรวมบิลซ้ำ)
-      // ===============================================
       const monthSchedulesQ = query(
         collection(db, "schedules"),
         where("dueDate", ">=", firstDayOfMonth),
@@ -252,7 +276,6 @@ export default function DashboardHome() {
         }
       });
 
-      // 5. บวก "ค่าปรับ" (Penalty) ของเดือน
       const transMonthQ = query(
         collection(db, "transactions"),
         where("paymentDate", ">=", firstDayOfMonth),
@@ -285,6 +308,7 @@ export default function DashboardHome() {
 
       setStats({
         totalPrincipalInMarket: totalMarket,
+        totalDisbursedPrincipal: totalDisbursed,
         expectedToday: dayTotalGoal,
         collectedAmount: collectedAmount,
         expectedProfitToday: expectedProfitToday,
@@ -300,6 +324,10 @@ export default function DashboardHome() {
 
       setModalData({
         activeLoans: sortLoansAsc(activeLoansList),
+        // 🌟 เปลี่ยนการเรียง "ยอดปล่อย" ให้เรียงตาม "วันที่ปล่อยยอด" (วันที่ 1 ถึงสิ้นเดือน)
+        disbursedLoans: disbursedLoansList.sort(
+          (a, b) => new Date(a.rawDisbDate) - new Date(b.rawDisbDate),
+        ),
         dailyTargets: sortLoansAsc(dailyTargetsList),
         monthlyProfits: monthlyProfitsList,
       });
@@ -334,7 +362,6 @@ export default function DashboardHome() {
 
   return (
     <div className="w-full pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500 relative">
-      {/* --- Header & Date Picker --- */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6 mb-8 pt-10">
         <div className="w-full lg:w-auto">
           <h1 className="text-3xl font-black text-gray-800 tracking-tight flex items-center gap-3">
@@ -357,18 +384,36 @@ export default function DashboardHome() {
         </div>
       </div>
 
-      {/* --- Top Cards Grid --- */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">
-        {/* 🌟 เงินต้นในตลาด */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6 mb-8">
+        {/* 🌟 1. ยอดปล่อยรวม (เฉพาะเดือนที่เลือก) */}
+        <div
+          onClick={() => setActiveModal("disbursed")}
+          className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-50 flex flex-col items-center text-center cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-purple-200 transition-all group"
+        >
+          <div className="w-12 h-12 bg-purple-50 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+            <Banknote className="w-6 h-6 text-purple-500" />
+          </div>
+          <p className="text-[12px] xl:text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1 flex items-center gap-1">
+            ยอดปล่อย (เดือนนี้) <FileText className="w-3 h-3 text-gray-300" />
+          </p>
+          <p className="text-2xl font-black text-gray-800">
+            ฿{stats.totalDisbursedPrincipal.toLocaleString()}
+          </p>
+          <span className="text-[9px] font-bold text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity mt-2 uppercase tracking-widest bg-purple-50 px-2 py-0.5 rounded-full">
+            คลิกดูรายวง
+          </span>
+        </div>
+
+        {/* 2. เงินต้นในตลาด (คงเหลือ) */}
         <div
           onClick={() => setActiveModal("principal")}
-          className="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-50 flex flex-col items-center text-center cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-blue-200 transition-all group"
+          className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-50 flex flex-col items-center text-center cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-blue-200 transition-all group"
         >
           <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
             <Wallet className="w-6 h-6 text-blue-500" />
           </div>
-          <p className="text-[14px] font-black uppercase text-gray-400 tracking-widest mb-1 flex items-center gap-1">
-            เงินต้นในตลาด <FileText className="w-3 h-3 text-gray-300" />
+          <p className="text-[12px] xl:text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1 flex items-center gap-1">
+            ยอดคงเหลือในตลาด <FileText className="w-3 h-3 text-gray-300" />
           </p>
           <p className="text-2xl font-black text-gray-800">
             ฿{stats.totalPrincipalInMarket.toLocaleString()}
@@ -378,15 +423,15 @@ export default function DashboardHome() {
           </span>
         </div>
 
-        {/* 🌟 เป้าเก็บวันนี้ */}
+        {/* 3. เป้าเก็บวันนี้ */}
         <div
           onClick={() => setActiveModal("target")}
-          className="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-50 flex flex-col items-center text-center cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-orange-200 transition-all group"
+          className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-50 flex flex-col items-center text-center cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-orange-200 transition-all group"
         >
           <div className="w-12 h-12 bg-orange-50 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
             <Target className="w-6 h-6 text-orange-500" />
           </div>
-          <p className="text-[14px] font-black uppercase text-gray-400 tracking-widest mb-1 flex items-center gap-1">
+          <p className="text-[12px] xl:text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1 flex items-center gap-1">
             เป้าเก็บวันนี้ <FileText className="w-3 h-3 text-gray-300" />
           </p>
           <p className="text-2xl font-black text-gray-800">
@@ -397,15 +442,15 @@ export default function DashboardHome() {
           </span>
         </div>
 
-        {/* 🌟 กำไรรวมรายวัน */}
+        {/* 4. กำไรรวมรายวัน */}
         <div
           onClick={() => setActiveModal("profit")}
-          className="bg-white rounded-[2rem] p-8 shadow-sm border border-green-50 flex flex-col items-center text-center cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-green-200 transition-all group"
+          className="bg-white rounded-[2rem] p-6 shadow-sm border border-green-50 flex flex-col items-center text-center cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-green-200 transition-all group"
         >
           <div className="w-12 h-12 bg-green-50 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
             <Coins className="w-6 h-6 text-green-500" />
           </div>
-          <p className="text-[14px] font-black uppercase text-green-600 tracking-widest mb-1 flex items-center gap-1">
+          <p className="text-[12px] xl:text-[10px] font-black uppercase text-green-600 tracking-widest mb-1 flex items-center gap-1">
             กำไรรวมรายวัน <FileText className="w-3 h-3 text-green-300" />
           </p>
           <p className="text-2xl font-black text-green-600">
@@ -416,16 +461,16 @@ export default function DashboardHome() {
           </span>
         </div>
 
-        {/* 🌟 กำไรรวมรายเดือน */}
+        {/* 5. กำไรรวมรายเดือน */}
         <div
           onClick={() => setActiveModal("profitMonth")}
-          className="bg-[#1F2335] rounded-[2rem] p-8 shadow-xl flex flex-col items-center text-center relative overflow-hidden text-white border border-white/5 cursor-pointer hover:shadow-2xl hover:-translate-y-1 hover:border-orange-500/50 transition-all group"
+          className="bg-[#1F2335] rounded-[2rem] p-6 shadow-xl flex flex-col items-center text-center relative overflow-hidden text-white border border-white/5 cursor-pointer hover:shadow-2xl hover:-translate-y-1 hover:border-orange-500/50 transition-all group"
         >
           <div className="absolute top-0 right-0 w-20 h-20 bg-orange-500/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
           <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
             <TrendingUp className="w-6 h-6 text-orange-400" />
           </div>
-          <p className="text-[14px] font-black uppercase text-orange-400 tracking-widest mb-1 flex items-center gap-1">
+          <p className="text-[12px] xl:text-[10px] font-black uppercase text-orange-400 tracking-widest mb-1 flex items-center gap-1">
             กำไรรวมรายเดือน <FileText className="w-3 h-3 text-orange-300" />
           </p>
           <p className="text-2xl font-black">
@@ -437,7 +482,6 @@ export default function DashboardHome() {
         </div>
       </div>
 
-      {/* --- ก้อนล่างสุด (ภารกิจ & วิเคราะห์) --- */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
         <div className="xl:col-span-2 space-y-8">
           <div
@@ -551,14 +595,20 @@ export default function DashboardHome() {
             onClick={() => setActiveModal(null)}
           ></div>
 
-          <div className="relative bg-white w-full max-w-3xl rounded-[2.5rem] shadow-2xl flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200 overflow-hidden">
-            {/* Header Modal */}
+          <div className="relative bg-white w-full max-w-5xl rounded-[2.5rem] shadow-2xl flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200 overflow-hidden">
             <div className="p-6 md:p-8 border-b border-gray-100 flex justify-between items-center bg-gray-50/80">
               <div>
                 <h2 className="text-xl md:text-2xl font-black text-gray-800 flex items-center gap-3">
+                  {activeModal === "disbursed" && (
+                    <>
+                      <Banknote className="w-6 h-6 text-purple-500" />{" "}
+                      ยอดปล่อยรวมประจำเดือน
+                    </>
+                  )}
                   {activeModal === "principal" && (
                     <>
-                      <Wallet className="w-6 h-6 text-blue-500" /> เงินต้นในตลาด
+                      <Wallet className="w-6 h-6 text-blue-500" />{" "}
+                      ยอดเงินคงเหลือในตลาด
                     </>
                   )}
                   {activeModal === "target" && (
@@ -581,11 +631,13 @@ export default function DashboardHome() {
                   )}
                 </h2>
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
-                  {activeModal === "principal"
-                    ? "แสดงเฉพาะวงกู้ที่กำลังดำเนินการ (กรองยอดซ้ำแล้ว)"
-                    : activeModal === "profitMonth"
-                      ? `สรุปยอดกำไรรายวัน ประจำเดือน ${new Date(selectedDate).toLocaleDateString("th-TH", { month: "long", year: "numeric" })}`
-                      : `ดึงจากตารางดิว ประจำวันที่ ${formatDateThai(selectedDate)} (กรองยอดซ้ำแล้ว)`}
+                  {activeModal === "disbursed"
+                    ? `แสดงยอดปล่อยกู้เฉพาะเดือน ${new Date(selectedDate).toLocaleDateString("th-TH", { month: "long", year: "numeric" })} (เรียงตามวันที่ปล่อย)`
+                    : activeModal === "principal"
+                      ? "แสดงวงกู้ที่กำลังดำเนินการ และยอดหนี้ที่ยังเหลืออยู่ทั้งหมด"
+                      : activeModal === "profitMonth"
+                        ? `สรุปยอดกำไรรายวัน ประจำเดือน ${new Date(selectedDate).toLocaleDateString("th-TH", { month: "long", year: "numeric" })}`
+                        : `ดึงจากตารางดิว ประจำวันที่ ${formatDateThai(selectedDate)} (กรองยอดซ้ำแล้ว)`}
                 </p>
               </div>
               <button
@@ -596,9 +648,8 @@ export default function DashboardHome() {
               </button>
             </div>
 
-            {/* Body: Table Content */}
             <div className="overflow-y-auto flex-1 bg-white p-2">
-              <table className="w-full text-left">
+              <table className="w-full text-left whitespace-nowrap">
                 <thead className="sticky top-0 bg-white shadow-sm z-10">
                   <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
                     {activeModal === "profitMonth" ? (
@@ -607,27 +658,43 @@ export default function DashboardHome() {
                         <th className="px-6 py-4 text-center">วันที่</th>
                         <th className="px-6 py-4 text-right">กำไรที่เก็บได้</th>
                       </>
+                    ) : activeModal === "disbursed" ||
+                      activeModal === "principal" ? (
+                      <>
+                        <th className="px-6 py-4">#</th>
+                        <th className="px-6 py-4">ชื่อลูกค้า</th>
+                        <th className="px-6 py-4 text-center">วงที่</th>
+                        <th className="px-6 py-4 text-center">
+                          วันที่ปล่อยยอด
+                        </th>
+                        <th className="px-6 py-4 text-right">
+                          {activeModal === "disbursed"
+                            ? "ยอดปล่อย (เงินต้น)"
+                            : "คงเหลือ"}
+                        </th>
+                        <th className="px-6 py-4 text-center">จัดการ</th>
+                      </>
                     ) : (
                       <>
                         <th className="px-6 py-4">#</th>
                         <th className="px-6 py-4">ชื่อลูกค้า</th>
                         <th className="px-6 py-4 text-center">วงที่</th>
                         <th className="px-6 py-4 text-right">
-                          {activeModal === "principal" && "จำนวนเงิน (คงเหลือ)"}
                           {activeModal === "target" && "ยอดเก็บต่องวด"}
                           {activeModal === "profit" && "ยอดเขียว (กำไร)"}
                         </th>
+                        <th className="px-6 py-4 text-center">จัดการ</th>
                       </>
                     )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {/* --- กรณีเงินต้นในตลาด --- */}
-                  {activeModal === "principal" &&
-                    modalData.activeLoans.map((item, idx) => (
+                  {/* --- 🌟 ตาราง: ยอดปล่อย (ดึงเฉพาะที่ปล่อยในเดือนนี้) --- */}
+                  {activeModal === "disbursed" &&
+                    modalData.disbursedLoans.map((item, idx) => (
                       <tr
                         key={item.id}
-                        className="hover:bg-blue-50/50 transition-colors"
+                        className="hover:bg-purple-50/50 transition-colors group"
                       >
                         <td className="px-6 py-4 text-xs font-bold text-gray-300">
                           {idx + 1}
@@ -638,13 +705,67 @@ export default function DashboardHome() {
                         <td className="px-6 py-4 text-sm font-bold text-gray-500 text-center">
                           {item.loanNumber || "-"}
                         </td>
-                        <td className="px-6 py-4 font-black text-blue-500 text-right">
-                          ฿{(item.remainingBalance || 0).toLocaleString()}
+                        <td className="px-6 py-4 text-sm font-bold text-gray-500 text-center">
+                          {getDisbursementDate(
+                            item.startDate,
+                            item.frequency,
+                            item.frequencyType,
+                          )}
+                        </td>
+                        <td className="px-6 py-4 font-black text-purple-600 text-right">
+                          ฿{(item.principal || 0).toLocaleString()}
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <Link
+                            href={`/customers/${item.customerId}`}
+                            className="inline-flex items-center justify-center p-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-600 hover:text-white transition-colors"
+                            title="ดูโปรไฟล์ลูกค้า"
+                          >
+                            <ChevronRight className="w-5 h-5" />
+                          </Link>
                         </td>
                       </tr>
                     ))}
 
-                  {/* --- กรณียอดเก็บต่องวด --- */}
+                  {/* --- ตาราง: เงินคงเหลือในตลาด --- */}
+                  {activeModal === "principal" &&
+                    modalData.activeLoans.map((item, idx) => (
+                      <tr
+                        key={item.id}
+                        className="hover:bg-blue-50/50 transition-colors group"
+                      >
+                        <td className="px-6 py-4 text-xs font-bold text-gray-300">
+                          {idx + 1}
+                        </td>
+                        <td className="px-6 py-4 font-black text-gray-700">
+                          {item.customerName || "-"}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-bold text-gray-500 text-center">
+                          {item.loanNumber || "-"}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-bold text-gray-500 text-center">
+                          {getDisbursementDate(
+                            item.startDate,
+                            item.frequency,
+                            item.frequencyType,
+                          )}
+                        </td>
+                        <td className="px-6 py-4 font-black text-blue-500 text-right">
+                          ฿{(item.remainingBalance || 0).toLocaleString()}
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <Link
+                            href={`/customers/${item.customerId}`}
+                            className="inline-flex items-center justify-center p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-600 hover:text-white transition-colors"
+                            title="ดูโปรไฟล์ลูกค้า"
+                          >
+                            <ChevronRight className="w-5 h-5" />
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+
+                  {/* --- ตาราง: ยอดเก็บต่องวด --- */}
                   {activeModal === "target" &&
                     modalData.dailyTargets.map((item, idx) => (
                       <tr
@@ -663,10 +784,19 @@ export default function DashboardHome() {
                         <td className="px-6 py-4 font-black text-orange-500 text-right">
                           ฿{(item.amount || 0).toLocaleString()}
                         </td>
+                        <td className="px-6 py-4 text-center">
+                          <Link
+                            href={`/customers/${item.customerId}`}
+                            className="inline-flex items-center justify-center p-2 bg-orange-50 text-orange-500 rounded-lg hover:bg-orange-500 hover:text-white transition-colors"
+                            title="ดูโปรไฟล์ลูกค้า"
+                          >
+                            <ChevronRight className="w-5 h-5" />
+                          </Link>
+                        </td>
                       </tr>
                     ))}
 
-                  {/* --- กรณีกำไรรายวัน --- */}
+                  {/* --- ตาราง: กำไรรายวัน --- */}
                   {activeModal === "profit" &&
                     modalData.dailyTargets.map((item, idx) => (
                       <tr
@@ -685,10 +815,19 @@ export default function DashboardHome() {
                         <td className="px-6 py-4 font-black text-green-500 text-right">
                           +฿{(item.profitShare || 0).toLocaleString()}
                         </td>
+                        <td className="px-6 py-4 text-center">
+                          <Link
+                            href={`/customers/${item.customerId}`}
+                            className="inline-flex items-center justify-center p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-600 hover:text-white transition-colors"
+                            title="ดูโปรไฟล์ลูกค้า"
+                          >
+                            <ChevronRight className="w-5 h-5" />
+                          </Link>
+                        </td>
                       </tr>
                     ))}
 
-                  {/* 🌟 กรณีกำไรรายเดือน (แสดงรายวัน 1-31) */}
+                  {/* --- ตาราง: กำไรรายเดือน --- */}
                   {activeModal === "profitMonth" &&
                     modalData.monthlyProfits.map((item, idx) => (
                       <tr
@@ -716,13 +855,15 @@ export default function DashboardHome() {
                   {/* ว่างเปล่า */}
                   {((activeModal === "principal" &&
                     modalData.activeLoans.length === 0) ||
+                    (activeModal === "disbursed" &&
+                      modalData.disbursedLoans.length === 0) ||
                     (activeModal === "target" &&
                       modalData.dailyTargets.length === 0) ||
                     (activeModal === "profit" &&
                       modalData.dailyTargets.length === 0)) && (
                     <tr>
                       <td
-                        colSpan="4"
+                        colSpan="7"
                         className="px-6 py-10 text-center text-sm font-bold text-gray-400"
                       >
                         ไม่มีข้อมูลในระบบ
@@ -733,7 +874,6 @@ export default function DashboardHome() {
               </table>
             </div>
 
-            {/* 🌟 Footer: สรุปยอดบรรทัดสุดท้าย */}
             <div className="p-6 md:p-8 bg-[#1F2335] text-white flex flex-col md:flex-row md:justify-between items-start md:items-center rounded-b-[2.5rem] gap-4">
               <div>
                 <p className="text-[12px] font-black uppercase tracking-widest text-gray-400 mb-1">
@@ -763,20 +903,32 @@ export default function DashboardHome() {
                     </span>
                   </p>
                 )}
+                {activeModal === "disbursed" && (
+                  <p className="text-[10px] font-bold text-gray-400">
+                    รวมรายการที่ปล่อยในเดือนนี้:{" "}
+                    <span className="text-purple-400 font-black">
+                      {modalData.disbursedLoans.length} วง
+                    </span>
+                  </p>
+                )}
               </div>
 
               <div className="text-left md:text-right w-full md:w-auto">
                 <p
                   className={`text-3xl font-black ${
-                    activeModal === "principal"
-                      ? "text-blue-400"
-                      : activeModal === "target"
-                        ? "text-orange-400"
-                        : activeModal === "profitMonth"
-                          ? "text-orange-500"
-                          : "text-green-400"
+                    activeModal === "disbursed"
+                      ? "text-purple-400"
+                      : activeModal === "principal"
+                        ? "text-blue-400"
+                        : activeModal === "target"
+                          ? "text-orange-400"
+                          : activeModal === "profitMonth"
+                            ? "text-orange-500"
+                            : "text-green-400"
                   }`}
                 >
+                  {activeModal === "disbursed" &&
+                    `฿${stats.totalDisbursedPrincipal.toLocaleString()}`}
                   {activeModal === "principal" &&
                     `฿${stats.totalPrincipalInMarket.toLocaleString()}`}
                   {activeModal === "target" &&
@@ -787,7 +939,6 @@ export default function DashboardHome() {
                     `฿${stats.profitMonth.toLocaleString()}`}
                 </p>
 
-                {/* 🌟 แจ้งเตือนส่วนที่ขาดเป้า */}
                 {activeModal === "target" &&
                   stats.expectedToday - stats.collectedAmount > 0 && (
                     <p className="text-xs font-black text-rose-400 mt-1 uppercase tracking-widest bg-rose-500/20 px-3 py-1.5 rounded-lg inline-block w-full md:w-auto text-center">

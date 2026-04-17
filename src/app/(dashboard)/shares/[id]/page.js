@@ -23,18 +23,15 @@ import {
   Award,
   Wallet,
   Users,
-  UserCheck,
-  UserMinus,
   Ban,
   Trophy,
-  Share2,
   Download,
   X,
   Camera,
   Crown,
   Undo2,
 } from "lucide-react";
-import { toPng } from "html-to-image"; // 🌟 เปลี่ยนมาใช้ปลั๊กอินใหม่ที่ทันสมัยกว่าเดิม
+import { toPng } from "html-to-image";
 
 export default function ShareCommandCenterPage() {
   const params = useParams();
@@ -113,7 +110,7 @@ export default function ShareCommandCenterPage() {
   };
 
   // ==========================================
-  // 3. ฟังก์ชันสละสิทธิ์งวดนี้ (Toggle ได้)
+  // 3. ฟังก์ชันสละสิทธิ์งวดนี้
   // ==========================================
   const toggleSkipStatus = async (hand) => {
     if (share.status === "completed") return;
@@ -206,7 +203,7 @@ export default function ShareCommandCenterPage() {
   };
 
   // ==========================================
-  // 🌟 ฟังก์ชันบันทึกภาพ (แก้ปัญหา CSS Error สมบูรณ์แบบ)
+  // 🌟 ฟังก์ชันบันทึกภาพ (รวมคนสละสิทธิ์ด้วย)
   // ==========================================
   const handleDownloadImage = () => {
     if (!printAreaRef.current) return;
@@ -215,9 +212,9 @@ export default function ShareCommandCenterPage() {
     setTimeout(async () => {
       try {
         const dataUrl = await toPng(printAreaRef.current, {
-          pixelRatio: 2, // ความคมชัด 2 เท่า
+          pixelRatio: 2,
           backgroundColor: "#ffffff",
-          cacheBust: true, // ป้องกันปัญหา cache รูป
+          cacheBust: true,
         });
 
         const link = document.createElement("a");
@@ -248,10 +245,15 @@ export default function ShareCommandCenterPage() {
   const totalCollectedPerPeriod = share.installmentAmount * share.totalHands;
   const adminProfit = totalCollectedPerPeriod - share.poolAmount;
 
-  // 🧮 คำนวณยอดแต่ละงวดต่อมือ (ป้ายบอกทาง)
+  // 🌟 มาตรฐานการหักค้ำ (ใช้โชว์ข้อมูลด้านบนอ้างอิงของลูกแชร์)
+  const standardGuaranteeDeduction = share.installmentAmount * 3;
+  const memberActualReceived = share.poolAmount - standardGuaranteeDeduction;
+
   const currentHandSaved = currentPeriod * share.installmentAmount;
-  const currentHandDebt = share.poolAmount - currentHandSaved;
-  const displayDeadDebt = currentHandDebt > 0 ? currentHandDebt : 0;
+
+  // 🌟 ยอดหนี้มือตายของลูกแชร์ (ใช้อ้างอิง)
+  const memberCurrentHandDebt = memberActualReceived - currentHandSaved;
+  const displayDeadDebt = memberCurrentHandDebt > 0 ? memberCurrentHandDebt : 0;
 
   const eligibleCandidates = hands.filter(
     (h) =>
@@ -260,15 +262,11 @@ export default function ShareCommandCenterPage() {
       h.handNumber !== 1,
   );
 
-  const candidatesForWheel = eligibleCandidates.filter(
-    (c) => !c.skippedPeriods?.includes(currentPeriod),
-  );
-
   const collectedCount = hands.filter((h) =>
     h.paidPeriods?.includes(currentPeriod),
   ).length;
   const totalCollectedThisPeriod =
-    collectedCount * share.installmentAmount + share.installmentAmount;
+    collectedCount * share.installmentAmount + share.installmentAmount; // บวกของท้าวแชร์
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500 bg-gray-50/30 min-h-screen">
@@ -305,6 +303,15 @@ export default function ShareCommandCenterPage() {
                 </p>
               </div>
 
+              <div className="bg-[#fef2f2] border border-[#fecaca] rounded-[1rem] px-6 py-4 shadow-sm min-w-[180px]">
+                <p className="text-xs font-bold text-[#b91c1c] tracking-wide mb-1 flex items-center gap-1">
+                  หักค้ำท้าย (3 งวด)
+                </p>
+                <p className="text-2xl font-black text-[#991b1b]">
+                  ฿{standardGuaranteeDeduction.toLocaleString()}
+                </p>
+              </div>
+
               <div className="bg-[#fff7ed] border border-[#ffedd5] rounded-[1rem] px-6 py-4 shadow-sm min-w-[180px]">
                 <p className="text-xs font-bold text-[#c2410c] tracking-wide mb-1">
                   ค่าทำวง (กำไรท้าว)
@@ -327,7 +334,7 @@ export default function ShareCommandCenterPage() {
 
               <div className="bg-[#fffdfd] border border-red-100 rounded-[1rem] px-6 py-4 shadow-sm min-w-[220px]">
                 <p className="text-sm font-bold text-[#b91c1c] tracking-wide mb-1">
-                  หนี้คงเหลือ (มือตาย)
+                  หนี้คงเหลือ (ลูกแชร์มือตาย)
                 </p>
                 <p className="text-3xl font-black text-[#991b1b]">
                   - ฿{displayDeadDebt.toLocaleString()}
@@ -381,7 +388,7 @@ export default function ShareCommandCenterPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-left text-sm whitespace-nowrap">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200 text-gray-600">
                 <th className="px-5 py-4 font-semibold w-16 text-center">#</th>
@@ -414,9 +421,19 @@ export default function ShareCommandCenterPage() {
                   ? hand.totalPaid - share.installmentAmount
                   : hand.totalPaid;
 
+                // 🌟 ท้าวแชร์ (isTao) จะไม่โดนหักค้ำท้าย
+                const handGuaranteeDeduction = isTao
+                  ? 0
+                  : standardGuaranteeDeduction;
+                const handActualReceived =
+                  share.poolAmount - handGuaranteeDeduction;
+
+                const currentDebt = handActualReceived - hand.totalPaid;
                 const displayAmount = isAlive
                   ? hand.totalPaid
-                  : share.poolAmount - hand.totalPaid;
+                  : currentDebt > 0
+                    ? currentDebt
+                    : 0;
 
                 return (
                   <tr
@@ -433,16 +450,27 @@ export default function ShareCommandCenterPage() {
                       <p className="font-semibold text-gray-900">
                         {hand.customerName}
                       </p>
+
                       {isTao && (
                         <p className="text-[11px] text-gray-500 font-medium mt-0.5">
                           ท้าวแชร์ (ไม่ต้องส่ง)
                         </p>
                       )}
+
+                      {/* 🌟 ป้ายบอกรับเงิน (ลูกแชร์ = โดนหัก / ท้าว = ได้เต็ม) */}
                       {hand.wonAtPeriod && !isTao && (
-                        <p className="text-[11px] font-medium text-red-500 flex items-center gap-1 mt-0.5">
-                          <Award className="w-3 h-3" /> รับเงินแล้วงวดที่{" "}
-                          {hand.wonAtPeriod}
-                        </p>
+                        <div className="mt-1.5 inline-flex items-center gap-1 bg-red-50 border border-red-100 px-2 py-0.5 rounded text-[10px] font-bold text-red-600">
+                          <Award className="w-3 h-3" /> รับงวด{" "}
+                          {hand.wonAtPeriod} | หักค้ำ 3 งวด (฿
+                          {handGuaranteeDeduction.toLocaleString()}) | รับจริง ฿
+                          {handActualReceived.toLocaleString()}
+                        </div>
+                      )}
+                      {hand.wonAtPeriod && isTao && (
+                        <div className="mt-1.5 inline-flex items-center gap-1 bg-green-50 border border-green-100 px-2 py-0.5 rounded text-[10px] font-bold text-green-600">
+                          <Crown className="w-3 h-3" /> รับงวด 1 | รับเต็ม ฿
+                          {handActualReceived.toLocaleString()} (ไม่หักค้ำ)
+                        </div>
                       )}
                     </td>
 
@@ -508,10 +536,10 @@ export default function ShareCommandCenterPage() {
                       ) : (
                         <div className="flex flex-col items-end">
                           <span className="font-bold text-red-600 text-sm">
-                            ฿{displayAmount.toLocaleString()}
+                            - ฿{displayAmount.toLocaleString()}
                           </span>
                           <span className="text-[10px] text-gray-500 font-medium">
-                            หนี้คงเหลือ
+                            หนี้คงเหลือ (หักค้ำ)
                           </span>
                         </div>
                       )}
@@ -546,7 +574,7 @@ export default function ShareCommandCenterPage() {
         </div>
       </div>
 
-      {/* --- ตารางที่ 2: รายชื่อผู้มีสิทธิ์ (คัดมาเฉพาะคนหมุนล้อ) --- */}
+      {/* --- ตารางที่ 2: รายชื่อผู้มีสิทธิ์ --- */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="p-5 border-b border-gray-200 bg-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -567,7 +595,7 @@ export default function ShareCommandCenterPage() {
           </div>
 
           <div className="flex gap-2 w-full sm:w-auto">
-            {share.currentPeriod > 1 && candidatesForWheel.length > 0 && (
+            {share.currentPeriod > 1 && eligibleCandidates.length > 0 && (
               <button
                 onClick={() => setShowExportModal(true)}
                 className="flex-1 sm:flex-none bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 px-4 py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-colors"
@@ -579,7 +607,7 @@ export default function ShareCommandCenterPage() {
             <div className="text-xs font-semibold text-gray-700 bg-gray-50 px-4 py-2 rounded-lg border border-gray-200">
               {share.currentPeriod === 1
                 ? "ท้าวแชร์ 1 มือ"
-                : `พร้อมจับฉลาก ${candidatesForWheel.length} มือ`}
+                : `มีสิทธิ์เปีย ${eligibleCandidates.length} มือ`}
             </div>
           </div>
         </div>
@@ -705,18 +733,16 @@ export default function ShareCommandCenterPage() {
       </div>
 
       {/* ========================================== */}
-      {/* 🌟 MODAL: ใบสรุปรายชื่อ (แก้ไขให้แคปเจอร์รูปได้) */}
+      {/* 🌟 MODAL: ใบสรุปรายชื่อ (โชว์คนสละสิทธิ์ด้วย) */}
       {/* ========================================== */}
       {showExportModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
-          {/* แบ็คกราวน์คลิกเพื่อปิด (กดปุ๊บปิดปั๊บ) */}
           <div
             className="absolute inset-0 cursor-pointer"
             onClick={() => setShowExportModal(false)}
           ></div>
 
           <div className="relative w-full max-w-md bg-white rounded-[2rem] shadow-2xl flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200 z-10">
-            {/* Header ของ Modal */}
             <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100 bg-white rounded-t-[2rem]">
               <h3 className="font-bold text-gray-800 flex items-center gap-2">
                 <Camera className="w-5 h-5 text-blue-600" /> สร้างรูปรายชื่อ
@@ -729,7 +755,6 @@ export default function ShareCommandCenterPage() {
               </button>
             </div>
 
-            {/* 📸 กล่องที่จะถูกแคปเจอร์ */}
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6 bg-gray-50/50">
               <div
                 id="print-area"
@@ -758,23 +783,43 @@ export default function ShareCommandCenterPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {candidatesForWheel.map((cand) => (
-                        <tr key={cand.id} className="bg-white">
-                          <td className="px-4 py-3 text-center font-bold text-blue-600 border-r border-gray-50">
-                            {cand.handNumber}
-                          </td>
-                          <td className="px-4 py-3 font-semibold text-gray-800">
-                            {cand.customerName}
-                          </td>
-                        </tr>
-                      ))}
+                      {eligibleCandidates.map((cand) => {
+                        const hasSkipped =
+                          cand.skippedPeriods?.includes(currentPeriod);
+
+                        return (
+                          <tr
+                            key={cand.id}
+                            className={`bg-white ${hasSkipped ? "bg-gray-50/50" : ""}`}
+                          >
+                            <td
+                              className={`px-4 py-3 text-center font-bold border-r border-gray-50 ${hasSkipped ? "text-gray-400" : "text-blue-600"}`}
+                            >
+                              {cand.handNumber}
+                            </td>
+                            <td className="px-4 py-3 font-semibold text-gray-800 flex items-center gap-2">
+                              <span
+                                className={
+                                  hasSkipped ? "line-through text-gray-400" : ""
+                                }
+                              >
+                                {cand.customerName}
+                              </span>
+                              {hasSkipped && (
+                                <span className="text-[10px] bg-red-100 text-red-600 border border-red-200 px-2 py-0.5 rounded-md font-bold">
+                                  สละสิทธิ์
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               </div>
             </div>
 
-            {/* ปุ่ม Actions ด้านล่างสุด */}
             <div className="p-4 bg-white border-t border-gray-100 flex gap-3 rounded-b-[2rem] shrink-0">
               <button
                 onClick={handleDownloadImage}

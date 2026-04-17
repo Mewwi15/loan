@@ -34,11 +34,11 @@ import {
   Save,
   ChevronDown,
   User,
-  HandCoins, // 🌟 เพิ่ม import ไอคอนนี้
+  HandCoins,
+  Coins,
 } from "lucide-react";
 import Link from "next/link";
 
-// --- รายชื่อธนาคารแบบเดียวกับหน้า New Loan ---
 const BANK_OPTIONS = [
   { owner: "พงศกร ศรีษเกตุ", bank: "TTB", acc: "9219175719", color: "#f6821f" },
   {
@@ -169,6 +169,21 @@ const BANK_OPTIONS = [
   },
 ];
 
+const getDisbursementDate = (startDate, frequency, type) => {
+  if (!startDate) return "-";
+  const date = new Date(startDate);
+  if (type === "day") {
+    date.setDate(date.getDate() - Number(frequency || 1));
+  } else if (type === "month") {
+    date.setMonth(date.getMonth() - Number(frequency || 1));
+  }
+  return date.toLocaleDateString("th-TH", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+};
+
 export default function CustomerDetailPage({ params }) {
   const unwrappedParams = React.use(params);
   const customerId = unwrappedParams.id;
@@ -177,18 +192,24 @@ export default function CustomerDetailPage({ params }) {
   const [loans, setLoans] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // State สำหรับ Modal ตารางงวด
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [loanSchedule, setLoanSchedule] = useState([]);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
 
-  // 🌟 State สำหรับฟอร์มแก้ไขสัญญาและบัญชีธนาคาร
   const [editContractModalOpen, setEditContractModalOpen] = useState(false);
   const [isBankModalOpen, setIsBankModalOpen] = useState(false);
   const [isSavingContract, setIsSavingContract] = useState(false);
   const [isCustomFreq, setIsCustomFreq] = useState(false);
   const [originalTotalAmount, setOriginalTotalAmount] = useState(0);
+
+  // 🌟 State สำหรับระบบโปะปิดวง (เลือกวันที่ได้)
+  const [earlyPayoffModalOpen, setEarlyPayoffModalOpen] = useState(false);
+  const [payoffLoan, setPayoffLoan] = useState(null);
+  const [payoffDate, setPayoffDate] = useState(
+    new Date().toISOString().split("T")[0],
+  );
+  const [isProcessingPayoff, setIsProcessingPayoff] = useState(false);
 
   const [formData, setFormData] = useState({
     loanId: "",
@@ -264,7 +285,6 @@ export default function CustomerDetailPage({ params }) {
     fetchData();
   }, [fetchData]);
 
-  // คำนวณตัวเลข
   const principal = Number(formData.principal) || 0;
   const percent = Number(formData.interestPercent) || 0;
   const count = Math.max(Number(formData.installments) || 1, 1);
@@ -290,7 +310,7 @@ export default function CustomerDetailPage({ params }) {
       loanId: loan.id,
       loanName: loan.loanName || loan.customerName,
       loanNumber: loan.loanNumber || "1",
-      bankIndex: bIndex >= 0 ? bIndex : 0, // ดึงธนาคารเดิมมาแสดง
+      bankIndex: bIndex >= 0 ? bIndex : 0,
       principal: loan.principal || 0,
       interestPercent: loan.interestRate || 0,
       installments: loan.totalInstallments || 20,
@@ -340,7 +360,7 @@ export default function CustomerDetailPage({ params }) {
       batch.update(loanRef, {
         loanName: formData.loanName,
         loanNumber: formData.loanNumber,
-        bankOwner: selectedBankInfo.owner, // บันทึกธนาคารใหม่ลงฐานข้อมูล
+        bankOwner: selectedBankInfo.owner,
         bankName: selectedBankInfo.bank,
         bankAccount: selectedBankInfo.acc,
         bankColor: selectedBankInfo.color,
@@ -440,6 +460,84 @@ export default function CustomerDetailPage({ params }) {
     }
   };
 
+  // 🌟 ฟังก์ชันยืนยันการโปะปิดวง (ใช้ PayoffDate ที่เลือกมา)
+  const confirmEarlyPayoff = async () => {
+    if (!payoffLoan) return;
+
+    if (
+      !window.confirm(
+        `🚨 ยืนยันการโปะยอดปิดวง ในวันที่: ${payoffDate} ใช่หรือไม่?\n\nกำไรที่เหลือจะถูกโอนไปรวมในเป้าของวันที่ระบุทันที!`,
+      )
+    )
+      return;
+
+    setIsProcessingPayoff(true);
+    try {
+      const batch = writeBatch(db);
+
+      const pendingQ = query(
+        collection(db, "schedules"),
+        where("loanId", "==", payoffLoan.id),
+        where("status", "==", "pending"),
+      );
+      const pendingSnap = await getDocs(pendingQ);
+
+      let totalPaidAmount = 0;
+      let totalProfit = 0;
+
+      pendingSnap.forEach((d) => {
+        const data = d.data();
+        totalPaidAmount += data.amount || 0;
+        totalProfit += data.profitShare || 0;
+
+        batch.update(d.ref, {
+          status: "paid",
+          dueDate: payoffDate, // 🌟 ใช้วันที่รับเงินที่แอดมินเลือก
+          paidAt: serverTimestamp(),
+        });
+      });
+
+      batch.update(doc(db, "loans", payoffLoan.id), {
+        status: "closed",
+        remainingBalance: 0,
+        currentInstallment: payoffLoan.totalInstallments,
+      });
+
+      batch.update(doc(db, "customers", customerId), {
+        activeLoans: increment(-1),
+        totalDebt: increment(-totalPaidAmount),
+      });
+
+      if (totalPaidAmount > 0) {
+        batch.set(doc(collection(db, "transactions")), {
+          loanId: payoffLoan.id,
+          customerId: customerId,
+          customerName: payoffLoan.customerName,
+          amountPaid: totalPaidAmount,
+          profitShare: totalProfit,
+          penalty: 0,
+          installmentNo: "Early Payoff",
+          paymentDate: payoffDate, // 🌟 ใช้วันที่รับเงินที่แอดมินเลือก
+          createdAt: serverTimestamp(),
+          note: "ปิดวงล่วงหน้า (โปะยอด)",
+        });
+      }
+
+      await batch.commit();
+      alert(
+        `🎉 ปิดวงล่วงหน้าสำเร็จ!\nยอดที่รับ: ฿${totalPaidAmount.toLocaleString()}\n(บันทึกลงวันที่: ${payoffDate} เรียบร้อยแล้ว)`,
+      );
+
+      setEarlyPayoffModalOpen(false);
+      fetchData();
+    } catch (error) {
+      console.error("Early Payoff Error:", error);
+      alert("เกิดข้อผิดพลาดในการโปะยอดปิดวง");
+    } finally {
+      setIsProcessingPayoff(false);
+    }
+  };
+
   const openSchedule = async (loan) => {
     setSelectedLoan(loan);
     setScheduleModalOpen(true);
@@ -511,7 +609,6 @@ export default function CustomerDetailPage({ params }) {
               </span>
             </div>
 
-            {/* 🌟 ปุ่มลิงก์ไปหน้า "ประวัติแชร์" */}
             <div className="mt-4">
               <Link
                 href={`/customers/${customerId}/share`}
@@ -621,6 +718,29 @@ export default function CustomerDetailPage({ params }) {
                   </div>
                 </div>
 
+                <div className="mx-6 md:mx-8 mb-4 p-4 bg-blue-50/50 rounded-2xl border border-blue-100 flex justify-between items-center">
+                  <div>
+                    <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-0.5">
+                      วันที่ปล่อยยอด
+                    </p>
+                    <p className="text-sm font-bold text-gray-700">
+                      {getDisbursementDate(
+                        loan.startDate,
+                        loan.frequency,
+                        loan.frequencyType,
+                      )}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-0.5">
+                      ยอดปล่อย (เงินต้น)
+                    </p>
+                    <p className="text-sm font-black text-gray-800">
+                      ฿{(loan.principal || 0).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+
                 <div className="p-4 md:p-6 bg-white border-t border-gray-50 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex gap-2">
                     <button
@@ -628,9 +748,10 @@ export default function CustomerDetailPage({ params }) {
                         handleCloseLoan(loan.id, loan.remainingBalance)
                       }
                       className="text-[12px] md:text-[14px] font-black uppercase tracking-widest text-red-500 hover:text-red-600 bg-red-50 hover:bg-red-100 px-3 md:px-4 py-2.5 rounded-xl transition-colors flex items-center gap-1"
+                      title="ปิดวงแบบไม่คิดกำไร"
                     >
                       <PowerOff className="w-3 h-3" />{" "}
-                      <span className="hidden sm:inline">ปิดวงกู้</span>
+                      <span className="hidden lg:inline">ลบวงกู้</span>
                     </button>
 
                     <button
@@ -638,15 +759,30 @@ export default function CustomerDetailPage({ params }) {
                       className="text-[12px] md:text-[14px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 md:px-4 py-2.5 rounded-xl transition-colors flex items-center gap-1"
                     >
                       <Edit className="w-3 h-3" />{" "}
-                      <span className="hidden sm:inline">แก้ไขสัญญา</span>
+                      <span className="hidden lg:inline">แก้ไขสัญญา</span>
+                    </button>
+
+                    {/* 🌟 ปุ่มกดเปิด Modal เลือกวันโปะปิดวง */}
+                    <button
+                      onClick={() => {
+                        setPayoffLoan(loan);
+                        setPayoffDate(new Date().toISOString().split("T")[0]); // เซ็ตค่าเริ่มต้นเป็นวันนี้
+                        setEarlyPayoffModalOpen(true);
+                      }}
+                      className="text-[12px] md:text-[14px] font-black uppercase tracking-widest text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 md:px-4 py-2.5 rounded-xl transition-colors flex items-center gap-1"
+                      title="โปะยอดที่เหลือ (เลือกวันรับเงินได้)"
+                    >
+                      <Coins className="w-3 h-3" />{" "}
+                      <span className="hidden lg:inline">โปะปิดวง</span>
                     </button>
                   </div>
 
                   <button
                     onClick={() => openSchedule(loan)}
-                    className="bg-gray-900 hover:bg-black text-white px-6 md:px-8 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg flex items-center gap-2"
+                    className="bg-gray-900 hover:bg-black text-white px-5 md:px-6 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg flex items-center gap-2"
                   >
-                    <FileText className="w-4 h-4" /> ตารางค่างวด{" "}
+                    <FileText className="w-4 h-4" /> ตาราง{" "}
+                    <span className="hidden md:inline">ค่างวด</span>
                     <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>
@@ -662,7 +798,82 @@ export default function CustomerDetailPage({ params }) {
         </div>
       )}
 
-      {/* 🌟 1. MODAL: ฟอร์มแก้ไขสัญญาแบบเต็ม (เพิ่มตัวเลือกธนาคาร) */}
+      {/* 🌟🌟 MODAL: โปะปิดวง (เลือกวันที่รับเงิน) 🌟🌟 */}
+      {earlyPayoffModalOpen && payoffLoan && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-gray-900/70 backdrop-blur-sm"
+            onClick={() =>
+              !isProcessingPayoff && setEarlyPayoffModalOpen(false)
+            }
+          ></div>
+          <div className="relative bg-white w-full max-w-md rounded-[2rem] shadow-2xl flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
+            <div className="p-6 bg-emerald-50 border-b border-emerald-100 flex justify-between items-center">
+              <div>
+                <h3 className="font-black text-emerald-800 text-lg flex items-center gap-2">
+                  <Coins className="w-5 h-5 text-emerald-600" />{" "}
+                  โปะปิดวงล่วงหน้า
+                </h3>
+                <p className="text-[10px] font-bold text-emerald-600 uppercase mt-1 tracking-widest">
+                  วงที่ {payoffLoan.loanNumber || "-"} • ยอดคงเหลือ ฿
+                  {payoffLoan.remainingBalance.toLocaleString()}
+                </p>
+              </div>
+              <button
+                onClick={() => setEarlyPayoffModalOpen(false)}
+                disabled={isProcessingPayoff}
+                className="p-2 text-emerald-600 hover:bg-emerald-100 rounded-xl transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest block mb-2">
+                  ระบุวันที่รับเงิน (เพื่อบันทึกกำไรย้อนหลัง)
+                </label>
+                <div className="flex items-center bg-white border border-gray-200 rounded-xl px-3 py-2 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-50 transition-all">
+                  <Calendar className="w-5 h-5 text-emerald-500 mr-2" />
+                  <input
+                    type="date"
+                    value={payoffDate}
+                    onChange={(e) => setPayoffDate(e.target.value)}
+                    className="w-full outline-none bg-transparent font-black text-gray-700 uppercase tracking-widest"
+                  />
+                </div>
+                <p className="text-[10px] text-gray-400 mt-2 font-bold">
+                  *ระบบจะนำค่างวดที่เหลือทั้งหมดไปเช็คบิลในวันที่คุณเลือก
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-gray-100 bg-gray-50 flex gap-3">
+              <button
+                onClick={() => setEarlyPayoffModalOpen(false)}
+                disabled={isProcessingPayoff}
+                className="flex-1 px-4 py-3 rounded-xl font-bold text-sm text-gray-500 bg-white border border-gray-200 hover:bg-gray-100"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={confirmEarlyPayoff}
+                disabled={isProcessingPayoff || !payoffDate}
+                className="flex-1 px-4 py-3 rounded-xl font-bold text-sm text-white bg-emerald-500 hover:bg-emerald-600 shadow-md flex items-center justify-center gap-2"
+              >
+                {isProcessingPayoff ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4" />
+                )}
+                ยืนยันการรับยอด
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🌟 1. MODAL: ฟอร์มแก้ไขสัญญาแบบเต็ม */}
       {editContractModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div
@@ -716,7 +927,6 @@ export default function CustomerDetailPage({ params }) {
                 </div>
               </div>
 
-              {/* 🌟 ปุ่มสำหรับแก้ไขบัญชีธนาคาร */}
               <div>
                 <label className="text-[10px] font-black uppercase tracking-widest ml-1 text-gray-400 block mb-1">
                   บัญชีธนาคารที่ใช้ปล่อยกู้
