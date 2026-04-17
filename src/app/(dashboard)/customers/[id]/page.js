@@ -34,6 +34,7 @@ import {
   Save,
   ChevronDown,
   User,
+  HandCoins, // 🌟 เพิ่ม import ไอคอนนี้
 } from "lucide-react";
 import Link from "next/link";
 
@@ -400,7 +401,6 @@ export default function CustomerDetailPage({ params }) {
     }
   };
 
-  // 🌟 ฟังก์ชันปิดวงกู้แบบล้างบาง (กวาดลบตารางค่างวดที่ยังไม่จ่ายทิ้งด้วย)
   const handleCloseLoan = async (loanId, remainingBalance) => {
     if (
       !window.confirm(
@@ -412,7 +412,6 @@ export default function CustomerDetailPage({ params }) {
     try {
       const batch = writeBatch(db);
 
-      // 1. ค้นหาตารางค่างวดที่ยังเป็น pending ของวงนี้ และสั่งลบทิ้งทั้งหมด
       const pendingSchedulesQ = query(
         collection(db, "schedules"),
         where("loanId", "==", loanId),
@@ -421,19 +420,16 @@ export default function CustomerDetailPage({ params }) {
       const pendingSnap = await getDocs(pendingSchedulesQ);
       pendingSnap.forEach((d) => batch.delete(d.ref));
 
-      // 2. อัปเดตสถานะวงกู้หลัก
       batch.update(doc(db, "loans", loanId), {
         status: "closed",
         remainingBalance: 0,
       });
 
-      // 3. หักลบกลบหนี้ออกจากโปรไฟล์ลูกค้า
       batch.update(doc(db, "customers", customerId), {
         activeLoans: increment(-1),
         totalDebt: increment(-remainingBalance),
       });
 
-      // 4. Commit รวดเดียวจบ
       await batch.commit();
 
       alert("ปิดวงกู้และทำความสะอาดตารางงวดเรียบร้อย!");
@@ -493,10 +489,10 @@ export default function CustomerDetailPage({ params }) {
   return (
     <div className="w-full pb-20 px-4 sm:px-10 font-sans animate-in fade-in duration-500">
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6 mb-10 pt-10">
-        <div className="flex items-center gap-6">
+        <div className="flex items-start gap-6">
           <Link
             href="/customers"
-            className="p-3 bg-white rounded-2xl border border-gray-100 shadow-sm hover:bg-orange-50 transition-all active:scale-95"
+            className="p-3 bg-white rounded-2xl border border-gray-100 shadow-sm hover:bg-orange-50 transition-all active:scale-95 shrink-0"
           >
             <ArrowLeft className="w-5 h-5 text-gray-400" />
           </Link>
@@ -514,10 +510,21 @@ export default function CustomerDetailPage({ params }) {
                 ID: {customerId.slice(0, 5)}
               </span>
             </div>
+
+            {/* 🌟 ปุ่มลิงก์ไปหน้า "ประวัติแชร์" */}
+            <div className="mt-4">
+              <Link
+                href={`/customers/${customerId}/share`}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 rounded-xl font-bold text-xs uppercase tracking-widest transition-colors shadow-sm"
+              >
+                <HandCoins className="w-4 h-4" />
+                ดูประวัติการเล่นแชร์
+              </Link>
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-4 w-full xl:w-auto">
+        <div className="flex flex-col sm:flex-row gap-4 w-full xl:w-auto mt-4 xl:mt-0">
           <div className="bg-orange-500 p-6 rounded-[2rem] text-white shadow-xl flex-1 xl:w-56">
             <p className="text-[14px] font-black uppercase opacity-70 mb-1 tracking-widest">
               เงินต้นรวม

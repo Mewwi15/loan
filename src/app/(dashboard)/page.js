@@ -57,36 +57,101 @@ export default function DashboardHome() {
     });
   };
 
+  // 🌟 ฟังก์ชันเช็คว่าชื่อมีวงเล็บหรือไม่ (ใช้เลือกชื่อที่สมบูรณ์ที่สุด)
+  const hasParen = (n) => n && typeof n === "string" && n.includes("(");
+
   const fetchDashboardData = useCallback(async () => {
     setLoading(true);
     try {
-      // 🌟 แก้บั๊ก Timezone ของประเทศไทย
+      // แก้บั๊ก Timezone ของประเทศไทย
       const [year, month] = selectedDate.split("-");
       const firstDayOfMonth = `${year}-${month}-01`;
-
       const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
       const lastDayOfMonth = `${year}-${month}-${String(lastDay).padStart(2, "0")}`;
 
-      // 1. ดึงข้อมูล Loans ทั้งหมด
+      // ===============================================
+      // 1. ดึงข้อมูล Loans และยุบรวมวงที่สร้างซ้ำซ้อน
+      // ===============================================
       const loansSnap = await getDocs(collection(db, "loans"));
       let totalMarket = 0;
-      let activeLoansList = [];
       const loanMap = new Map();
+      const activeLoansMap = new Map();
+
       loansSnap.forEach((d) => {
         const data = d.data();
+        if (!data.customerId) return; // ล็อกชั้นที่ 1: ต้องมี ID ลูกค้า
+
         loanMap.set(d.id, data);
+
         if (data.status === "active") {
-          totalMarket += data.remainingBalance || 0;
-          activeLoansList.push({ id: d.id, ...data });
+          // สร้าง Key เพื่อเช็คว่าลูกค้าคนนี้ วงที่นี้ นับไปหรือยัง
+          const key = `${data.customerId}_${data.loanNumber}`;
+          const existing = activeLoansMap.get(key);
+
+          if (!existing) {
+            activeLoansMap.set(key, { id: d.id, ...data });
+          } else {
+            // ถ้าซ้ำ ให้เลือกอันที่มีวงเล็บ
+            if (
+              !hasParen(existing.customerName) &&
+              hasParen(data.customerName)
+            ) {
+              activeLoansMap.set(key, { id: d.id, ...data });
+            }
+          }
         }
       });
 
-      // 2. ดึงเป้าเก็บและกำไรรายวัน
+      const activeLoansList = Array.from(activeLoansMap.values());
+      activeLoansList.forEach((loan) => {
+        totalMarket += loan.remainingBalance || 0;
+      });
+
+      // ===============================================
+      // 2. ดึงเป้าเก็บและกำไรรายวัน (พร้อมระบบยุบรวมบิลซ้ำ)
+      // ===============================================
       const scheduleQ = query(
         collection(db, "schedules"),
         where("dueDate", "==", selectedDate),
       );
       const scheduleSnap = await getDocs(scheduleQ);
+
+      const dailyTargetsMap = new Map();
+
+      scheduleSnap.forEach((doc) => {
+        const data = doc.data();
+        const parentLoan = loanMap.get(data.loanId);
+
+        // ล็อกชั้นที่ 2: ต้องมีวงแม่และ ID ลูกค้า
+        if (!data.customerId || !parentLoan) return;
+        if (data.status === "pending" && parentLoan.status === "closed") return;
+
+        const lNum = data.loanNumber || parentLoan.loanNumber || "-";
+
+        // 🌟 Key กรองบิลซ้ำ: รหัสลูกค้า + เลขวง + งวดที่
+        const key = `${data.customerId}_${lNum}_${data.installmentNo}`;
+        const existing = dailyTargetsMap.get(key);
+
+        if (!existing) {
+          dailyTargetsMap.set(key, { id: doc.id, ...data, loanNumber: lNum });
+        } else {
+          // ถ้ามีบิลซ้ำ
+          if (existing.status !== "paid" && data.status === "paid") {
+            dailyTargetsMap.set(key, { id: doc.id, ...data, loanNumber: lNum });
+          } else if (existing.status === data.status) {
+            if (
+              !hasParen(existing.customerName) &&
+              hasParen(data.customerName)
+            ) {
+              dailyTargetsMap.set(key, {
+                id: doc.id,
+                ...data,
+                loanNumber: lNum,
+              });
+            }
+          }
+        }
+      });
 
       let dayTotalGoal = 0;
       let expectedProfitToday = 0;
@@ -94,23 +159,12 @@ export default function DashboardHome() {
       let tasksAmount = 0;
       let collectedAmount = 0;
       let actualProfitFromSchedules = 0;
-      let dailyTargetsList = [];
+      const dailyTargetsList = Array.from(dailyTargetsMap.values());
 
-      scheduleSnap.forEach((doc) => {
-        const data = doc.data();
-        const parentLoan = loanMap.get(data.loanId);
-
-        if (
-          data.status === "pending" &&
-          (!parentLoan || parentLoan.status === "closed")
-        ) {
-          return;
-        }
-
+      // คำนวณจากบิลที่ผ่านการ "ยุบรวมและกรองเรียบร้อยแล้ว"
+      dailyTargetsList.forEach((data) => {
         dayTotalGoal += data.amount || 0;
         expectedProfitToday += data.profitShare || 0;
-        const lNum = data.loanNumber || parentLoan?.loanNumber || "-";
-        dailyTargetsList.push({ id: doc.id, ...data, loanNumber: lNum });
 
         if (data.status === "pending") {
           tasksCount++;
@@ -121,20 +175,27 @@ export default function DashboardHome() {
         }
       });
 
-      // 3. กำไรจากค่าปรับเฉพาะของวันนี้
+      // 3. กำไรจากค่าปรับเฉพาะของวันนี้ (พร้อมกรองบิลซ้ำ)
       const transDayQ = query(
         collection(db, "transactions"),
         where("paymentDate", "==", selectedDate),
       );
       const transDaySnap = await getDocs(transDayQ);
-      let penaltyToday = 0;
+
+      const transDayMap = new Map();
       transDaySnap.forEach((doc) => {
         const data = doc.data();
-        penaltyToday += data.penalty || 0;
+        if (!data.customerId || !loanMap.has(data.loanId)) return;
+        // ป้องกันแอดมินกดเบิ้ลค่าปรับ
+        const key = `${data.customerId}_${data.loanId}_${data.installmentNo}`;
+        transDayMap.set(key, data);
       });
 
+      let penaltyToday = 0;
+      transDayMap.forEach((data) => (penaltyToday += data.penalty || 0));
+
       // ===============================================
-      // 🌟 4. กำไรสะสมของเดือน (ดึงจาก Schedules เพื่อหลบบิลผี)
+      // 4. กำไรสะสมของเดือน (พร้อมระบบยุบรวมบิลซ้ำ)
       // ===============================================
       const monthSchedulesQ = query(
         collection(db, "schedules"),
@@ -143,38 +204,71 @@ export default function DashboardHome() {
       );
       const monthSchedulesSnap = await getDocs(monthSchedulesQ);
 
-      let monthlyProfit = 0;
+      const monthSchedulesMap = new Map();
 
-      // 🌟 สร้าง Map เติมวันที่ให้ครบทุกวันในเดือนก่อน (ตั้งแต่ 1 ถึงสิ้นเดือน)
+      monthSchedulesSnap.forEach((doc) => {
+        const data = doc.data();
+        const parentLoan = loanMap.get(data.loanId);
+
+        if (!data.customerId || !parentLoan) return;
+
+        const lNum = data.loanNumber || parentLoan.loanNumber || "-";
+        const key = `${data.customerId}_${lNum}_${data.installmentNo}`;
+
+        const existing = monthSchedulesMap.get(key);
+        if (!existing) {
+          monthSchedulesMap.set(key, data);
+        } else {
+          if (existing.status !== "paid" && data.status === "paid") {
+            monthSchedulesMap.set(key, data);
+          } else if (existing.status === data.status) {
+            if (
+              !hasParen(existing.customerName) &&
+              hasParen(data.customerName)
+            ) {
+              monthSchedulesMap.set(key, data);
+            }
+          }
+        }
+      });
+
+      let monthlyProfit = 0;
       const dailyProfitMap = new Map();
       for (let i = 1; i <= lastDay; i++) {
         const dateStr = `${year}-${month}-${String(i).padStart(2, "0")}`;
         dailyProfitMap.set(dateStr, 0);
       }
 
-      // 🌟 เอายอดกำไรจากตารางงวด "เฉพาะที่จ่ายแล้ว" มาบวก
-      monthSchedulesSnap.forEach((doc) => {
-        const data = doc.data();
+      monthSchedulesMap.forEach((data) => {
         if (data.status === "paid") {
           const profit = data.profitShare || 0;
           monthlyProfit += profit;
-
-          const pDate = data.dueDate; // ยึดตามวันดิว
-          if (pDate && dailyProfitMap.has(pDate)) {
-            dailyProfitMap.set(pDate, dailyProfitMap.get(pDate) + profit);
+          if (dailyProfitMap.has(data.dueDate)) {
+            dailyProfitMap.set(
+              data.dueDate,
+              dailyProfitMap.get(data.dueDate) + profit,
+            );
           }
         }
       });
 
-      // 🌟 บวก "ค่าปรับ" (Penalty) จาก Transactions เข้าไปด้วย (ถ้ามี)
+      // 5. บวก "ค่าปรับ" (Penalty) ของเดือน
       const transMonthQ = query(
         collection(db, "transactions"),
         where("paymentDate", ">=", firstDayOfMonth),
         where("paymentDate", "<=", lastDayOfMonth),
       );
       const transMonthSnap = await getDocs(transMonthQ);
+
+      const transMonthMap = new Map();
       transMonthSnap.forEach((doc) => {
         const data = doc.data();
+        if (!data.customerId || !loanMap.has(data.loanId)) return;
+        const key = `${data.customerId}_${data.loanId}_${data.installmentNo}`;
+        transMonthMap.set(key, data);
+      });
+
+      transMonthMap.forEach((data) => {
         const penalty = data.penalty || 0;
         if (penalty > 0) {
           monthlyProfit += penalty;
@@ -185,7 +279,6 @@ export default function DashboardHome() {
         }
       });
 
-      // แปลง Map เป็น Array และเรียงวันที่
       const monthlyProfitsList = Array.from(dailyProfitMap.entries())
         .map(([date, profitValue]) => ({ date, profitValue }))
         .sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -489,10 +582,10 @@ export default function DashboardHome() {
                 </h2>
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
                   {activeModal === "principal"
-                    ? "แสดงเฉพาะวงกู้ที่กำลังดำเนินการ (หน้าวอ)"
+                    ? "แสดงเฉพาะวงกู้ที่กำลังดำเนินการ (กรองยอดซ้ำแล้ว)"
                     : activeModal === "profitMonth"
                       ? `สรุปยอดกำไรรายวัน ประจำเดือน ${new Date(selectedDate).toLocaleDateString("th-TH", { month: "long", year: "numeric" })}`
-                      : `ดึงจากตารางดิว ประจำวันที่ ${formatDateThai(selectedDate)}`}
+                      : `ดึงจากตารางดิว ประจำวันที่ ${formatDateThai(selectedDate)} (กรองยอดซ้ำแล้ว)`}
                 </p>
               </div>
               <button
