@@ -36,6 +36,8 @@ import {
   User,
   HandCoins,
   Coins,
+  Calculator,
+  Users,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -192,6 +194,21 @@ export default function CustomerDetailPage({ params }) {
   const [loans, setLoans] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // 🌟 State สำหรับสถิติลูกค้า
+  const [customerStats, setCustomerStats] = useState({
+    totalProfit: 0,
+    yearlyProfit: 0,
+    profit2025: 0,
+    activeSharesCount: 0,
+    netShareBalance: 0,
+  });
+  const [customerShares, setCustomerShares] = useState([]);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+
+  // 🌟 State สำหรับฟอร์มแก้ไขกำไร 2568
+  const [isEditingProfit2025, setIsEditingProfit2025] = useState(false);
+  const [tempProfit2025, setTempProfit2025] = useState("");
+
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [loanSchedule, setLoanSchedule] = useState([]);
@@ -203,7 +220,6 @@ export default function CustomerDetailPage({ params }) {
   const [isCustomFreq, setIsCustomFreq] = useState(false);
   const [originalTotalAmount, setOriginalTotalAmount] = useState(0);
 
-  // 🌟 State สำหรับระบบโปะปิดวง (เลือกวันที่ได้)
   const [earlyPayoffModalOpen, setEarlyPayoffModalOpen] = useState(false);
   const [payoffLoan, setPayoffLoan] = useState(null);
   const [payoffDate, setPayoffDate] = useState(
@@ -251,7 +267,6 @@ export default function CustomerDetailPage({ params }) {
           collection(db, "loans"),
           where("customerName", "in", searchNames),
         );
-
         const [snapById, snapByName] = await Promise.all([
           getDocs(qById),
           getDocs(qByName),
@@ -271,11 +286,92 @@ export default function CustomerDetailPage({ params }) {
           if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
           return String(a.loanNumber).localeCompare(String(b.loanNumber));
         });
-
         setLoans(loanList);
+
+        const currentYear = new Date().getFullYear().toString();
+        const transQ = query(
+          collection(db, "transactions"),
+          where("customerId", "==", customerId),
+        );
+        const transSnap = await getDocs(transQ);
+
+        let tProfit = 0;
+        let yProfit = 0;
+
+        transSnap.forEach((doc) => {
+          const data = doc.data();
+          const profit = data.profitShare || 0;
+          const penalty = data.penalty || 0;
+          const totalEarned = profit + penalty;
+
+          tProfit += totalEarned;
+          if (data.paymentDate && data.paymentDate.startsWith(currentYear)) {
+            yProfit += totalEarned;
+          }
+        });
+
+        // 🌟 ดึงข้อมูลการเล่นแชร์และคำนวณ Net Balance ตามสูตรเป๊ะๆ
+        const sharesQ = query(
+          collection(db, "share_hands"),
+          where("customerId", "==", customerId),
+        );
+        const sharesSnap = await getDocs(sharesQ).catch(() => ({ docs: [] }));
+
+        const handsData = sharesSnap.docs.map((docSnap) => ({
+          id: docSnap.id,
+          ...docSnap.data(),
+        }));
+        // กรองเฉพาะมือที่กำลังเล่นอยู่
+        const activeHands = handsData.filter(
+          (h) => h.status !== "closed" && h.status !== "available",
+        );
+
+        let netBalance = 0;
+
+        if (activeHands.length > 0) {
+          // ดึงรายละเอียดวงแชร์ (เพื่อเอา Pool Amount)
+          const uniqueShareIds = [
+            ...new Set(activeHands.map((h) => h.shareId)),
+          ];
+          const sharesPromises = uniqueShareIds.map((id) =>
+            getDoc(doc(db, "shares", id)),
+          );
+          const sharesSnaps = await Promise.all(sharesPromises);
+
+          const sharesMap = {};
+          sharesSnaps.forEach((s) => {
+            if (s.exists()) sharesMap[s.id] = s.data();
+          });
+
+          let totalAliveSaved = 0;
+          let totalDeadDebt = 0;
+
+          activeHands.forEach((h) => {
+            const shareData = sharesMap[h.shareId];
+            if (!shareData || shareData.status !== "active") return; // ข้ามวงที่พักหรือจบแล้ว
+
+            if (h.status === "alive") {
+              totalAliveSaved += h.totalPaid || 0;
+            } else if (h.status === "dead") {
+              const debt = (shareData.poolAmount || 0) - (h.totalPaid || 0);
+              totalDeadDebt += debt > 0 ? debt : 0;
+            }
+          });
+
+          netBalance = totalAliveSaved - totalDeadDebt;
+        }
+
+        setCustomerShares(activeHands); // เก็บรายการมือแชร์สำหรับใช้ใน Modal
+        setCustomerStats({
+          totalProfit: tProfit,
+          yearlyProfit: yProfit,
+          profit2025: customerData.manualProfit2025 || 0,
+          activeSharesCount: activeHands.length,
+          netShareBalance: netBalance,
+        });
       }
     } catch (error) {
-      console.error("Error fetching customer details:", error);
+      console.error("Error fetching details:", error);
     } finally {
       setLoading(false);
     }
@@ -285,6 +381,21 @@ export default function CustomerDetailPage({ params }) {
     fetchData();
   }, [fetchData]);
 
+  // 🌟 ฟังก์ชันบันทึกกำไรปี 2568
+  const handleSaveProfit2025 = async () => {
+    try {
+      const val = Number(tempProfit2025) || 0;
+      await updateDoc(doc(db, "customers", customerId), {
+        manualProfit2025: val,
+      });
+      setCustomerStats((prev) => ({ ...prev, profit2025: val }));
+      setIsEditingProfit2025(false);
+    } catch (error) {
+      console.error("Error saving profit 2025:", error);
+      alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
+    }
+  };
+
   const principal = Number(formData.principal) || 0;
   const percent = Number(formData.interestPercent) || 0;
   const count = Math.max(Number(formData.installments) || 1, 1);
@@ -293,7 +404,6 @@ export default function CustomerDetailPage({ params }) {
   const actualTotalToCollect = installmentAmount * count;
   const totalProfit = Math.max(actualTotalToCollect - principal, 0);
   const profitPerInstallment = Math.ceil(totalProfit / count);
-
   const selectedBankInfo = BANK_OPTIONS[formData.bankIndex] || BANK_OPTIONS[0];
 
   const groupedBanks = BANK_OPTIONS.reduce((acc, bank, index) => {
@@ -304,7 +414,6 @@ export default function CustomerDetailPage({ params }) {
 
   const openEditContract = (loan) => {
     const bIndex = BANK_OPTIONS.findIndex((b) => b.acc === loan.bankAccount);
-
     setOriginalTotalAmount(loan.totalAmount || 0);
     setFormData({
       loanId: loan.id,
@@ -318,7 +427,6 @@ export default function CustomerDetailPage({ params }) {
       frequency: loan.frequency || 1,
       type: loan.frequencyType || "day",
     });
-
     setIsCustomFreq(
       ![1, 5, 7].includes(loan.frequency) && loan.frequencyType === "day",
     );
@@ -344,10 +452,8 @@ export default function CustomerDetailPage({ params }) {
       )
     )
       return;
-
     setIsSavingContract(true);
     const batch = writeBatch(db);
-
     try {
       const oldSchedulesQ = query(
         collection(db, "schedules"),
@@ -387,7 +493,6 @@ export default function CustomerDetailPage({ params }) {
         } else {
           dueDate.setMonth(dueDate.getMonth() + i);
         }
-
         const scheduleRef = doc(collection(db, "schedules"));
         batch.set(scheduleRef, {
           loanId: formData.loanId,
@@ -402,7 +507,6 @@ export default function CustomerDetailPage({ params }) {
           status: "pending",
         });
       }
-
       const diffDebt = actualTotalToCollect - originalTotalAmount;
       batch.update(doc(db, "customers", customerId), {
         totalDebt: increment(diffDebt),
@@ -410,7 +514,6 @@ export default function CustomerDetailPage({ params }) {
 
       await batch.commit();
       alert("✅ อัปเดตข้อมูลสัญญาเรียบร้อยแล้ว!");
-
       setEditContractModalOpen(false);
       fetchData();
     } catch (error) {
@@ -424,14 +527,12 @@ export default function CustomerDetailPage({ params }) {
   const handleCloseLoan = async (loanId, remainingBalance) => {
     if (
       !window.confirm(
-        "ยืนยันการปิดวงกู้นี้? \n(ระบบจะทำการลบ 'ตารางค่างวดที่ยังไม่จ่ายทิ้งทั้งหมด' เพื่อไม่ให้เป็นขยะค้างในระบบ และย้ายวงกู้ไปประวัติที่ปิดแล้ว)",
+        "ยืนยันการปิดวงกู้นี้? \n(ระบบจะทำการลบตารางค่างวดที่ยังไม่จ่ายทิ้งทั้งหมด และย้ายวงกู้ไปประวัติที่ปิดแล้ว)",
       )
     )
       return;
-
     try {
       const batch = writeBatch(db);
-
       const pendingSchedulesQ = query(
         collection(db, "schedules"),
         where("loanId", "==", loanId),
@@ -439,20 +540,16 @@ export default function CustomerDetailPage({ params }) {
       );
       const pendingSnap = await getDocs(pendingSchedulesQ);
       pendingSnap.forEach((d) => batch.delete(d.ref));
-
       batch.update(doc(db, "loans", loanId), {
         status: "closed",
         remainingBalance: 0,
       });
-
       batch.update(doc(db, "customers", customerId), {
         activeLoans: increment(-1),
         totalDebt: increment(-remainingBalance),
       });
-
       await batch.commit();
-
-      alert("ปิดวงกู้และทำความสะอาดตารางงวดเรียบร้อย!");
+      alert("ปิดวงกู้เรียบร้อย!");
       fetchData();
     } catch (error) {
       console.error("Error closing loan:", error);
@@ -460,54 +557,44 @@ export default function CustomerDetailPage({ params }) {
     }
   };
 
-  // 🌟 ฟังก์ชันยืนยันการโปะปิดวง (ใช้ PayoffDate ที่เลือกมา)
   const confirmEarlyPayoff = async () => {
     if (!payoffLoan) return;
-
     if (
       !window.confirm(
         `🚨 ยืนยันการโปะยอดปิดวง ในวันที่: ${payoffDate} ใช่หรือไม่?\n\nกำไรที่เหลือจะถูกโอนไปรวมในเป้าของวันที่ระบุทันที!`,
       )
     )
       return;
-
     setIsProcessingPayoff(true);
     try {
       const batch = writeBatch(db);
-
       const pendingQ = query(
         collection(db, "schedules"),
         where("loanId", "==", payoffLoan.id),
         where("status", "==", "pending"),
       );
       const pendingSnap = await getDocs(pendingQ);
-
       let totalPaidAmount = 0;
       let totalProfit = 0;
-
       pendingSnap.forEach((d) => {
         const data = d.data();
         totalPaidAmount += data.amount || 0;
         totalProfit += data.profitShare || 0;
-
         batch.update(d.ref, {
           status: "paid",
-          dueDate: payoffDate, // 🌟 ใช้วันที่รับเงินที่แอดมินเลือก
+          dueDate: payoffDate,
           paidAt: serverTimestamp(),
         });
       });
-
       batch.update(doc(db, "loans", payoffLoan.id), {
         status: "closed",
         remainingBalance: 0,
         currentInstallment: payoffLoan.totalInstallments,
       });
-
       batch.update(doc(db, "customers", customerId), {
         activeLoans: increment(-1),
         totalDebt: increment(-totalPaidAmount),
       });
-
       if (totalPaidAmount > 0) {
         batch.set(doc(collection(db, "transactions")), {
           loanId: payoffLoan.id,
@@ -517,17 +604,15 @@ export default function CustomerDetailPage({ params }) {
           profitShare: totalProfit,
           penalty: 0,
           installmentNo: "Early Payoff",
-          paymentDate: payoffDate, // 🌟 ใช้วันที่รับเงินที่แอดมินเลือก
+          paymentDate: payoffDate,
           createdAt: serverTimestamp(),
           note: "ปิดวงล่วงหน้า (โปะยอด)",
         });
       }
-
       await batch.commit();
       alert(
-        `🎉 ปิดวงล่วงหน้าสำเร็จ!\nยอดที่รับ: ฿${totalPaidAmount.toLocaleString()}\n(บันทึกลงวันที่: ${payoffDate} เรียบร้อยแล้ว)`,
+        `🎉 ปิดวงล่วงหน้าสำเร็จ!\nยอดที่รับ: ฿${totalPaidAmount.toLocaleString()}`,
       );
-
       setEarlyPayoffModalOpen(false);
       fetchData();
     } catch (error) {
@@ -542,7 +627,6 @@ export default function CustomerDetailPage({ params }) {
     setSelectedLoan(loan);
     setScheduleModalOpen(true);
     setLoadingSchedule(true);
-
     try {
       const q = query(
         collection(db, "schedules"),
@@ -565,7 +649,7 @@ export default function CustomerDetailPage({ params }) {
   if (loading)
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-gray-400 font-black text-[10px] uppercase tracking-[0.3em]">
-        <Loader2 className="w-10 h-10 animate-spin text-orange-500" />
+        <Loader2 className="w-10 h-10 animate-spin text-orange-500" />{" "}
         กำลังโหลดข้อมูลลูกค้า...
       </div>
     );
@@ -574,15 +658,6 @@ export default function CustomerDetailPage({ params }) {
     return <div className="p-20 text-center font-black">ไม่พบข้อมูลลูกค้า</div>;
 
   const activeLoans = loans.filter((l) => l.status !== "closed");
-
-  const totalPrincipal = activeLoans.reduce(
-    (sum, l) => sum + (l.principal || 0),
-    0,
-  );
-  const totalExpectedProfit = activeLoans.reduce(
-    (sum, l) => sum + (l.totalProfit || 0),
-    0,
-  );
 
   return (
     <div className="w-full pb-20 px-4 sm:px-10 font-sans animate-in fade-in duration-500">
@@ -608,40 +683,149 @@ export default function CustomerDetailPage({ params }) {
                 ID: {customerId.slice(0, 5)}
               </span>
             </div>
-
             <div className="mt-4">
               <Link
                 href={`/customers/${customerId}/share`}
                 className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 rounded-xl font-bold text-xs uppercase tracking-widest transition-colors shadow-sm"
               >
-                <HandCoins className="w-4 h-4" />
-                ดูประวัติการเล่นแชร์
+                <HandCoins className="w-4 h-4" /> ดูประวัติการเล่นแชร์
               </Link>
             </div>
           </div>
         </div>
+      </div>
 
-        <div className="flex flex-col sm:flex-row gap-4 w-full xl:w-auto mt-4 xl:mt-0">
-          <div className="bg-orange-500 p-6 rounded-[2rem] text-white shadow-xl flex-1 xl:w-56">
-            <p className="text-[14px] font-black uppercase opacity-70 mb-1 tracking-widest">
-              เงินต้นรวม
+      {/* 🌟 การ์ดสถิติ 5 ใบ */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-10">
+        <div className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col justify-center">
+          <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1 flex items-center gap-1">
+            <TrendingUp className="w-3 h-3 text-green-500" /> กำไรสะสม (ทั้งหมด)
+          </p>
+          <p className="text-2xl font-black text-gray-800">
+            ฿{customerStats.totalProfit.toLocaleString()}
+          </p>
+        </div>
+
+        <div className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col justify-center">
+          <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1 flex items-center gap-1">
+            <Calendar className="w-3 h-3 text-orange-500" /> กำไรสะสม (ปีนี้)
+          </p>
+          <p className="text-2xl font-black text-gray-800">
+            ฿{customerStats.yearlyProfit.toLocaleString()}
+          </p>
+        </div>
+
+        {/* การ์ดกำไร 2568 แบบแก้ไขได้ */}
+        <div className="bg-purple-50 p-6 rounded-[2rem] border border-purple-100 shadow-sm flex flex-col justify-center relative">
+          <div className="flex justify-between items-start mb-1">
+            <p className="text-[10px] font-black uppercase text-purple-600 tracking-widest flex items-center gap-1">
+              <Calendar className="w-3 h-3 text-purple-500" /> กำไร (ปี 2568)
             </p>
-            <p className="text-2xl font-black">
-              ฿{totalPrincipal.toLocaleString()}
-            </p>
+            {!isEditingProfit2025 && (
+              <button
+                onClick={() => {
+                  setIsEditingProfit2025(true);
+                  setTempProfit2025(customerStats.profit2025);
+                }}
+                className="text-purple-300 hover:text-purple-600 transition-colors bg-white p-1 rounded-md"
+              >
+                <Edit className="w-3 h-3" />
+              </button>
+            )}
           </div>
-          <div className="bg-[#1F2335] p-6 rounded-[2rem] text-white shadow-xl flex-1 xl:w-56">
-            <p className="text-[14px] font-black uppercase text-orange-400 tracking-widest mb-1">
-              กำไรรวม
+
+          {isEditingProfit2025 ? (
+            <div className="flex items-center gap-2 mt-1 z-10 relative">
+              <input
+                type="number"
+                value={tempProfit2025}
+                onChange={(e) => setTempProfit2025(e.target.value)}
+                className="w-full bg-white border border-purple-200 rounded-xl px-3 py-1.5 text-sm font-black text-gray-800 outline-none focus:border-purple-500 shadow-inner"
+                placeholder="ระบุยอด..."
+              />
+              <button
+                onClick={handleSaveProfit2025}
+                className="bg-purple-500 text-white p-2 rounded-xl hover:bg-purple-600 shadow-sm"
+              >
+                <Save className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <p className="text-2xl font-black text-purple-800">
+              ฿{customerStats.profit2025.toLocaleString()}
             </p>
-            <p className="text-2xl font-black">
-              ฿{totalExpectedProfit.toLocaleString()}
-            </p>
+          )}
+        </div>
+
+        {/* การ์ดวงแชร์ที่เล่น */}
+        <div
+          onClick={() => setIsShareModalOpen(true)}
+          className="bg-orange-50 p-6 rounded-[2rem] border border-orange-100 shadow-sm flex flex-col justify-center cursor-pointer hover:bg-orange-100 transition-colors group relative"
+        >
+          <p className="text-[10px] font-black uppercase text-orange-500 tracking-widest mb-1 flex items-center gap-1">
+            <Users className="w-3 h-3" /> วงแชร์ที่กำลังเล่น
+          </p>
+          <p className="text-2xl font-black text-orange-600 flex items-end gap-2">
+            {customerStats.activeSharesCount}{" "}
+            <span className="text-sm pb-1">วง</span>
+          </p>
+          <div className="absolute top-4 right-4 bg-white/50 p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+            <ChevronRight className="w-4 h-4 text-orange-500" />
           </div>
+        </div>
+
+        {/* 🌟 การ์ดสถานะสุทธิแชร์ (Net Balance) เปลี่ยนสีได้ */}
+        <div
+          className={`p-6 rounded-[2rem] border shadow-sm flex flex-col justify-center relative overflow-hidden ${
+            customerStats.netShareBalance > 0
+              ? "bg-green-50 border-green-200"
+              : customerStats.netShareBalance < 0
+                ? "bg-red-50 border-red-200"
+                : "bg-gray-50 border-gray-200"
+          }`}
+        >
+          <div className="flex justify-between items-start mb-1">
+            <p
+              className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${
+                customerStats.netShareBalance > 0
+                  ? "text-green-700"
+                  : customerStats.netShareBalance < 0
+                    ? "text-red-700"
+                    : "text-gray-500"
+              }`}
+            >
+              <Calculator className="w-3 h-3" /> สถานะสุทธิแชร์
+            </p>
+            {customerStats.netShareBalance !== 0 && (
+              <span
+                className={`text-[9px] font-bold px-2 py-1 rounded-md ${
+                  customerStats.netShareBalance > 0
+                    ? "bg-green-200 text-green-800"
+                    : "bg-red-200 text-red-800"
+                }`}
+              >
+                {customerStats.netShareBalance > 0
+                  ? "เราติดเงิน"
+                  : "หนี้ลูกค้า"}
+              </span>
+            )}
+          </div>
+          <p
+            className={`text-2xl font-black ${
+              customerStats.netShareBalance > 0
+                ? "text-green-700"
+                : customerStats.netShareBalance < 0
+                  ? "text-red-700"
+                  : "text-gray-800"
+            }`}
+          >
+            {customerStats.netShareBalance > 0 ? "+" : ""} ฿
+            {customerStats.netShareBalance.toLocaleString()}
+          </p>
         </div>
       </div>
 
-      <div className="mb-8 flex items-center gap-3">
+      <div className="mb-8 flex items-center gap-3 mt-4">
         <Wallet className="w-6 h-6 text-orange-500" />
         <h2 className="text-xl font-black text-gray-800">
           รายการวงกู้ที่กำลังดำเนินการ ({activeLoans.length} วง)
@@ -657,13 +841,8 @@ export default function CustomerDetailPage({ params }) {
                 className="bg-white rounded-[2.5rem] border border-gray-50 shadow-sm hover:shadow-xl transition-all duration-300 relative overflow-hidden flex flex-col"
               >
                 <div
-                  className={`absolute top-0 left-0 w-full h-1.5 ${
-                    loan.remainingBalance === 0
-                      ? "bg-green-500"
-                      : "bg-orange-500"
-                  }`}
+                  className={`absolute top-0 left-0 w-full h-1.5 ${loan.remainingBalance === 0 ? "bg-green-500" : "bg-orange-500"}`}
                 ></div>
-
                 <div className="p-6 md:p-8 border-b border-gray-50 flex justify-between items-start">
                   <div className="flex items-start gap-4">
                     <div
@@ -675,7 +854,6 @@ export default function CustomerDetailPage({ params }) {
                     >
                       {loan.loanNumber || index + 1}
                     </div>
-
                     <div>
                       <h3 className="text-xl font-black text-gray-800 tracking-tight flex items-center gap-2">
                         วง {loan.loanNumber || index + 1}
@@ -685,7 +863,6 @@ export default function CustomerDetailPage({ params }) {
                       </p>
                     </div>
                   </div>
-
                   <div className="text-right">
                     <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1">
                       ยอดส่ง / งวด
@@ -695,7 +872,6 @@ export default function CustomerDetailPage({ params }) {
                     </p>
                   </div>
                 </div>
-
                 <div className="p-6 md:p-8 bg-gray-50/30 grid grid-cols-2 gap-6">
                   <div>
                     <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 flex items-center gap-2">
@@ -717,7 +893,6 @@ export default function CustomerDetailPage({ params }) {
                     </p>
                   </div>
                 </div>
-
                 <div className="mx-6 md:mx-8 mb-4 p-4 bg-blue-50/50 rounded-2xl border border-blue-100 flex justify-between items-center">
                   <div>
                     <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-0.5">
@@ -740,7 +915,6 @@ export default function CustomerDetailPage({ params }) {
                     </p>
                   </div>
                 </div>
-
                 <div className="p-4 md:p-6 bg-white border-t border-gray-50 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex gap-2">
                     <button
@@ -753,7 +927,6 @@ export default function CustomerDetailPage({ params }) {
                       <PowerOff className="w-3 h-3" />{" "}
                       <span className="hidden lg:inline">ลบวงกู้</span>
                     </button>
-
                     <button
                       onClick={() => openEditContract(loan)}
                       className="text-[12px] md:text-[14px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 md:px-4 py-2.5 rounded-xl transition-colors flex items-center gap-1"
@@ -761,12 +934,10 @@ export default function CustomerDetailPage({ params }) {
                       <Edit className="w-3 h-3" />{" "}
                       <span className="hidden lg:inline">แก้ไขสัญญา</span>
                     </button>
-
-                    {/* 🌟 ปุ่มกดเปิด Modal เลือกวันโปะปิดวง */}
                     <button
                       onClick={() => {
                         setPayoffLoan(loan);
-                        setPayoffDate(new Date().toISOString().split("T")[0]); // เซ็ตค่าเริ่มต้นเป็นวันนี้
+                        setPayoffDate(new Date().toISOString().split("T")[0]);
                         setEarlyPayoffModalOpen(true);
                       }}
                       className="text-[12px] md:text-[14px] font-black uppercase tracking-widest text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 md:px-4 py-2.5 rounded-xl transition-colors flex items-center gap-1"
@@ -776,7 +947,6 @@ export default function CustomerDetailPage({ params }) {
                       <span className="hidden lg:inline">โปะปิดวง</span>
                     </button>
                   </div>
-
                   <button
                     onClick={() => openSchedule(loan)}
                     className="bg-gray-900 hover:bg-black text-white px-5 md:px-6 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg flex items-center gap-2"
@@ -798,7 +968,74 @@ export default function CustomerDetailPage({ params }) {
         </div>
       )}
 
-      {/* 🌟🌟 MODAL: โปะปิดวง (เลือกวันที่รับเงิน) 🌟🌟 */}
+      {/* 🌟🌟 MODAL: รายชื่อวงแชร์ 🌟🌟 */}
+      {isShareModalOpen && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-gray-900/70 backdrop-blur-sm"
+            onClick={() => setIsShareModalOpen(false)}
+          ></div>
+          <div className="relative bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
+            <div className="p-6 md:p-8 border-b border-gray-100 flex justify-between items-center bg-gray-50/80">
+              <div>
+                <h3 className="font-black text-gray-800 text-xl flex items-center gap-2">
+                  <HandCoins className="w-6 h-6 text-orange-500" />{" "}
+                  วงแชร์ที่กำลังเล่น
+                </h3>
+                <p className="text-[10px] font-bold text-gray-400 uppercase mt-1 tracking-widest">
+                  {customer.nickname} เล่นอยู่ {customerStats.activeSharesCount}{" "}
+                  วง
+                </p>
+              </div>
+              <button
+                onClick={() => setIsShareModalOpen(false)}
+                className="p-2 text-gray-400 hover:bg-gray-100 rounded-xl transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto max-h-[50vh] bg-gray-50">
+              {customerShares.length > 0 ? (
+                <div className="space-y-3">
+                  {customerShares.map((share) => (
+                    <Link
+                      key={share.id}
+                      href={`/shares/${share.shareId || share.id}`}
+                      className="bg-white border border-gray-100 p-4 rounded-2xl shadow-sm flex justify-between items-center hover:border-orange-200 transition-colors group"
+                    >
+                      <div>
+                        <h4 className="font-black text-gray-800">
+                          {share.shareName || "วงแชร์ไม่ระบุชื่อ"}
+                        </h4>
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
+                          มือที่: {share.handNumber || "-"}
+                        </p>
+                      </div>
+                      <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-orange-500" />
+                    </Link>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-10 text-gray-400">
+                  <p className="font-black text-sm uppercase tracking-widest">
+                    ไม่ได้ลงเล่นแชร์ในระบบ
+                  </p>
+                </div>
+              )}
+            </div>
+            <div className="p-6 border-t border-gray-100 bg-white">
+              <button
+                onClick={() => setIsShareModalOpen(false)}
+                className="w-full py-3.5 bg-gray-900 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-black transition-colors"
+              >
+                ปิดหน้าต่าง
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🌟 Modal โปะปิดวง, แก้ไขสัญญา, เลือกธนาคาร, ดูตารางงวด */}
       {earlyPayoffModalOpen && payoffLoan && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
           <div
@@ -827,7 +1064,6 @@ export default function CustomerDetailPage({ params }) {
                 <X className="w-5 h-5" />
               </button>
             </div>
-
             <div className="p-6 space-y-4">
               <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
                 <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest block mb-2">
@@ -847,7 +1083,6 @@ export default function CustomerDetailPage({ params }) {
                 </p>
               </div>
             </div>
-
             <div className="p-4 border-t border-gray-100 bg-gray-50 flex gap-3">
               <button
                 onClick={() => setEarlyPayoffModalOpen(false)}
@@ -865,7 +1100,7 @@ export default function CustomerDetailPage({ params }) {
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
                   <CheckCircle2 className="w-4 h-4" />
-                )}
+                )}{" "}
                 ยืนยันการรับยอด
               </button>
             </div>
@@ -873,7 +1108,6 @@ export default function CustomerDetailPage({ params }) {
         </div>
       )}
 
-      {/* 🌟 1. MODAL: ฟอร์มแก้ไขสัญญาแบบเต็ม */}
       {editContractModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div
@@ -898,7 +1132,6 @@ export default function CustomerDetailPage({ params }) {
                 <X className="w-5 h-5" />
               </button>
             </div>
-
             <div className="overflow-y-auto p-6 md:p-8 flex-1 space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
@@ -926,7 +1159,6 @@ export default function CustomerDetailPage({ params }) {
                   />
                 </div>
               </div>
-
               <div>
                 <label className="text-[10px] font-black uppercase tracking-widest ml-1 text-gray-400 block mb-1">
                   บัญชีธนาคารที่ใช้ปล่อยกู้
@@ -965,7 +1197,6 @@ export default function CustomerDetailPage({ params }) {
                   <ChevronDown className="w-5 h-5 text-gray-300 group-hover:text-gray-500 transition-colors" />
                 </button>
               </div>
-
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest ml-1 text-gray-400">
@@ -997,7 +1228,6 @@ export default function CustomerDetailPage({ params }) {
                   />
                 </div>
               </div>
-
               <div className="p-5 bg-gray-50 rounded-[1.5rem] border border-gray-100">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-3">
                   <Clock className="w-3 h-3 text-blue-500" /> รอบการส่งเงิน
@@ -1013,13 +1243,7 @@ export default function CustomerDetailPage({ params }) {
                       key={f.label}
                       type="button"
                       onClick={() => setFreq(f.val, f.type)}
-                      className={`py-2.5 rounded-xl text-[10px] font-black transition-all border ${
-                        !isCustomFreq &&
-                        formData.frequency === f.val &&
-                        formData.type === f.type
-                          ? "bg-blue-500 border-blue-500 text-white shadow-md"
-                          : "bg-white border-gray-200 text-gray-400 hover:border-blue-200"
-                      }`}
+                      className={`py-2.5 rounded-xl text-[10px] font-black transition-all border ${!isCustomFreq && formData.frequency === f.val && formData.type === f.type ? "bg-blue-500 border-blue-500 text-white shadow-md" : "bg-white border-gray-200 text-gray-400 hover:border-blue-200"}`}
                     >
                       {f.label}
                     </button>
@@ -1030,11 +1254,7 @@ export default function CustomerDetailPage({ params }) {
                       setIsCustomFreq(true);
                       setFormData((p) => ({ ...p, type: "day" }));
                     }}
-                    className={`py-2.5 rounded-xl text-[10px] font-black transition-all border ${
-                      isCustomFreq
-                        ? "bg-blue-500 border-blue-500 text-white shadow-md"
-                        : "bg-white border-gray-200 text-gray-400 hover:border-blue-200"
-                    }`}
+                    className={`py-2.5 rounded-xl text-[10px] font-black transition-all border ${isCustomFreq ? "bg-blue-500 border-blue-500 text-white shadow-md" : "bg-white border-gray-200 text-gray-400 hover:border-blue-200"}`}
                   >
                     กำหนดเอง
                   </button>
@@ -1057,7 +1277,6 @@ export default function CustomerDetailPage({ params }) {
                   </div>
                 )}
               </div>
-
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest ml-1 text-gray-400">
@@ -1086,8 +1305,6 @@ export default function CustomerDetailPage({ params }) {
                   />
                 </div>
               </div>
-
-              {/* Preview สรุปตัวเลข */}
               <div className="bg-[#1F2335] p-6 rounded-[2rem] text-white shadow-xl grid grid-cols-2 gap-4">
                 <div>
                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">
@@ -1125,7 +1342,6 @@ export default function CustomerDetailPage({ params }) {
                 </div>
               </div>
             </div>
-
             <div className="p-6 md:p-8 border-t border-gray-100 bg-white rounded-b-[2.5rem] flex justify-end gap-3">
               <button
                 onClick={() => setEditContractModalOpen(false)}
@@ -1143,7 +1359,7 @@ export default function CustomerDetailPage({ params }) {
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
                   <Save className="w-4 h-4" />
-                )}
+                )}{" "}
                 อัปเดตและสร้างตารางใหม่
               </button>
             </div>
@@ -1151,7 +1367,6 @@ export default function CustomerDetailPage({ params }) {
         </div>
       )}
 
-      {/* 🌟 1.5 MODAL: เลือกบัญชีธนาคาร (ซ้อนในฟอร์มแก้ไขสัญญา) */}
       {isBankModalOpen && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
           <div
@@ -1175,7 +1390,6 @@ export default function CustomerDetailPage({ params }) {
                 <X className="w-6 h-6" />
               </button>
             </div>
-
             <div className="overflow-y-auto p-6 md:p-8 space-y-10 flex-1">
               {Object.entries(groupedBanks).map(([owner, banks]) => (
                 <div key={owner}>
@@ -1188,11 +1402,9 @@ export default function CustomerDetailPage({ params }) {
                     </h4>
                     <div className="flex-1 h-px bg-gray-100 ml-4"></div>
                   </div>
-
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                     {banks.map((b) => {
                       const isSelected = formData.bankIndex === b.index;
-
                       return (
                         <button
                           key={b.index}
@@ -1204,11 +1416,7 @@ export default function CustomerDetailPage({ params }) {
                             }));
                             setIsBankModalOpen(false);
                           }}
-                          className={`relative p-4 md:p-5 rounded-3xl border flex flex-col items-start text-left transition-all duration-300 group ${
-                            isSelected
-                              ? "shadow-md scale-[1.02]"
-                              : "bg-white hover:shadow-lg hover:-translate-y-1"
-                          }`}
+                          className={`relative p-4 md:p-5 rounded-3xl border flex flex-col items-start text-left transition-all duration-300 group ${isSelected ? "shadow-md scale-[1.02]" : "bg-white hover:shadow-lg hover:-translate-y-1"}`}
                           style={
                             isSelected
                               ? {
@@ -1263,7 +1471,6 @@ export default function CustomerDetailPage({ params }) {
         </div>
       )}
 
-      {/* 🌟 2. POP-UP MODAL: ตารางงวด (เอาไว้ดูเฉยๆ) */}
       {scheduleModalOpen && selectedLoan && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div
@@ -1293,7 +1500,6 @@ export default function CustomerDetailPage({ params }) {
                 <X />
               </button>
             </div>
-
             <div className="overflow-y-auto p-8 bg-gray-50/50 flex-1">
               {loadingSchedule ? (
                 <div className="py-20 flex flex-col items-center gap-3 text-gray-300 font-black text-[10px] uppercase">
@@ -1338,7 +1544,6 @@ export default function CustomerDetailPage({ params }) {
                 </div>
               )}
             </div>
-
             <div className="p-8 border-t border-gray-100 bg-white rounded-b-[2.5rem] flex justify-between items-center">
               <div>
                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
