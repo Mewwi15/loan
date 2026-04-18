@@ -101,7 +101,7 @@ export async function GET(request) {
             </div>
 
             <p style="text-align: center; margin-top: 32px;">
-              <a href="https://your-website.com" style="background-color: #111827; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">เข้าสู่ระบบ Dashboard</a>
+              <a href="https://loan-sigma-seven.vercel.app/" style="background-color: #111827; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">เข้าสู่ระบบ Dashboard</a>
             </p>
           </div>
         </div>
