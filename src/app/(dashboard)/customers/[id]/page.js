@@ -226,7 +226,6 @@ export default function CustomerDetailPage({ params }) {
   );
   const [isProcessingPayoff, setIsProcessingPayoff] = useState(false);
 
-  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isClosedLoansModalOpen, setIsClosedLoansModalOpen] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -680,7 +679,8 @@ export default function CustomerDetailPage({ params }) {
 
   return (
     <div className="w-full pb-20 px-4 sm:px-10 font-sans animate-in fade-in duration-500">
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6 mb-10 pt-10">
+      {/* 👤 ส่วนหัว: ข้อมูลลูกค้า */}
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6 mb-8 pt-10">
         <div className="flex items-start gap-6">
           <Link
             href="/customers"
@@ -714,10 +714,12 @@ export default function CustomerDetailPage({ params }) {
         </div>
       </div>
 
-      {/* 🌟 การ์ดสถิติ 6 ใบ (จัดหน้าแบบ Grid 3 คอลัมน์ 2 แถวสวยๆ) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-10">
-        {/* สถิติ 1: กำไรสะสมเบ็ดเสร็จ (รวมทุกอย่าง) */}
-        <div className="bg-[#1F2335] p-6 rounded-[2rem] shadow-xl flex flex-col justify-center relative overflow-hidden text-white">
+      {/* ======================================================== */}
+      {/* 🏆 โซนที่ 1: ภาพรวมประวัติกำไรที่ได้รับแล้ว (Top Section) */}
+      {/* ======================================================== */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12">
+        {/* สถิติ 1: กำไรสะสมเบ็ดเสร็จ */}
+        <div className="bg-[#1F2335] p-6 rounded-[2rem] shadow-xl flex flex-col justify-center relative overflow-hidden text-white transition-transform hover:-translate-y-1">
           <div className="absolute top-0 right-0 w-20 h-20 bg-green-500/20 rounded-full blur-xl -mr-6 -mt-6"></div>
           <p className="text-[10px] font-black uppercase text-green-400 tracking-widest mb-1 flex items-center gap-1">
             <Award className="w-3 h-3" /> กำไรสะสมเบ็ดเสร็จ
@@ -731,7 +733,7 @@ export default function CustomerDetailPage({ params }) {
         </div>
 
         {/* สถิติ 2: กำไรปี 2568 แบบแก้ไขได้ */}
-        <div className="bg-purple-50 p-6 rounded-[2rem] border border-purple-100 shadow-sm flex flex-col justify-center relative">
+        <div className="bg-purple-50 p-6 rounded-[2rem] border border-purple-100 shadow-sm flex flex-col justify-center relative transition-transform hover:-translate-y-1">
           <div className="flex justify-between items-start mb-1">
             <p className="text-[10px] font-black uppercase text-purple-600 tracking-widest flex items-center gap-1">
               <Calendar className="w-3 h-3 text-purple-500" /> กำไร (ปี 2568)
@@ -771,13 +773,13 @@ export default function CustomerDetailPage({ params }) {
           )}
         </div>
 
-        {/* 🌟 สถิติ 3: กำไรจากวงที่ปิดแล้ว (คลิกเปิด Modal ได้) */}
+        {/* สถิติ 3: กำไรจากวงที่ปิดแล้ว */}
         <div
           onClick={() => setIsClosedLoansModalOpen(true)}
-          className="bg-white hover:bg-green-50 p-6 rounded-[2rem] border border-gray-100 hover:border-green-200 shadow-sm flex flex-col justify-center relative cursor-pointer group transition-colors"
+          className="bg-white hover:bg-green-50 p-6 rounded-[2rem] border border-gray-100 hover:border-green-200 shadow-sm flex flex-col justify-center relative cursor-pointer group transition-all hover:-translate-y-1"
         >
           <p className="text-[10px] font-black uppercase text-gray-400 group-hover:text-green-500 tracking-widest mb-1 flex items-center gap-1 transition-colors">
-            <Archive className="w-3 h-3" /> กำไรวงกู้ที่ปิดแล้ว (
+            <Archive className="w-3 h-3" /> วงกู้ที่ปิดแล้ว (
             {closedLoans.length} วง)
           </p>
           <p className="text-2xl font-black text-gray-800 group-hover:text-green-600 transition-colors">
@@ -787,91 +789,41 @@ export default function CustomerDetailPage({ params }) {
             <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-green-500" />
           </div>
         </div>
+      </div>
 
-        {/* สถิติ 4: กำไรคาดหวังรวมวงที่เดินอยู่ */}
-        <div className="bg-blue-50 p-6 rounded-[2rem] border border-blue-100 shadow-sm flex flex-col justify-center relative">
-          <p className="text-[10px] font-black uppercase text-blue-500 tracking-widest mb-1 flex items-center gap-1">
-            <Target className="w-3 h-3 text-blue-500" /> กำไรคาดหวัง (วงที่เดิน)
+      <div className="w-full h-px bg-gray-100 mb-12"></div>
+
+      {/* ======================================================== */}
+      {/* 💼 โซนที่ 2: รายการวงกู้ที่กำลังดำเนินการ (Middle Section) */}
+      {/* ======================================================== */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-orange-50 rounded-2xl">
+            <Wallet className="w-6 h-6 text-orange-500" />
+          </div>
+          <div>
+            <h2 className="text-xl font-black text-gray-800">
+              วงกู้ที่กำลังดำเนินการ
+            </h2>
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+              กำลังเดินอยู่ {activeLoans.length} วง
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-blue-50 px-5 py-3 rounded-2xl border border-blue-100 shadow-sm w-full md:w-auto">
+          <p className="text-[10px] font-black uppercase text-blue-500 tracking-widest mb-0.5 flex items-center gap-1">
+            <Target className="w-3 h-3 text-blue-500" /> กำไรคาดหวัง
+            (จากวงที่เดิน)
           </p>
-          <p className="text-2xl font-black text-blue-600">
+          <p className="text-xl font-black text-blue-600">
             ฿{customerStats.expectedProfit.toLocaleString()}
           </p>
         </div>
-
-        {/* สถิติ 5: จำนวนแชร์ที่เล่น */}
-        <div className="bg-orange-50 p-6 rounded-[2rem] border border-orange-100 shadow-sm flex flex-col justify-center relative">
-          <p className="text-[10px] font-black uppercase text-orange-500 tracking-widest mb-1 flex items-center gap-1">
-            <Users className="w-3 h-3" /> วงแชร์ที่กำลังเล่น
-          </p>
-          <p className="text-2xl font-black text-orange-600 flex items-end gap-2">
-            {customerStats.activeSharesCount}{" "}
-            <span className="text-sm pb-1">วง</span>
-          </p>
-        </div>
-
-        {/* สถิติ 6: สถานะสุทธิแชร์ (Net Balance) */}
-        <div
-          className={`p-6 rounded-[2rem] border shadow-sm flex flex-col justify-center relative overflow-hidden ${
-            customerStats.netShareBalance > 0
-              ? "bg-green-50 border-green-200"
-              : customerStats.netShareBalance < 0
-                ? "bg-red-50 border-red-200"
-                : "bg-white border-gray-100"
-          }`}
-        >
-          <div className="flex justify-between items-start mb-1">
-            <p
-              className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${
-                customerStats.netShareBalance > 0
-                  ? "text-green-700"
-                  : customerStats.netShareBalance < 0
-                    ? "text-red-700"
-                    : "text-gray-400"
-              }`}
-            >
-              <Calculator className="w-3 h-3" /> สถานะสุทธิแชร์
-            </p>
-            {customerStats.netShareBalance !== 0 && (
-              <span
-                className={`text-[9px] font-bold px-2 py-1 rounded-md ${
-                  customerStats.netShareBalance > 0
-                    ? "bg-green-200 text-green-800"
-                    : "bg-red-200 text-red-800"
-                }`}
-              >
-                {customerStats.netShareBalance > 0
-                  ? "เราติดเงิน"
-                  : "หนี้ลูกค้า"}
-              </span>
-            )}
-          </div>
-          <p
-            className={`text-2xl font-black ${
-              customerStats.netShareBalance > 0
-                ? "text-green-700"
-                : customerStats.netShareBalance < 0
-                  ? "text-red-700"
-                  : "text-gray-800"
-            }`}
-          >
-            {customerStats.netShareBalance > 0 ? "+" : ""} ฿
-            {customerStats.netShareBalance.toLocaleString()}
-          </p>
-        </div>
-      </div>
-
-      {/* ======================================================== */}
-      {/* 💼 SECTION 1: รายการวงกู้ที่กำลังดำเนินการ */}
-      {/* ======================================================== */}
-      <div className="mb-8 flex items-center gap-3 mt-4">
-        <Wallet className="w-6 h-6 text-orange-500" />
-        <h2 className="text-xl font-black text-gray-800">
-          รายการวงกู้ที่กำลังดำเนินการ ({activeLoans.length} วง)
-        </h2>
       </div>
 
       {activeLoans.length > 0 ? (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 mb-12">
           {activeLoans.map((loan, index) => {
             return (
               <div
@@ -999,21 +951,81 @@ export default function CustomerDetailPage({ params }) {
           })}
         </div>
       ) : (
-        <div className="py-20 text-center text-gray-400 bg-gray-50/50 rounded-[2.5rem] border-2 border-dashed border-gray-100">
+        <div className="py-20 text-center text-gray-400 bg-gray-50/50 rounded-[2.5rem] border-2 border-dashed border-gray-100 mb-12">
           <p className="font-black text-sm uppercase tracking-[0.2em]">
             ไม่มีวงกู้ที่กำลังดำเนินการ
           </p>
         </div>
       )}
 
+      <div className="w-full h-px bg-gray-100 mb-12"></div>
+
       {/* ======================================================== */}
-      {/* 🤝 SECTION 2: รายการวงแชร์ที่กำลังดำเนินการ */}
+      {/* 🤝 โซนที่ 3: รายการวงแชร์ที่กำลังดำเนินการ (Bottom Section) */}
       {/* ======================================================== */}
-      <div className="mb-8 flex items-center gap-3 mt-16">
-        <HandCoins className="w-6 h-6 text-orange-500" />
-        <h2 className="text-xl font-black text-gray-800">
-          รายการวงแชร์ที่กำลังดำเนินการ ({customerShares.length} มือ)
-        </h2>
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-orange-50 rounded-2xl">
+            <HandCoins className="w-6 h-6 text-orange-500" />
+          </div>
+          <div>
+            <h2 className="text-xl font-black text-gray-800">
+              วงแชร์ที่กำลังดำเนินการ
+            </h2>
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+              กำลังเล่นอยู่ {customerShares.length} มือ
+            </p>
+          </div>
+        </div>
+
+        <div
+          className={`px-5 py-3 rounded-2xl border shadow-sm w-full md:w-auto ${
+            customerStats.netShareBalance > 0
+              ? "bg-green-50 border-green-200"
+              : customerStats.netShareBalance < 0
+                ? "bg-red-50 border-red-200"
+                : "bg-white border-gray-100"
+          }`}
+        >
+          <div className="flex justify-between items-center gap-6">
+            <p
+              className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${
+                customerStats.netShareBalance > 0
+                  ? "text-green-700"
+                  : customerStats.netShareBalance < 0
+                    ? "text-red-700"
+                    : "text-gray-400"
+              }`}
+            >
+              <Calculator className="w-3 h-3" /> สถานะสุทธิแชร์
+              {customerStats.netShareBalance !== 0 && (
+                <span
+                  className={`ml-2 text-[9px] font-bold px-2 py-0.5 rounded-md ${
+                    customerStats.netShareBalance > 0
+                      ? "bg-green-200 text-green-800"
+                      : "bg-red-200 text-red-800"
+                  }`}
+                >
+                  {customerStats.netShareBalance > 0
+                    ? "เราติดเงิน"
+                    : "หนี้ลูกค้า"}
+                </span>
+              )}
+            </p>
+            <p
+              className={`text-xl font-black ${
+                customerStats.netShareBalance > 0
+                  ? "text-green-700"
+                  : customerStats.netShareBalance < 0
+                    ? "text-red-700"
+                    : "text-gray-800"
+              }`}
+            >
+              {customerStats.netShareBalance > 0 ? "+" : ""} ฿
+              {customerStats.netShareBalance.toLocaleString()}
+            </p>
+          </div>
+        </div>
       </div>
 
       {customerShares.length > 0 ? (
@@ -1129,8 +1141,10 @@ export default function CustomerDetailPage({ params }) {
       )}
 
       {/* ======================================================== */}
-      {/* 🌟🌟 MODAL: ประวัติวงกู้ที่ปิดแล้ว (Closed Loans) 🌟🌟 */}
+      {/* 🌟🌟 MODALS ทั้งหมด 🌟🌟 */}
       {/* ======================================================== */}
+
+      {/* Modal: ประวัติวงกู้ที่ปิดแล้ว */}
       {isClosedLoansModalOpen && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
           <div
