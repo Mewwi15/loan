@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react"; // 🌟 เพิ่ม useRef
+import { useState, useEffect, useRef } from "react";
 import { db, storage } from "@/lib/firebase";
 import {
   collection,
@@ -32,7 +32,7 @@ import {
   UserCog,
   LayoutGrid,
   List,
-  Plus, // 🌟 เพิ่มไอคอน Plus
+  Plus,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -70,15 +70,12 @@ export default function CustomersPage() {
     facebook: "",
   });
 
-  // 🌟 State & Ref สำหรับจัดการปุ่มลอย (Floating Button)
   const headerRef = useRef(null);
   const [showFab, setShowFab] = useState(false);
 
-  // 🌟 เซ็นเซอร์ตรวจจับว่าปุ่มหลักด้านบนเลื่อนหายไปหรือยัง
   useEffect(() => {
     const observer = new IntersectionObserver(
       ([entry]) => {
-        // ถ้า Header หายไปจากหน้าจอ (isIntersecting = false) ให้แสดงปุ่มลอย
         setShowFab(!entry.isIntersecting);
       },
       { threshold: 0 },
@@ -91,6 +88,60 @@ export default function CustomersPage() {
     return () => observer.disconnect();
   }, []);
 
+  // 🌟 ฟังก์ชันฮีโร่ V2! ซิงค์จำนวนวงกู้และยอดหนี้ให้ตรงกับความเป็นจริงเสมอ
+  const fixCustomerStats = async (customerList) => {
+    try {
+      // 1. ดึงข้อมูลวงกู้ที่ Active ทั้งหมดมาทีเดียว (ประหยัดโควต้าอ่าน Database มากๆ)
+      const loansQ = query(
+        collection(db, "loans"),
+        where("status", "==", "active"),
+      );
+      const loansSnap = await getDocs(loansQ);
+
+      // 2. จัดกลุ่มและนับยอดรวมของลูกค้าแต่ละคน
+      const loanStats = {};
+      loansSnap.forEach((docSnap) => {
+        const data = docSnap.data();
+        const cid = data.customerId;
+        if (!loanStats[cid]) {
+          loanStats[cid] = { count: 0, debt: 0 };
+        }
+        loanStats[cid].count += 1;
+        loanStats[cid].debt += data.remainingBalance || 0;
+      });
+
+      // 3. เทียบกับข้อมูลที่มี ถ้ายอดไม่ตรงกัน ให้อัปเดตใหม่ทันที
+      const batch = writeBatch(db);
+      let needsUpdate = false;
+
+      for (const customer of customerList) {
+        const actualCount = loanStats[customer.id]?.count || 0;
+        const actualDebt = loanStats[customer.id]?.debt || 0;
+
+        if (
+          customer.activeLoans !== actualCount ||
+          customer.totalDebt !== actualDebt
+        ) {
+          batch.update(doc(db, "customers", customer.id), {
+            activeLoans: actualCount,
+            totalDebt: actualDebt,
+          });
+          needsUpdate = true;
+        }
+      }
+
+      // 4. บันทึกข้อมูลที่ถูกแก้ไขลงฐานข้อมูล
+      if (needsUpdate) {
+        await batch.commit();
+        console.log(
+          "✅ Auto-Sync: ซิงค์จำนวนวงและยอดหนี้ให้ถูกต้องเรียบร้อยแล้ว!",
+        );
+      }
+    } catch (error) {
+      console.error("Error fixing customer stats:", error);
+    }
+  };
+
   useEffect(() => {
     const q = query(collection(db, "customers"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -98,6 +149,9 @@ export default function CustomersPage() {
         id: doc.id,
         ...doc.data(),
       }));
+
+      // 🌟 สั่งรันฟังก์ชันซิงค์ยอด ทุกครั้งที่โหลดหรือข้อมูลลูกค้าเปลี่ยน
+      fixCustomerStats(customerList);
 
       customerList.sort((a, b) => {
         const codeA = (a.code || "").trim();
@@ -253,6 +307,7 @@ export default function CustomersPage() {
 
   const openEditModal = (e, customer) => {
     e.stopPropagation();
+    e.preventDefault();
     setCustomerToEdit(customer);
     setEditCustomerData({
       code: customer.code || "",
@@ -370,7 +425,7 @@ export default function CustomersPage() {
 
   return (
     <div className="pb-24 px-4 sm:px-10 font-sans animate-in fade-in duration-500 relative min-h-screen">
-      {/* 🌟 ปุ่ม Floating Button (จะโผล่มาเฉพาะตอนเลื่อนจอลง) */}
+      {/* 🌟 ปุ่ม Floating Button */}
       <button
         onClick={() => setIsModalOpen(true)}
         className={`fixed bottom-8 right-8 z-50 flex items-center justify-center w-14 h-14 bg-gray-900 hover:bg-black text-white rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.5)] transition-all duration-300 active:scale-95 border border-gray-700 ${
@@ -383,7 +438,6 @@ export default function CustomersPage() {
         <Plus className="w-7 h-7 text-orange-500" />
       </button>
 
-      {/* 🌟 แนบ ref ไว้ที่ Header เพื่อให้เซ็นเซอร์รู้ว่าส่วนนี้หายไปจากจอหรือยัง */}
       <div
         ref={headerRef}
         className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-8 pt-10"
@@ -398,7 +452,6 @@ export default function CustomersPage() {
           </p>
         </div>
 
-        {/* 🌟 ปุ่มใหญ่ดั้งเดิม */}
         <button
           onClick={() => setIsModalOpen(true)}
           className="w-full md:w-auto flex items-center justify-center gap-2 bg-gray-900 hover:bg-black text-white px-8 py-4 rounded-2xl shadow-xl transition-all active:scale-95 text-sm font-black uppercase tracking-widest"
@@ -505,7 +558,9 @@ export default function CustomersPage() {
                       <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
                         ยอดหนี้รวม
                       </p>
-                      <p className="text-base font-black text-gray-800">
+                      <p
+                        className={`text-base font-black ${customer.totalDebt < 0 ? "text-red-500" : "text-gray-800"}`}
+                      >
                         ฿{(customer.totalDebt || 0).toLocaleString()}
                       </p>
                     </div>
@@ -513,7 +568,9 @@ export default function CustomersPage() {
                       <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
                         วงกู้ปัจจุบัน
                       </p>
-                      <p className="text-base font-black text-gray-500">
+                      <p
+                        className={`text-base font-black ${customer.activeLoans < 0 ? "text-red-500" : "text-gray-500"}`}
+                      >
                         {customer.activeLoans || 0} วง
                       </p>
                     </div>
@@ -530,27 +587,28 @@ export default function CustomersPage() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
+                          e.preventDefault();
                           const displayName =
                             customer.nickname || customer.name;
                           router.push(
                             `/loans/new?name=${encodeURIComponent(displayName)}&id=${customer.id}`,
                           );
                         }}
-                        className="text-[10px] font-black text-orange-500 bg-orange-50 hover:bg-orange-500 hover:text-white px-3 py-2 rounded-xl uppercase tracking-widest transition-all flex items-center gap-1 shadow-sm"
+                        className="text-[10px] font-black text-orange-500 bg-orange-50 hover:bg-orange-500 hover:text-white px-3 py-2 rounded-xl uppercase tracking-widest transition-all flex items-center gap-1 shadow-sm relative z-20"
                       >
                         <FileSignature className="w-4 h-4" />{" "}
                         <span className="hidden xl:inline">สร้างสัญญา</span>
                       </button>
                       <button
                         onClick={(e) => openEditModal(e, customer)}
-                        className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-colors"
+                        className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-colors relative z-20"
                         title="แก้ไขข้อมูลลูกค้า"
                       >
                         <UserCog className="w-5 h-5" />
                       </button>
                       <button
                         onClick={(e) => confirmDelete(e, customer)}
-                        className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                        className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors relative z-20"
                         title="ลบข้อมูลลูกค้า"
                       >
                         <Trash2 className="w-5 h-5" />
@@ -570,7 +628,7 @@ export default function CustomersPage() {
                   onClick={() => router.push(`/customers/${customer.id}`)}
                   className="group block bg-white rounded-[2rem] p-8 border border-gray-100 shadow-sm hover:shadow-xl hover:shadow-orange-100/40 hover:border-orange-200 transition-all duration-300 relative space-y-6 cursor-pointer"
                 >
-                  <div className="absolute top-6 right-6 flex gap-2 z-10">
+                  <div className="absolute top-6 right-6 flex gap-2 z-20">
                     <button
                       onClick={(e) => openEditModal(e, customer)}
                       className="p-2.5 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-colors"
@@ -587,7 +645,7 @@ export default function CustomersPage() {
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-4 pt-2">
+                  <div className="flex items-center gap-4 pt-2 relative z-10">
                     <div className="min-w-[4rem] px-2 h-16 bg-orange-50 rounded-2xl flex items-center justify-center text-xl font-black text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all duration-300 shrink-0 shadow-inner tracking-wider">
                       {customer.code
                         ? customer.code
@@ -615,7 +673,7 @@ export default function CustomersPage() {
                     </div>
                   </div>
 
-                  <div className="flex gap-8 border-l-2 border-orange-100 pl-6 py-1 relative">
+                  <div className="flex gap-8 border-l-2 border-orange-100 pl-6 py-1 relative z-10">
                     {customer.documentUrl && (
                       <div
                         className="absolute -left-[11px] top-1/2 -translate-y-1/2 bg-white rounded-full p-1 border border-orange-200"
@@ -628,7 +686,9 @@ export default function CustomersPage() {
                       <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mb-1">
                         ยอดหนี้รวม
                       </p>
-                      <p className="text-xl font-black text-gray-800">
+                      <p
+                        className={`text-xl font-black ${customer.totalDebt < 0 ? "text-red-500" : "text-gray-800"}`}
+                      >
                         ฿{(customer.totalDebt || 0).toLocaleString()}
                       </p>
                     </div>
@@ -636,15 +696,17 @@ export default function CustomersPage() {
                       <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mb-1">
                         วงกู้
                       </p>
-                      <p className="text-xl font-black text-gray-500">
+                      <p
+                        className={`text-xl font-black ${customer.activeLoans < 0 ? "text-red-500" : "text-gray-500"}`}
+                      >
                         {customer.activeLoans || 0}{" "}
                         <span className="text-xs">วง</span>
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between pt-4 border-t border-gray-50">
-                    <div className="flex items-center gap-2 z-10">
+                  <div className="flex items-center justify-between pt-4 border-t border-gray-50 relative z-20">
+                    <div className="flex items-center gap-2">
                       <span
                         className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg ${customer.status === "ปกติ" ? "bg-green-50 text-green-600" : "bg-rose-50 text-rose-500"}`}
                       >
@@ -654,6 +716,7 @@ export default function CustomersPage() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
+                          e.preventDefault();
                           const displayName =
                             customer.nickname || customer.name;
                           router.push(
@@ -666,7 +729,7 @@ export default function CustomersPage() {
                       </button>
                     </div>
 
-                    <div className="flex items-center gap-1 text-[11px] font-black text-gray-300 group-hover:text-orange-500 uppercase tracking-widest transition-colors">
+                    <div className="flex items-center gap-1 text-[11px] font-black text-gray-300 group-hover:text-orange-500 uppercase tracking-widest transition-colors pointer-events-none">
                       ดูรายละเอียด <ArrowUpRight className="w-4 h-4" />
                     </div>
                   </div>
