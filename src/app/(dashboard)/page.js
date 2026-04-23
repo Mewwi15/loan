@@ -39,6 +39,8 @@ export default function DashboardHome() {
   const [stats, setStats] = useState({
     totalPrincipalInMarket: 0,
     totalDisbursedPrincipal: 0,
+    totalDisbursedExpectedTotal: 0, // 🌟 เพิ่ม state เก็บยอดรวมรับจริง
+    totalDisbursedExpectedProfit: 0, // 🌟 เพิ่ม state เก็บกำไรสุทธิที่จะได้
     expectedToday: 0,
     collectedAmount: 0,
     expectedProfitToday: 0,
@@ -135,6 +137,9 @@ export default function DashboardHome() {
       const loansSnap = await getDocs(collection(db, "loans"));
       let totalMarket = 0;
       let totalDisbursed = 0;
+      let expectedTotalDisbursed = 0; // 🌟 เก็บยอดรวมรับจริงทั้งหมด
+      let expectedProfitDisbursed = 0; // 🌟 เก็บกำไรรวมทั้งหมด
+
       const loanMap = new Map();
       const activeLoansMap = new Map();
       const disbursedLoansList = [];
@@ -172,8 +177,22 @@ export default function DashboardHome() {
           loan.frequencyType,
         );
         if (rawDisbDate >= firstDayOfMonth && rawDisbDate <= lastDayOfMonth) {
-          totalDisbursed += loan.principal || 0;
-          disbursedLoansList.push({ ...loan, rawDisbDate });
+          const principal = loan.principal || 0;
+          const totalAmount = loan.totalAmount || 0;
+          // คำนวณกำไร: ถ้าระบบมีเก็บ totalProfit ไว้ก็ใช้เลย ถ้าไม่มีให้เอา totalAmount ลบ principal
+          const profit =
+            loan.totalProfit || Math.max(0, totalAmount - principal);
+
+          totalDisbursed += principal;
+          expectedTotalDisbursed += totalAmount;
+          expectedProfitDisbursed += profit;
+
+          disbursedLoansList.push({
+            ...loan,
+            rawDisbDate,
+            calculatedExpectedTotal: totalAmount,
+            calculatedExpectedProfit: profit,
+          });
         }
       });
 
@@ -342,6 +361,8 @@ export default function DashboardHome() {
       setStats({
         totalPrincipalInMarket: totalMarket,
         totalDisbursedPrincipal: totalDisbursed,
+        totalDisbursedExpectedTotal: expectedTotalDisbursed, // 🌟 บันทึกยอดรวมรับจริง
+        totalDisbursedExpectedProfit: expectedProfitDisbursed, // 🌟 บันทึกกำไรสุทธิรวม
         expectedToday: dayTotalGoal,
         collectedAmount: collectedAmount,
         expectedProfitToday: expectedProfitToday,
@@ -431,7 +452,7 @@ export default function DashboardHome() {
             ฿{stats.totalDisbursedPrincipal.toLocaleString()}
           </p>
           <span className="text-[9px] font-bold text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity mt-2 uppercase tracking-widest bg-purple-50 px-2 py-0.5 rounded-full">
-            คลิกดูรายวง
+            คลิกดูรายวง และกำไร
           </span>
         </div>
 
@@ -511,7 +532,7 @@ export default function DashboardHome() {
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
         <div className="xl:col-span-2 space-y-8">
-          {/* 🌟 ภารกิจวงแชร์ (หมุนวง) - ปรับ Layout ให้จัดกลุ่มสวยงาม ประหยัดพื้นที่ */}
+          {/* 🌟 ภารกิจวงแชร์ (หมุนวง) */}
           {dueShares.length > 0 && (
             <div className="bg-white rounded-[2.5rem] shadow-sm border border-orange-100 p-6 md:p-8 flex flex-col gap-6 relative overflow-hidden transition-all">
               <div className="absolute left-0 top-0 bottom-0 w-2 bg-orange-500"></div>
@@ -531,7 +552,6 @@ export default function DashboardHome() {
                 </div>
               </div>
 
-              {/* 🌟 แสดงเป็น Grid และจำกัดความสูงไม่ให้การ์ดยืดเกินไป */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[220px] overflow-y-auto pr-2 custom-scrollbar pl-2">
                 {dueShares.map((s) => (
                   <Link
@@ -668,7 +688,7 @@ export default function DashboardHome() {
             onClick={() => setActiveModal(null)}
           ></div>
 
-          <div className="relative bg-white w-full max-w-5xl rounded-[2.5rem] shadow-2xl flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200 overflow-hidden">
+          <div className="relative bg-white w-full max-w-6xl rounded-[2.5rem] shadow-2xl flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200 overflow-hidden">
             <div className="p-6 md:p-8 border-b border-gray-100 flex justify-between items-center bg-gray-50/80">
               <div>
                 <h2 className="text-xl md:text-2xl font-black text-gray-800 flex items-center gap-3">
@@ -741,10 +761,19 @@ export default function DashboardHome() {
                           วันที่ปล่อยยอด
                         </th>
                         <th className="px-6 py-4 text-right">
-                          {activeModal === "disbursed"
-                            ? "ยอดปล่อย (เงินต้น)"
-                            : "คงเหลือ"}
+                          {activeModal === "disbursed" ? "เงินต้น" : "คงเหลือ"}
                         </th>
+                        {/* 🌟 เพิ่มหัวตาราง "รับจริง" และ "กำไร" สำหรับหน้ายอดปล่อย */}
+                        {activeModal === "disbursed" && (
+                          <>
+                            <th className="px-6 py-4 text-right text-gray-500">
+                              รับจริง (รวมดอก)
+                            </th>
+                            <th className="px-6 py-4 text-right text-green-500">
+                              กำไรสุทธิ
+                            </th>
+                          </>
+                        )}
                         <th className="px-6 py-4 text-center">จัดการ</th>
                       </>
                     ) : (
@@ -787,6 +816,17 @@ export default function DashboardHome() {
                         </td>
                         <td className="px-6 py-4 font-black text-purple-600 text-right">
                           ฿{(item.principal || 0).toLocaleString()}
+                        </td>
+                        {/* 🌟 เพิ่มข้อมูล รับจริง และ กำไรสุทธิ ในแต่ละแถว */}
+                        <td className="px-6 py-4 font-black text-gray-600 text-right">
+                          ฿
+                          {(item.calculatedExpectedTotal || 0).toLocaleString()}
+                        </td>
+                        <td className="px-6 py-4 font-black text-green-500 text-right bg-green-50/30">
+                          +฿
+                          {(
+                            item.calculatedExpectedProfit || 0
+                          ).toLocaleString()}
                         </td>
                         <td className="px-6 py-4 text-center">
                           <Link
@@ -936,7 +976,7 @@ export default function DashboardHome() {
                       modalData.dailyTargets.length === 0)) && (
                     <tr>
                       <td
-                        colSpan="7"
+                        colSpan="8"
                         className="px-6 py-10 text-center text-sm font-bold text-gray-400"
                       >
                         ไม่มีข้อมูลในระบบ
@@ -976,41 +1016,62 @@ export default function DashboardHome() {
                     </span>
                   </p>
                 )}
+                {/* 🌟 อัปเดตแถบสรุปฝั่งซ้ายของ Modal ยอดปล่อย */}
                 {activeModal === "disbursed" && (
-                  <p className="text-[10px] font-bold text-gray-400">
-                    รวมรายการที่ปล่อยในเดือนนี้:{" "}
-                    <span className="text-purple-400 font-black">
-                      {modalData.disbursedLoans.length} วง
-                    </span>
-                  </p>
+                  <>
+                    <p className="text-[10px] font-bold text-gray-400 mb-1">
+                      รวมรายการที่ปล่อยในเดือนนี้:{" "}
+                      <span className="text-purple-400 font-black">
+                        {modalData.disbursedLoans.length} วง
+                      </span>
+                    </p>
+                    <p className="text-[10px] font-bold text-gray-400">
+                      คาดการณ์ยอดรับกลับทั้งหมด (เงินต้น+ดอก):{" "}
+                      <span className="text-white font-black">
+                        ฿{stats.totalDisbursedExpectedTotal.toLocaleString()}
+                      </span>
+                    </p>
+                  </>
                 )}
               </div>
 
               <div className="text-left md:text-right w-full md:w-auto">
-                <p
-                  className={`text-3xl font-black ${
-                    activeModal === "disbursed"
-                      ? "text-purple-400"
-                      : activeModal === "principal"
+                {/* 🌟 อัปเดตการแสดงตัวเลขใหญ่ๆ สำหรับ Modal ยอดปล่อย ให้โฟกัสที่กำไรสุทธิ */}
+                {activeModal === "disbursed" ? (
+                  <div className="flex flex-col md:items-end">
+                    <p className="text-[10px] font-bold text-green-300 uppercase tracking-widest mb-1">
+                      กำไรสุทธิคาดการณ์
+                    </p>
+                    <p className="text-4xl font-black text-green-400">
+                      +฿{stats.totalDisbursedExpectedProfit.toLocaleString()}
+                    </p>
+                    <p className="text-[10px] font-bold text-gray-400 mt-2">
+                      จากยอดปล่อยเงินต้นรวม ฿
+                      {stats.totalDisbursedPrincipal.toLocaleString()}
+                    </p>
+                  </div>
+                ) : (
+                  <p
+                    className={`text-3xl font-black ${
+                      activeModal === "principal"
                         ? "text-blue-400"
                         : activeModal === "target"
                           ? "text-orange-400"
                           : activeModal === "profitMonth"
                             ? "text-orange-500"
                             : "text-green-400"
-                  }`}
-                >
-                  {activeModal === "disbursed" &&
-                    `฿${stats.totalDisbursedPrincipal.toLocaleString()}`}
-                  {activeModal === "principal" &&
-                    `฿${stats.totalPrincipalInMarket.toLocaleString()}`}
-                  {activeModal === "target" &&
-                    `฿${stats.expectedToday.toLocaleString()}`}
-                  {activeModal === "profit" &&
-                    `฿${stats.expectedProfitToday.toLocaleString()}`}
-                  {activeModal === "profitMonth" &&
-                    `฿${stats.profitMonth.toLocaleString()}`}
-                </p>
+                    }`}
+                  >
+                    {activeModal === "principal" &&
+                      `฿${stats.totalPrincipalInMarket.toLocaleString()}`}
+                    {activeModal === "target" &&
+                      `฿${stats.expectedToday.toLocaleString()}`}
+                    {activeModal === "profit" &&
+                      `฿${stats.expectedProfitToday.toLocaleString()}`}
+                    {activeModal === "profitMonth" &&
+                      `฿${stats.profitMonth.toLocaleString()}`}
+                  </p>
+                )}
 
                 {activeModal === "target" &&
                   stats.expectedToday - stats.collectedAmount > 0 && (
