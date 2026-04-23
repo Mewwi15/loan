@@ -195,7 +195,7 @@ export default function CustomerDetailPage({ params }) {
   const [customer, setCustomer] = useState(null);
   const [loans, setLoans] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [isProcessingAction, setIsProcessingAction] = useState(false); // 🌟 ป้องกันกดเบิ้ล
+  const [isProcessingAction, setIsProcessingAction] = useState(false);
 
   const [customerStats, setCustomerStats] = useState({
     expectedProfit: 0,
@@ -391,7 +391,6 @@ export default function CustomerDetailPage({ params }) {
     fetchData();
   }, [fetchData]);
 
-  // 🌟 ฟังก์ชันฮีโร่! บังคับคำนวณยอดรวมใหม่ให้เป๊ะ 100% ไม่มีทางติดลบ
   const syncCustomerData = async () => {
     try {
       const q = query(
@@ -477,24 +476,71 @@ export default function CustomerDetailPage({ params }) {
     setFormData((prev) => ({ ...prev, frequency: val, type: type }));
   };
 
+  // 🌟 ฟังก์ชันฮีโร่ใหม่! อัปเดตสัญญาแบบ "จำงวดที่เคยจ่ายแล้ว"
   const handleUpdateContract = async () => {
-    if (
-      !window.confirm(
-        "⚠️ ยืนยันการแก้ไขสัญญา?\n(ระบบจะทำการลบตารางค่างวดเดิมทั้งหมด และสร้างใหม่ตามเงื่อนไขนี้)",
-      )
-    )
-      return;
     setIsSavingContract(true);
     const batch = writeBatch(db);
     try {
+      const loanRef = doc(db, "loans", formData.loanId);
+
+      // 1. กวาดข้อมูลตารางค่างวด "เดิม" มาดูก่อนว่างวดไหนจ่ายแล้วบ้าง
       const oldSchedulesQ = query(
         collection(db, "schedules"),
         where("loanId", "==", formData.loanId),
       );
       const oldSchedulesSnap = await getDocs(oldSchedulesQ);
-      oldSchedulesSnap.forEach((d) => batch.delete(d.ref));
 
-      const loanRef = doc(db, "loans", formData.loanId);
+      const paidHistory = {};
+      oldSchedulesSnap.forEach((d) => {
+        const data = d.data();
+        if (data.status === "paid") {
+          paidHistory[data.installmentNo] = data; // 🌟 จำประวัติเอาไว้
+        }
+        batch.delete(d.ref); // ลบของเก่าทิ้งเพื่อเตรียมจัดตารางใหม่
+      });
+
+      let newRemainingBalance = actualTotalToCollect;
+      let newCurrentInstallment = 0;
+
+      // 2. วนลูปสร้างตารางค่างวด "ใหม่" พร้อมคืนค่าสถานะให้
+      for (let i = 0; i < count; i++) {
+        let dueDate = new Date(formData.startDate);
+        if (formData.type === "day") {
+          dueDate.setDate(
+            dueDate.getDate() + i * Number(formData.frequency || 1),
+          );
+        } else {
+          dueDate.setMonth(dueDate.getMonth() + i);
+        }
+
+        const installmentNo = i + 1;
+        const oldPaidData = paidHistory[installmentNo];
+        const isPaid = !!oldPaidData; // เช็คว่าเคยจ่ายไปแล้วใช่ไหม?
+
+        // ถ้างวดนี้เคยจ่ายแล้ว ให้หักยอดเงินคงเหลือลงอัตโนมัติ
+        if (isPaid) {
+          newRemainingBalance -= installmentAmount;
+          newCurrentInstallment++;
+        }
+
+        const scheduleRef = doc(collection(db, "schedules"));
+        batch.set(scheduleRef, {
+          loanId: formData.loanId,
+          customerId: customerId,
+          customerName: customer.nickname || customer.name,
+          loanName: formData.loanName,
+          loanNumber: formData.loanNumber,
+          installmentNo: installmentNo,
+          dueDate: dueDate.toISOString().split("T")[0],
+          amount: installmentAmount,
+          profitShare: profitPerInstallment,
+          status: isPaid ? "paid" : "pending", // 🌟 ถ้างวดเดิมเคยจ่าย ให้เซ็ตเป็น paid คืนทันที
+          paidAt: oldPaidData ? oldPaidData.paidAt : null,
+          paymentDate: oldPaidData ? oldPaidData.paymentDate || null : null,
+        });
+      }
+
+      // 3. อัปเดตข้อมูลวงกู้หลัก (หักลบยอดตามที่จ่ายแล้วให้เป๊ะ)
       batch.update(loanRef, {
         loanName: formData.loanName,
         loanNumber: formData.loanNumber,
@@ -505,9 +551,9 @@ export default function CustomerDetailPage({ params }) {
         principal: principal,
         interestRate: percent,
         totalAmount: actualTotalToCollect,
-        remainingBalance: actualTotalToCollect,
+        remainingBalance: Math.max(0, newRemainingBalance), // 🌟 ยอดหนี้อัปเดตใหม่
         totalInstallments: count,
-        currentInstallment: 0,
+        currentInstallment: newCurrentInstallment, // 🌟 จำนวนงวดที่จ่ายแล้ว
         installmentAmount: installmentAmount,
         totalProfit: totalProfit,
         profitPerInstallment: profitPerInstallment,
@@ -516,33 +562,12 @@ export default function CustomerDetailPage({ params }) {
         frequencyType: formData.type,
       });
 
-      for (let i = 0; i < count; i++) {
-        let dueDate = new Date(formData.startDate);
-        if (formData.type === "day") {
-          dueDate.setDate(
-            dueDate.getDate() + i * Number(formData.frequency || 1),
-          );
-        } else {
-          dueDate.setMonth(dueDate.getMonth() + i);
-        }
-        const scheduleRef = doc(collection(db, "schedules"));
-        batch.set(scheduleRef, {
-          loanId: formData.loanId,
-          customerId: customerId,
-          customerName: customer.nickname || customer.name,
-          loanName: formData.loanName,
-          loanNumber: formData.loanNumber,
-          installmentNo: i + 1,
-          dueDate: dueDate.toISOString().split("T")[0],
-          amount: installmentAmount,
-          profitShare: profitPerInstallment,
-          status: "pending",
-        });
-      }
-
       await batch.commit();
-      await syncCustomerData(); // 🌟 อัปเดตยอดรวมให้เป๊ะ 100% ทันทีหลังแก้สัญญา
-      alert("✅ อัปเดตข้อมูลสัญญาเรียบร้อยแล้ว!");
+      await syncCustomerData(); // ซิงค์ยอดสรุปลูกค้าใหม่ให้ตรงกับความจริง
+
+      alert(
+        "✅ อัปเดตสัญญาสำเร็จ! (ระบบทำการติ๊กงวดที่เคยจ่ายไว้ให้เหมือนเดิมเรียบร้อยแล้ว)",
+      );
       setEditContractModalOpen(false);
       fetchData();
     } catch (error) {
@@ -560,7 +585,7 @@ export default function CustomerDetailPage({ params }) {
       )
     )
       return;
-    setIsProcessingAction(true); // 🌟 ป้องกันแอดมินกดเบิ้ล 2 ครั้งรัวๆ
+    setIsProcessingAction(true);
     try {
       const batch = writeBatch(db);
       const pendingSchedulesQ = query(
@@ -576,10 +601,9 @@ export default function CustomerDetailPage({ params }) {
         remainingBalance: 0,
         closedAt: new Date().toISOString(),
       });
-      // 🌟 เลิกใช้คำสั่งลบถอยหลัง (increment) ออกจากระบบ
       await batch.commit();
 
-      await syncCustomerData(); // 🌟 นับจำนวนวง และคำนวณหนี้รวมใหม่ให้เป๊ะ 100%
+      await syncCustomerData();
       alert("ลบวงกู้เรียบร้อย!");
       fetchData();
     } catch (error) {
@@ -592,7 +616,6 @@ export default function CustomerDetailPage({ params }) {
 
   const confirmEarlyPayoff = async () => {
     if (!payoffLoan) return;
-    // 🌟 เอา window.confirm ออก เพราะ Modal คือการ Confirm อยู่แล้ว ป้องกันบั๊กมือถือบล็อกป๊อปอัป
     setIsProcessingPayoff(true);
     try {
       const batch = writeBatch(db);
@@ -622,7 +645,6 @@ export default function CustomerDetailPage({ params }) {
         closedAt: new Date().toISOString(),
       });
 
-      // 🌟 เลิกใช้คำสั่งลบถอยหลัง (increment)
       if (totalPaidAmount > 0) {
         batch.set(doc(collection(db, "transactions")), {
           loanId: payoffLoan.id,
@@ -639,7 +661,7 @@ export default function CustomerDetailPage({ params }) {
       }
       await batch.commit();
 
-      await syncCustomerData(); // 🌟 นับจำนวนวง และคำนวณหนี้รวมใหม่ให้เป๊ะ 100%
+      await syncCustomerData();
 
       alert(
         `🎉 ปิดวงล่วงหน้าสำเร็จ!\nยอดที่รับ: ฿${totalPaidAmount.toLocaleString()}`,
@@ -940,14 +962,14 @@ export default function CustomerDetailPage({ params }) {
                       className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-red-500 hover:text-red-600 bg-red-50 hover:bg-red-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1 disabled:opacity-50"
                       title="ลบวงกู้"
                     >
-                      <PowerOff className="w-3 h-3" />
+                      <PowerOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                       <span className="hidden min-[400px]:inline">ลบ</span>
                     </button>
                     <button
                       onClick={() => openEditContract(loan)}
                       className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600 bg-blue-50 hover:bg-blue-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1"
                     >
-                      <Edit className="w-3 h-3" />
+                      <Edit className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                       <span className="hidden min-[400px]:inline">แก้</span>
                     </button>
                     <button
@@ -959,16 +981,16 @@ export default function CustomerDetailPage({ params }) {
                       className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1"
                       title="โปะยอดที่เหลือ"
                     >
-                      <Coins className="w-3 h-3" />
+                      <Coins className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                       <span className="hidden min-[400px]:inline">โปะ</span>
                     </button>
                   </div>
                   <button
                     onClick={() => openSchedule(loan)}
-                    className="bg-gray-900 hover:bg-black text-white px-3 py-2 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all shadow-md flex items-center gap-1 sm:gap-2"
+                    className="bg-gray-900 hover:bg-black text-white px-3 py-1.5 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all shadow-md flex items-center gap-1 sm:gap-1.5"
                   >
-                    <FileText className="w-3 h-3 sm:w-4 sm:h-4" /> ตาราง
-                    <ChevronRight className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <FileText className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> ตาราง
+                    <ChevronRight className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                   </button>
                 </div>
               </div>
@@ -976,14 +998,14 @@ export default function CustomerDetailPage({ params }) {
           })}
         </div>
       ) : (
-        <div className="py-16 text-center text-gray-400 bg-gray-50/50 rounded-[1.5rem] sm:rounded-[2rem] border-2 border-dashed border-gray-100 mb-10">
+        <div className="py-12 sm:py-16 text-center text-gray-400 bg-gray-50/50 rounded-2xl sm:rounded-[2rem] border-2 border-dashed border-gray-100 mb-10">
           <p className="font-black text-xs sm:text-sm uppercase tracking-[0.2em]">
             ไม่มีวงกู้ที่กำลังดำเนินการ
           </p>
         </div>
       )}
 
-      <div className="w-full h-px bg-gray-100 mb-10"></div>
+      <div className="w-full h-px bg-gray-100 mb-8 sm:mb-12"></div>
 
       {/* ======================================================== */}
       {/* 🤝 โซนที่ 3: รายการวงแชร์ที่กำลังดำเนินการ (Bottom Section) */}
@@ -1068,7 +1090,7 @@ export default function CustomerDetailPage({ params }) {
                 className="bg-white rounded-[1.5rem] sm:rounded-[2rem] border border-gray-100 shadow-sm hover:shadow-xl transition-all duration-300 relative overflow-hidden flex flex-col"
               >
                 <div
-                  className={`absolute top-0 left-0 w-full h-1.5 ${isAlive ? "bg-blue-500" : "bg-red-500"}`}
+                  className={`absolute top-0 left-0 w-full h-1 sm:h-1.5 ${isAlive ? "bg-blue-500" : "bg-red-500"}`}
                 ></div>
 
                 <div className="p-4 sm:p-6 border-b border-gray-50 flex justify-between items-start gap-2">
