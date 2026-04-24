@@ -21,6 +21,7 @@ import {
   Clock,
   AlertCircle,
   Calculator,
+  CheckCircle2,
 } from "lucide-react";
 
 export default function CustomerSharesProfilePage() {
@@ -119,7 +120,7 @@ export default function CustomerSharesProfilePage() {
   }
 
   // ==========================================
-  // 🧮 คำนวณสรุปยอด (เฉพาะวงที่กำลังดำเนินการ)
+  // 🧮 คำนวณสรุปยอด (เฉพาะวงที่กำลังดำเนินการ) ลอจิกใหม่ 100%
   // ==========================================
   const activeHands = hands.filter((h) => h.shareDetails.status === "active");
   const completedHands = hands.filter(
@@ -130,12 +131,28 @@ export default function CustomerSharesProfilePage() {
   let totalDeadDebt = 0; // ยอดรวมมือตาย (หนี้สิน)
 
   activeHands.forEach((h) => {
-    if (h.status === "alive") {
-      totalAliveSaved += h.totalPaid;
-    } else if (h.status === "dead") {
-      // หนี้ = กองกลาง - ยอดที่ส่งมาทั้งหมด
-      const debt = h.shareDetails.poolAmount - h.totalPaid;
-      totalDeadDebt += debt > 0 ? debt : 0;
+    const shareData = h.shareDetails;
+    const isTao = h.handNumber === 1;
+    const isAlive = h.status === "alive";
+    const isClosed = h.status === "closed";
+
+    // คำนวณยอดจ่ายจริงจากรอยติ๊ก ป้องกันตัวเลขเพี้ยน
+    const realTotalPaid =
+      (h.paidPeriods?.length || 0) * shareData.installmentAmount;
+
+    if (isClosed) return; // ปิดวงแล้ว ข้ามการคิดยอด
+
+    if (isAlive) {
+      totalAliveSaved += realTotalPaid;
+    } else if (h.status === "dead" && !isTao) {
+      // 🌟 หนี้ = (ยอดเก็บรวมทั้งหมดของวง) - (หักค้ำ 3 งวด) - (ยอดที่ส่งมาแล้ว)
+      const totalCollected = shareData.installmentAmount * shareData.totalHands;
+      const standardGuaranteeDeduction = shareData.installmentAmount * 3;
+      const totalObligation = totalCollected - standardGuaranteeDeduction;
+
+      let debt = totalObligation - realTotalPaid;
+      if (debt < 0) debt = 0;
+      totalDeadDebt += debt;
     }
   });
 
@@ -182,7 +199,7 @@ export default function CustomerSharesProfilePage() {
                 รายละเอียดวงแชร์ที่กำลังเดิน
               </h2>
               <p className="text-xs font-medium text-gray-500 mt-0.5">
-                แสดงสถานะและยอดเงินของแต่ละมือ
+                แสดงสถานะและยอดเงินของแต่ละมือ (อัปเดตลอจิกใหม่)
               </p>
             </div>
           </div>
@@ -224,21 +241,50 @@ export default function CustomerSharesProfilePage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {activeHands.map((hand) => {
-                  const isAlive = hand.status === "alive";
                   const shareData = hand.shareDetails;
+                  const isAlive = hand.status === "alive";
+                  const isClosed = hand.status === "closed";
+                  const isTao = hand.handNumber === 1;
+
+                  // ลอจิกตัวเลข 100% ตรงกับบอร์ดควบคุม
+                  const realTotalPaid =
+                    (hand.paidPeriods?.length || 0) *
+                    shareData.installmentAmount;
+
+                  const totalCollected =
+                    shareData.installmentAmount * shareData.totalHands;
+                  const guaranteeDeduction = shareData.installmentAmount * 3;
+                  const totalObligation = totalCollected - guaranteeDeduction;
+
+                  let currentRemainingDebt = totalObligation - realTotalPaid;
+                  if (currentRemainingDebt < 0) currentRemainingDebt = 0;
+
                   const displayAmount = isAlive
-                    ? hand.totalPaid
-                    : shareData.poolAmount - hand.totalPaid;
+                    ? realTotalPaid
+                    : currentRemainingDebt;
 
                   return (
                     <tr
                       key={hand.id}
-                      className="hover:bg-blue-50/30 transition-colors bg-white"
+                      className={`transition-colors ${
+                        isClosed
+                          ? "bg-emerald-50/50 opacity-80"
+                          : "hover:bg-blue-50/30 bg-white"
+                      }`}
                     >
                       <td className="px-6 py-4">
-                        <p className="font-bold text-gray-900">
-                          {hand.shareName}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p
+                            className={`font-bold ${isClosed ? "text-emerald-900" : "text-gray-900"}`}
+                          >
+                            {hand.shareName}
+                          </p>
+                          {isClosed && (
+                            <span className="text-[10px] font-black uppercase bg-emerald-500 text-white px-2 py-0.5 rounded shadow-sm flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> โปะจบ
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[11px] font-semibold text-gray-500 mt-0.5">
                           กองกลาง: ฿{shareData.poolAmount.toLocaleString()} |
                           งวด: {shareData.currentPeriod}/{shareData.totalHands}
@@ -250,27 +296,41 @@ export default function CustomerSharesProfilePage() {
                       </td>
 
                       <td className="px-6 py-4 text-center">
-                        <span
-                          className={`inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-widest ${
-                            isAlive
-                              ? "bg-blue-50 text-blue-700 border border-blue-200"
-                              : "bg-red-50 text-red-700 border border-red-200"
-                          }`}
-                        >
-                          {isAlive ? "มือเป็น" : "มือตาย"}
-                        </span>
+                        {isClosed ? (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-widest bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            ปิดบัญชีแล้ว
+                          </span>
+                        ) : isAlive ? (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-widest bg-blue-50 text-blue-700 border border-blue-200">
+                            มือเป็น
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-widest bg-red-50 text-red-700 border border-red-200">
+                            มือตาย
+                          </span>
+                        )}
                       </td>
 
                       <td className="px-6 py-4 text-right font-semibold text-gray-700">
-                        ฿{shareData.installmentAmount.toLocaleString()}
+                        {!isTao && !isClosed
+                          ? `฿${shareData.installmentAmount.toLocaleString()}`
+                          : "-"}
                       </td>
 
                       <td className="px-6 py-4 text-right font-bold text-gray-500">
-                        ฿{hand.totalPaid.toLocaleString()}
+                        {isClosed
+                          ? "เคลียร์แล้ว"
+                          : `฿${realTotalPaid.toLocaleString()}`}
                       </td>
 
                       <td className="px-6 py-4 text-right bg-gray-50/30">
-                        {isAlive ? (
+                        {isClosed ? (
+                          <span className="text-emerald-500 font-bold">-</span>
+                        ) : isTao ? (
+                          <span className="text-gray-400 font-bold">
+                            ไม่มีหนี้
+                          </span>
+                        ) : isAlive ? (
                           <div className="flex flex-col items-end">
                             <span className="font-black text-blue-600 text-base">
                               + ฿{displayAmount.toLocaleString()}

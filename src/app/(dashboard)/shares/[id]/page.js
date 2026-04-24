@@ -13,6 +13,7 @@ import {
   arrayRemove,
   increment,
   writeBatch,
+  getDocs,
 } from "firebase/firestore";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -33,6 +34,10 @@ import {
   Undo2,
   Coins,
   CheckCircle2,
+  RefreshCw,
+  Search,
+  AlertCircle,
+  User,
 } from "lucide-react";
 import { toPng } from "html-to-image";
 
@@ -50,8 +55,14 @@ export default function ShareCommandCenterPage() {
   const [isCapturing, setIsCapturing] = useState(false);
   const printAreaRef = useRef(null);
 
+  // 🌟 State สำหรับสวมสิทธิ์ (Swap)
+  const [isSwapModalOpen, setIsSwapModalOpen] = useState(false);
+  const [handToSwap, setHandToSwap] = useState(null);
+  const [customersList, setCustomersList] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
+
   // ==========================================
-  // 1. ดึงข้อมูลแบบ Real-time
+  // 1. ดึงข้อมูลแบบ Real-time และรายชื่อลูกค้า
   // ==========================================
   useEffect(() => {
     if (!shareId) return;
@@ -75,6 +86,13 @@ export default function ShareCommandCenterPage() {
       setHands(handsData);
       setLoading(false);
     });
+
+    // โหลดรายชื่อลูกค้าเตรียมไว้สำหรับสวมสิทธิ์
+    const fetchCustomers = async () => {
+      const custSnap = await getDocs(collection(db, "customers"));
+      setCustomersList(custSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    };
+    fetchCustomers();
 
     return () => {
       unsubShare();
@@ -116,7 +134,6 @@ export default function ShareCommandCenterPage() {
   const handleCheckAll = async () => {
     if (share.status === "completed") return;
 
-    // ไม่เอามือที่ closed แล้วมาคิดยอด
     const unpaidHands = hands.filter(
       (h) =>
         h.handNumber !== 1 &&
@@ -245,6 +262,95 @@ export default function ShareCommandCenterPage() {
   };
 
   // ==========================================
+  // 🌟 ฟังก์ชันยกเลิกปิดบัญชี
+  // ==========================================
+  const handleUndoClose = async (hand) => {
+    const confirmMsg = `ยืนยันการ "ยกเลิกปิดบัญชี" ของ มือที่ ${hand.handNumber} (${hand.customerName}) ใช่หรือไม่?\n\nระบบจะคืนสถานะกลับไปเป็น ${hand.wonAtPeriod || hand.handNumber === 1 ? "มือตาย" : "มือเป็น"} เหมือนเดิม`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsProcessing(true);
+    try {
+      const handRef = doc(db, "share_hands", hand.id);
+      const prevStatus =
+        hand.handNumber === 1 || hand.wonAtPeriod ? "dead" : "alive";
+      await updateDoc(handRef, { status: prevStatus });
+    } catch (error) {
+      console.error("Error undoing close status:", error);
+      alert("เกิดข้อผิดพลาดในการยกเลิกปิดวง");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // ==========================================
+  // 🌟 ฟังก์ชัน สวมสิทธิ์ (ขายมือแชร์)
+  // ==========================================
+  const openSwapModal = (hand) => {
+    setHandToSwap(hand);
+    setSearchQuery("");
+    setIsSwapModalOpen(true);
+  };
+
+  const confirmSwap = async (newCustomer) => {
+    const currentPeriod = share.currentPeriod;
+    const confirmMsg = `ยืนยันการสวมสิทธิ์ให้\n"${newCustomer.nickname || newCustomer.name}"\n\nมารับช่วงต่อจาก "${handToSwap.customerName}" ในงวดที่ ${currentPeriod} ใช่หรือไม่?\n\n*ระบบจะบันทึกยอดทุนคนเก่าไว้หักคืนตอนเปียได้อัตโนมัติ`;
+
+    if (!window.confirm(confirmMsg)) return;
+    setIsProcessing(true);
+
+    try {
+      // 1. คำนวณก้อนทุนคนเก่า (ก่อนงวดปัจจุบัน)
+      const prevPaidCount =
+        handToSwap.paidPeriods?.filter((p) => p < currentPeriod).length || 0;
+      const previousOwnerCapital = prevPaidCount * share.installmentAmount;
+
+      // 2. สร้างฐานหนี้พิเศษเฉพาะคนใหม่: (ฐานปกติ) - (ก้อนทุนคนเก่า)
+      const totalCollectedPerPeriod =
+        share.installmentAmount * share.totalHands;
+      const standardGuaranteeDeduction = share.installmentAmount * 3;
+      const normalBaseDebt =
+        totalCollectedPerPeriod - standardGuaranteeDeduction;
+      const customBaseDebt = normalBaseDebt - previousOwnerCapital;
+
+      // 3. จัดรูปแบบชื่อ
+      const newCustomerName = newCustomer.nickname
+        ? `${newCustomer.nickname} (${newCustomer.name})`
+        : newCustomer.name;
+
+      // 4. อัปเดตฐานข้อมูล
+      const handRef = doc(db, "share_hands", handToSwap.id);
+      await updateDoc(handRef, {
+        customerId: newCustomer.id,
+        customerName: newCustomerName,
+        isSwapped: true,
+        originalOwnerName: handToSwap.customerName,
+        swappedAtPeriod: currentPeriod,
+        previousOwnerCapital: previousOwnerCapital,
+        customBaseDebt: customBaseDebt,
+      });
+
+      setIsSwapModalOpen(false);
+      setHandToSwap(null);
+    } catch (error) {
+      console.error("Error swapping hand:", error);
+      alert("เกิดข้อผิดพลาดในการเปลี่ยนมือแชร์");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // กรองรายชื่อลูกค้าใน Modal สวมสิทธิ์
+  const filteredCustomers = customersList.filter((c) => {
+    if (!searchQuery) return true;
+    const s = searchQuery.toLowerCase();
+    return (
+      (c.name?.toLowerCase() || "").includes(s) ||
+      (c.nickname?.toLowerCase() || "").includes(s) ||
+      (c.code?.toLowerCase() || "").includes(s)
+    );
+  });
+
+  // ==========================================
   // 🌟 ฟังก์ชันบันทึกภาพ
   // ==========================================
   const handleDownloadImage = () => {
@@ -285,12 +391,12 @@ export default function ShareCommandCenterPage() {
   const totalCollectedPerPeriod = share.installmentAmount * share.totalHands;
   const adminProfit = totalCollectedPerPeriod - share.poolAmount;
 
-  // 🌟 ลอจิกการเงิน (หักค้ำ 3 งวด)
+  // 🌟 ลอจิกการเงินหลัก
   const DEDUCT_HANDS_COUNT = 3;
   const standardGuaranteeDeduction =
     share.installmentAmount * DEDUCT_HANDS_COUNT;
 
-  // 🌟 ฐานหนี้ = (ยอดเก็บรวม/งวด) - (หักค้ำท้าย) *** ตามลอจิกของบอสเป๊ะๆ ***
+  // 🌟 ฐานหนี้มาตรฐาน = (ยอดเก็บรวม/งวด) - (หักค้ำท้าย)
   const totalObligationPerHand =
     totalCollectedPerPeriod - standardGuaranteeDeduction;
 
@@ -298,37 +404,11 @@ export default function ShareCommandCenterPage() {
   // 🌟 ดึงตัวแปรมาตรฐาน 1 มือ มาแสดงบนการ์ด
   // ==========================================
   const standardPaidPeriods = Math.max(0, currentPeriod - 1);
-
-  // 🟢 ยอดออมสะสม (ของ 1 มือ)
   const displayAliveSaved = standardPaidPeriods * share.installmentAmount;
-
-  // 🔴 หนี้คงเหลือ (ของ 1 มือ) = ฐานหนี้ - ที่ออมมาแล้ว
   const displayDeadDebt = Math.max(
     0,
     totalObligationPerHand - displayAliveSaved,
   );
-
-  // คำนวณยอดสุทธิ (Net Balance) ของลูกค้าทุกคน สำหรับแสดงในตารางที่ 2
-  const customerNetBalances = {};
-  hands.forEach((h) => {
-    const cid = h.customerId;
-    if (!customerNetBalances[cid]) customerNetBalances[cid] = 0;
-
-    const isAlive = h.status === "alive";
-    const isClosed = h.status === "closed";
-    const realTotalPaid =
-      (h.paidPeriods?.length || 0) * share.installmentAmount;
-
-    if (isClosed) return;
-
-    if (isAlive) {
-      customerNetBalances[cid] += realTotalPaid;
-    } else if (h.status === "dead") {
-      let actualRemainingDebt = totalObligationPerHand - realTotalPaid;
-      if (actualRemainingDebt < 0) actualRemainingDebt = 0;
-      customerNetBalances[cid] -= actualRemainingDebt;
-    }
-  });
 
   const eligibleCandidates = hands.filter(
     (h) =>
@@ -398,7 +478,7 @@ export default function ShareCommandCenterPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-4">
-              {/* 🌟 การ์ดแสดงยอดแบบ 1 มือ (ไม่รวมยอดคนอื่น) */}
+              {/* 🌟 การ์ดแสดงยอดแบบ 1 มือ */}
               <div className="bg-[#f8fafc] border border-blue-100 rounded-[1rem] px-6 py-4 shadow-sm min-w-[220px]">
                 <p className="text-sm font-bold text-[#2563eb] tracking-wide mb-1">
                   เงินออมสะสม (มือเป็น)
@@ -503,29 +583,47 @@ export default function ShareCommandCenterPage() {
                 const isTao = hand.handNumber === 1;
                 const isAlive = hand.status === "alive";
                 const isClosed = hand.status === "closed";
+                const isSwapped = !!hand.isSwapped; // 🌟 เช็คว่ามีการสวมสิทธิ์ไหม
+
                 const hasPaidThisPeriod =
                   hand.paidPeriods?.includes(currentPeriod);
 
-                const realTotalPaid =
-                  (hand.paidPeriods?.length || 0) * share.installmentAmount;
-                const prevPaid = hasPaidThisPeriod
-                  ? realTotalPaid - share.installmentAmount
-                  : realTotalPaid;
+                // 🌟 ลอจิกการคำนวณยอดเงินของแต่ละบรรทัด (รองรับคนสวมสิทธิ์)
+                // ถ้ารับช่วงต่อ: ให้นับเฉพาะงวดที่เขาจ่ายเอง (>= งวดที่สวมสิทธิ์)
+                const realPaidPeriodsCount = isSwapped
+                  ? hand.paidPeriods?.filter((p) => p >= hand.swappedAtPeriod)
+                      .length || 0
+                  : hand.paidPeriods?.length || 0;
 
-                // 🌟 ยอดรับจริง = กองกลาง - หักค้ำ (ตามป้ายแดงเดิม)
+                const displayRealTotalPaid =
+                  realPaidPeriodsCount * share.installmentAmount;
+                const prevPaid = hasPaidThisPeriod
+                  ? displayRealTotalPaid - share.installmentAmount
+                  : displayRealTotalPaid;
+
+                // 🌟 ยอดรับจริงตอนเปีย (หักค้ำ และ หักคืนคนเก่าด้วย!)
                 const handGuaranteeDeduction = isTao
                   ? 0
                   : standardGuaranteeDeduction;
-                const handActualReceived =
-                  share.poolAmount - handGuaranteeDeduction;
+                const previousCapitalToDeduct = isSwapped
+                  ? hand.previousOwnerCapital || 0
+                  : 0;
 
-                // 🌟 หนี้คงเหลือที่แท้จริง = ฐานหนี้ (ยอดเก็บรวม-หักค้ำ) - จ่ายไปแล้ว
+                const handActualReceived =
+                  share.poolAmount -
+                  handGuaranteeDeduction -
+                  previousCapitalToDeduct;
+
+                // 🌟 หนี้คงเหลือที่แท้จริง = (ฐานหนี้ของคนนี้) - (จ่ายไปแล้ว)
+                const baseDebtForThisHand = isSwapped
+                  ? hand.customBaseDebt || 0
+                  : totalObligationPerHand;
                 let currentRemainingDebt =
-                  totalObligationPerHand - realTotalPaid;
+                  baseDebtForThisHand - displayRealTotalPaid;
                 if (currentRemainingDebt < 0) currentRemainingDebt = 0;
 
                 const displayAmount = isAlive
-                  ? realTotalPaid
+                  ? displayRealTotalPaid
                   : currentRemainingDebt;
                 const remainingPeriodsCount = Math.ceil(
                   currentRemainingDebt / share.installmentAmount,
@@ -536,7 +634,7 @@ export default function ShareCommandCenterPage() {
                     key={hand.id}
                     className={`transition-colors ${
                       isClosed
-                        ? "bg-emerald-600/90 text-white" // 🌟 สีเขียวมรกตทึบ
+                        ? "bg-emerald-600/90 text-white"
                         : hasPaidThisPeriod
                           ? "bg-green-50/10 hover:bg-blue-50/30"
                           : "bg-white hover:bg-blue-50/30"
@@ -549,22 +647,34 @@ export default function ShareCommandCenterPage() {
                     </td>
 
                     <td className="px-5 py-4">
-                      <div className="flex items-center gap-2">
-                        <p
-                          className={`font-semibold ${isClosed ? "text-white" : "text-gray-900"}`}
-                        >
-                          {hand.customerName}
-                        </p>
-                        {isClosed && (
-                          <span className="text-[10px] font-black uppercase bg-white text-emerald-700 px-2 py-0.5 rounded shadow-sm flex items-center gap-1">
-                            <CheckCircle2 className="w-3 h-3" /> โปะจบแล้ว
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex items-center gap-2">
+                          <p
+                            className={`font-semibold ${isClosed ? "text-white" : "text-gray-900"}`}
+                          >
+                            {hand.customerName}
+                          </p>
+                          {isClosed && (
+                            <span className="text-[10px] font-black uppercase bg-white text-emerald-700 px-2 py-0.5 rounded shadow-sm flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> โปะจบแล้ว
+                            </span>
+                          )}
+                        </div>
+
+                        {/* 🌟 ป้าย Tag รับช่วงต่อ */}
+                        {isSwapped && (
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded-md font-bold mt-1 flex items-center gap-1 w-fit ${isClosed ? "bg-emerald-800/40 text-emerald-100" : "bg-amber-100 text-amber-700 border border-amber-200"}`}
+                          >
+                            <RefreshCw className="w-3 h-3" /> รับช่วงต่อจาก{" "}
+                            {hand.originalOwnerName}
                           </span>
                         )}
                       </div>
 
                       {isTao && (
                         <p
-                          className={`text-[11px] font-medium mt-0.5 ${isClosed ? "text-emerald-100" : "text-gray-500"}`}
+                          className={`text-[11px] font-medium mt-1 ${isClosed ? "text-emerald-100" : "text-gray-500"}`}
                         >
                           ท้าวแชร์ (ไม่ต้องส่ง)
                         </p>
@@ -575,8 +685,10 @@ export default function ShareCommandCenterPage() {
                           className={`mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${isClosed ? "bg-emerald-800/40 text-emerald-50 border border-emerald-500" : "bg-red-50 border border-red-100 text-red-600"}`}
                         >
                           <Award className="w-3 h-3 pointer-events-none" />{" "}
-                          รับงวด {hand.wonAtPeriod} | รับจริง ฿
-                          {handActualReceived.toLocaleString()}
+                          รับงวด {hand.wonAtPeriod} |
+                          {isSwapped &&
+                            ` หักคืนทุน ${hand.originalOwnerName} ฿${previousCapitalToDeduct.toLocaleString()} | `}
+                          รับจริง ฿{handActualReceived.toLocaleString()}
                         </div>
                       )}
                       {hand.wonAtPeriod && isTao && (
@@ -641,13 +753,13 @@ export default function ShareCommandCenterPage() {
                             <span
                               className={`font-bold text-sm ${isClosed ? "text-white" : "text-green-700"}`}
                             >
-                              ฿{realTotalPaid.toLocaleString()}
+                              ฿{displayRealTotalPaid.toLocaleString()}
                             </span>
                           </div>
                         ) : (
                           <div className="flex flex-col items-end">
                             <span className="font-bold text-gray-800 text-sm">
-                              ฿{realTotalPaid.toLocaleString()}
+                              ฿{displayRealTotalPaid.toLocaleString()}
                             </span>
                             <span className="text-[11px] text-orange-500 font-semibold mt-0.5">
                               รอรับยอด
@@ -700,11 +812,19 @@ export default function ShareCommandCenterPage() {
                     </td>
 
                     <td className="px-5 py-4 text-center">
-                      {isTao || isClosed ? (
-                        <span
-                          className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-not-allowed ${isClosed ? "bg-white/20 text-white" : "bg-gray-100 text-gray-400"}`}
+                      {isClosed ? (
+                        <button
+                          type="button"
+                          onClick={() => handleUndoClose(hand)}
+                          disabled={isProcessing}
+                          className="inline-flex items-center justify-center gap-1 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-emerald-700/50 hover:bg-emerald-800 text-white transition-all shadow-sm disabled:opacity-50"
                         >
-                          {isClosed ? "เรียบร้อย" : "ข้าม"}
+                          <Undo2 className="w-3 h-3 pointer-events-none" />{" "}
+                          ยกเลิกโปะ
+                        </button>
+                      ) : isTao ? (
+                        <span className="text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-not-allowed bg-gray-100 text-gray-400">
+                          ข้าม
                         </span>
                       ) : (
                         <button
@@ -815,10 +935,7 @@ export default function ShareCommandCenterPage() {
                     #
                   </th>
                   <th className="px-6 py-4 font-semibold">ชื่อลูกค้า</th>
-                  <th className="px-6 py-4 font-semibold text-right">
-                    ยอดสุทธิ (ทั้งวง)
-                  </th>
-                  <th className="px-6 py-4 font-semibold text-center w-[200px]">
+                  <th className="px-6 py-4 font-semibold text-center w-[240px]">
                     จัดการ
                   </th>
                 </tr>
@@ -827,9 +944,6 @@ export default function ShareCommandCenterPage() {
                 {eligibleCandidates.map((cand) => {
                   const hasSkipped =
                     cand.skippedPeriods?.includes(currentPeriod);
-
-                  const netBal = customerNetBalances[cand.customerId] || 0;
-                  const isPositive = netBal >= 0;
 
                   return (
                     <tr
@@ -853,14 +967,12 @@ export default function ShareCommandCenterPage() {
                               สละสิทธิ์
                             </span>
                           )}
+                          {cand.isSwapped && !hasSkipped && (
+                            <span className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-md font-bold">
+                              สวมสิทธิ์
+                            </span>
+                          )}
                         </div>
-                      </td>
-
-                      <td
-                        className={`px-6 py-4 text-right font-bold ${isPositive ? "text-green-600" : "text-red-600"}`}
-                      >
-                        {isPositive ? "+" : "-"} ฿
-                        {Math.abs(netBal).toLocaleString()}
                       </td>
 
                       <td className="px-6 py-4">
@@ -878,6 +990,16 @@ export default function ShareCommandCenterPage() {
                           <div className="flex gap-2">
                             <button
                               type="button"
+                              onClick={() => openSwapModal(cand)}
+                              disabled={isProcessing}
+                              className="w-10 bg-white border border-gray-200 hover:border-amber-400 hover:text-amber-500 hover:bg-amber-50 text-gray-400 flex items-center justify-center rounded-lg transition-all shadow-sm shrink-0 cursor-pointer"
+                              title="เปลี่ยนมือ (สวมสิทธิ์)"
+                            >
+                              <RefreshCw className="w-4 h-4 pointer-events-none" />
+                            </button>
+
+                            <button
+                              type="button"
                               onClick={() => toggleSkipStatus(cand)}
                               disabled={isProcessing}
                               className="w-10 bg-white border border-gray-200 hover:border-red-400 hover:text-red-500 hover:bg-red-50 text-gray-400 flex items-center justify-center rounded-lg transition-all shadow-sm shrink-0 cursor-pointer"
@@ -885,6 +1007,7 @@ export default function ShareCommandCenterPage() {
                             >
                               <Ban className="w-4 h-4 pointer-events-none" />
                             </button>
+
                             <button
                               type="button"
                               onClick={() => handleDeclareWinner(cand)}
@@ -907,6 +1030,89 @@ export default function ShareCommandCenterPage() {
           </div>
         )}
       </div>
+
+      {/* ========================================== */}
+      {/* 🌟 MODAL: สวมสิทธิ์เปลี่ยนมือแชร์ */}
+      {/* ========================================== */}
+      {isSwapModalOpen && handToSwap && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm transition-opacity"
+            onClick={() => setIsSwapModalOpen(false)}
+          ></div>
+          <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl flex flex-col h-[80vh] animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center px-6 py-5 border-b border-gray-200 bg-amber-50/50 rounded-t-2xl">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <RefreshCw className="w-5 h-5 text-amber-600" />{" "}
+                  สวมสิทธิ์มือแชร์
+                </h2>
+                <p className="text-xs font-medium text-gray-500 mt-1">
+                  แทนที่ {handToSwap.customerName} (มือที่{" "}
+                  {handToSwap.handNumber}) ในงวดที่ {share.currentPeriod}
+                </p>
+              </div>
+              <button
+                onClick={() => setIsSwapModalOpen(false)}
+                className="p-2 bg-white hover:bg-gray-100 text-gray-500 rounded-lg border border-gray-200 transition-all active:scale-95 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 border-b border-gray-100">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-amber-500 focus:ring-2 focus:ring-amber-50 font-medium transition-all text-sm"
+                  placeholder="ค้นหารายชื่อคนใหม่..."
+                />
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-white custom-scrollbar">
+              {filteredCustomers.length === 0 ? (
+                <div className="text-center py-12 flex flex-col items-center">
+                  <AlertCircle className="w-8 h-8 text-gray-300 mb-2" />
+                  <p className="text-sm font-medium text-gray-500">
+                    ไม่พบรายชื่อลูกค้านี้
+                  </p>
+                </div>
+              ) : (
+                filteredCustomers.map((c) => (
+                  <div
+                    key={c.id}
+                    onClick={() => confirmSwap(c)}
+                    className="flex items-center justify-between p-3.5 rounded-xl border border-gray-100 bg-white hover:border-amber-300 hover:bg-amber-50/30 shadow-sm transition-all cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-gray-50 text-gray-400 group-hover:bg-amber-100 group-hover:text-amber-600 transition-colors">
+                        <User className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-900 text-sm">
+                          {c.code && (
+                            <span className="text-amber-600 mr-1">
+                              [{c.code}]
+                            </span>
+                          )}
+                          {c.nickname ? `${c.nickname} (${c.name})` : c.name}
+                        </p>
+                        <p className="text-xs font-medium text-gray-500 mt-0.5">
+                          คลิกเพื่อเลือกคนนี้
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========================================== */}
       {/* 🌟 MODAL: ใบสรุปรายชื่อ */}
