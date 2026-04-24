@@ -171,7 +171,7 @@ export default function Sidebar() {
               }`}
             >
               <Activity className="w-5 h-5" />
-              <span>หน้าวอร์รูม</span>
+              <span>หน้าวอร์</span>
             </Link>
           </div>
 
