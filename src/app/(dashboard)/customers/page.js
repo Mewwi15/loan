@@ -558,10 +558,10 @@ export default function CustomersPage() {
                     </div>
                   </div>
 
-                  {/* 🌟 แสดงยอดหนี้ปกติ และ ยอดผ่อนของ (PD) */}
-                  <div className="flex flex-wrap items-center gap-6 sm:gap-8 w-full lg:w-auto lg:flex-1 border-l-2 border-orange-100 pl-6 relative">
+                  {/* 🌟 ปรับปรุง: การโชว์ยอดหนี้แบบ List View (รองรับมือถือ) */}
+                  <div className="grid grid-cols-2 md:flex md:flex-wrap items-start md:items-center gap-y-4 gap-x-6 w-full lg:w-auto lg:flex-1 border-t lg:border-t-0 lg:border-l-2 border-orange-100 pt-4 lg:pt-0 lg:pl-6 relative">
                     {customer.documentUrl && (
-                      <div className="absolute -left-[11px] top-1/2 -translate-y-1/2 bg-white rounded-full p-1 border border-orange-200">
+                      <div className="absolute -left-[11px] top-1/2 -translate-y-1/2 bg-white rounded-full p-1 border border-orange-200 hidden lg:block">
                         <FileText className="w-3 h-3 text-orange-500" />
                       </div>
                     )}
@@ -577,7 +577,7 @@ export default function CustomersPage() {
                       </p>
                     </div>
 
-                    <div className="border-l border-gray-100 pl-6 hidden sm:block">
+                    <div className="md:border-l border-gray-100 md:pl-6">
                       <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-0.5 flex items-center gap-1">
                         <Package className="w-3 h-3" /> ยอดผ่อนของ (PD)
                       </p>
@@ -586,7 +586,7 @@ export default function CustomersPage() {
                       </p>
                     </div>
 
-                    <div className="border-l border-gray-100 pl-6 hidden xl:block">
+                    <div className="col-span-2 md:border-l border-gray-100 md:pl-6">
                       <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
                         รวมทุกวง
                       </p>
@@ -596,7 +596,7 @@ export default function CustomersPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between w-full lg:w-auto gap-4">
+                  <div className="flex items-center justify-between w-full lg:w-auto gap-4 pt-4 lg:pt-0 border-t lg:border-t-0 border-gray-50">
                     <span
                       className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg shrink-0 ${customer.status === "ปกติ" ? "bg-green-50 text-green-600" : "bg-rose-50 text-rose-500"}`}
                     >
@@ -649,7 +649,7 @@ export default function CustomersPage() {
                 <div
                   key={customer.id}
                   onClick={() => router.push(`/customers/${customer.id}`)}
-                  className="group block bg-white rounded-[2rem] p-8 border border-gray-100 shadow-sm hover:shadow-xl hover:shadow-orange-100/40 hover:border-orange-200 transition-all duration-300 relative space-y-5 cursor-pointer"
+                  className="group block bg-white rounded-[2rem] p-8 border border-gray-100 shadow-sm hover:shadow-xl hover:shadow-orange-100/40 hover:border-orange-200 transition-all duration-300 relative space-y-6 cursor-pointer"
                 >
                   <div className="absolute top-6 right-6 flex gap-2 z-20">
                     <button
@@ -696,11 +696,11 @@ export default function CustomersPage() {
                     </div>
                   </div>
 
-                  {/* 🌟 ปรับปรุง: การโชว์ยอดหนี้แบบ Grid View แยกกล่องชัดเจน */}
+                  {/* 🌟 ปรับปรุง: การโชว์ยอดหนี้แบบ Grid View แยกกล่องชัดเจน (รองรับมือถือ) */}
                   <div className="flex flex-col gap-3 border-l-2 border-orange-100 pl-6 py-1 relative z-10">
                     {customer.documentUrl && (
                       <div
-                        className="absolute -left-[11px] top-1/2 -translate-y-1/2 bg-white rounded-full p-1 border border-orange-200"
+                        className="absolute -left-[11px] top-4 bg-white rounded-full p-1 border border-orange-200"
                         title="มีเอกสารแนบ"
                       >
                         <FileText className="w-3 h-3 text-orange-500" />
@@ -709,7 +709,7 @@ export default function CustomersPage() {
 
                     <div className="flex justify-between items-end">
                       <div>
-                        <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-1">
+                        <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest mb-1">
                           ยอดหนี้ปกติ
                         </p>
                         <p
@@ -730,13 +730,15 @@ export default function CustomersPage() {
                       </div>
                     </div>
 
-                    <div className="border-t border-gray-50 pt-3">
-                      <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1 flex items-center gap-1">
-                        <Package className="w-3 h-3" /> ยอดผ่อนของ (PD)
-                      </p>
-                      <p className="text-lg font-black text-rose-500">
-                        ฿{(customer.totalDebtPD || 0).toLocaleString()}
-                      </p>
+                    <div className="border-t border-gray-50 pt-3 flex justify-between items-end">
+                      <div>
+                        <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                          <Package className="w-3 h-3" /> ยอดผ่อนของ (PD)
+                        </p>
+                        <p className="text-lg font-black text-rose-500">
+                          ฿{(customer.totalDebtPD || 0).toLocaleString()}
+                        </p>
+                      </div>
                     </div>
                   </div>
 
