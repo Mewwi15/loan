@@ -8,11 +8,11 @@ import {
   orderBy,
   onSnapshot,
   doc,
-  deleteDoc,
   getDocs,
   where,
   writeBatch,
   updateDoc,
+  serverTimestamp,
 } from "firebase/firestore";
 import Link from "next/link";
 import {
@@ -35,6 +35,9 @@ import {
   Calendar,
   Calculator,
   Check,
+  Coins,
+  User,
+  ChevronRight,
 } from "lucide-react";
 
 // ==========================================
@@ -193,6 +196,22 @@ export default function SharesDashboardPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isBankDropdownOpen, setIsBankDropdownOpen] = useState(false);
 
+  // 🌟 State สำหรับระบบโปะปิดวง
+  const [payoffModalOpen, setPayoffModalOpen] = useState(false);
+  const [payoffShare, setPayoffShare] = useState(null);
+  const [payoffHands, setPayoffHands] = useState([]);
+
+  // 🌟 เปลี่ยนจาก ID เดียว เป็น Array เพื่อรองรับการเลือกหลายมือ
+  const [selectedHandIds, setSelectedHandIds] = useState([]);
+  const [tempSelectedHandIds, setTempSelectedHandIds] = useState([]);
+
+  const [isHandSelectionModalOpen, setIsHandSelectionModalOpen] =
+    useState(false);
+  const [payoffDate, setPayoffDate] = useState(
+    new Date().toISOString().split("T")[0],
+  );
+  const [isFetchingHands, setIsFetchingHands] = useState(false);
+
   const menuRef = useRef();
 
   useEffect(() => {
@@ -228,7 +247,6 @@ export default function SharesDashboardPage() {
 
   const handleDeleteShare = async (shareId, shareName) => {
     setActiveMenuId(null);
-
     const confirmMsg = `⚠️ คำเตือน: ยืนยันการลบวงแชร์ "${shareName}" ใช่หรือไม่?\n\n*ข้อมูลลูกแชร์และประวัติการจ่ายเงินทั้งหมดในวงนี้จะถูกลบทิ้งอย่างถาวร!`;
     if (!window.confirm(confirmMsg)) return;
 
@@ -280,7 +298,6 @@ export default function SharesDashboardPage() {
         bankAccountNo: editingShare.bankAccountNo,
       });
 
-      // ถ้าเปลี่ยนชื่อวง ต้องไปแก้ชื่อใน share_hands ด้วย
       if (editingShare.originalName !== editingShare.name.trim()) {
         const batch = writeBatch(db);
         const handsQuery = query(
@@ -334,6 +351,82 @@ export default function SharesDashboardPage() {
     setIsBankDropdownOpen(false);
   };
 
+  // 🌟 ฟังก์ชันเปิด Modal โปะ
+  const openPayoffModal = async (share) => {
+    setActiveMenuId(null);
+    setPayoffShare(share);
+    setPayoffDate(new Date().toISOString().split("T")[0]);
+    setSelectedHandIds([]); // ล้างค่าแบบหลายคน
+    setTempSelectedHandIds([]);
+    setIsHandSelectionModalOpen(false);
+    setPayoffModalOpen(true);
+    setIsFetchingHands(true);
+
+    try {
+      const handsQ = query(
+        collection(db, "share_hands"),
+        where("shareId", "==", share.id),
+      );
+      const handsSnap = await getDocs(handsQ);
+      const handsData = handsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      const activeHands = handsData.filter(
+        (h) =>
+          h.customerId && h.status !== "closed" && h.status !== "available",
+      );
+      activeHands.sort((a, b) => a.handNumber - b.handNumber);
+
+      setPayoffHands(activeHands);
+    } catch (error) {
+      console.error("Error fetching hands for payoff:", error);
+    } finally {
+      setIsFetchingHands(false);
+    }
+  };
+
+  // 🌟 ฟังก์ชันสลับการเลือกมือแชร์ (Toggle)
+  const toggleHandSelection = (handId) => {
+    setTempSelectedHandIds(
+      (prev) =>
+        prev.includes(handId)
+          ? prev.filter((id) => id !== handId) // ถ้ามีอยู่แล้วให้เอาออก
+          : [...prev, handId], // ถ้ายังไม่มีให้เพิ่มเข้าไป
+    );
+  };
+
+  // 🌟 ฟังก์ชันยืนยันการโปะ (อัปเดตหลายมือพร้อมกัน)
+  const confirmEarlyPayoff = async () => {
+    if (selectedHandIds.length === 0)
+      return alert("กรุณาเลือกมือแชร์อย่างน้อย 1 มือครับ");
+
+    setIsProcessing(true);
+    try {
+      const batch = writeBatch(db);
+
+      // วนลูปอัปเดตทุกมือแชร์ที่เลือก
+      selectedHandIds.forEach((handId) => {
+        const handRef = doc(db, "share_hands", handId);
+        batch.update(handRef, {
+          status: "closed",
+          closedAt: payoffDate,
+          updatedAt: serverTimestamp(),
+        });
+      });
+
+      await batch.commit();
+
+      alert(
+        `🎉 โปะปิดมือแชร์สำเร็จ ${selectedHandIds.length} มือ!\nข้อมูลได้ถูกอัปเดตในประวัติลูกค้าเรียบร้อยแล้ว`,
+      );
+      setPayoffModalOpen(false);
+    } catch (error) {
+      console.error("Error processing payoff:", error);
+      alert("เกิดข้อผิดพลาดในการโปะปิดวง");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-gray-500">
@@ -347,15 +440,26 @@ export default function SharesDashboardPage() {
 
   const activeShares = shares.filter((s) => s.status === "active");
   const completedShares = shares.filter((s) => s.status === "completed");
-
   const selectedBankData = ADMIN_BANK_ACCOUNTS.find(
     (b) => b.id === editingShare?.bankAccountId,
   );
 
+  // 🌟 คำนวณยอดหนี้รวมของ "ทุกมือ" ที่ถูกเลือก
+  const selectedHandsDataList = payoffHands.filter((h) =>
+    selectedHandIds.includes(h.id),
+  );
+  const amountToPayoff = selectedHandsDataList.reduce((total, hand) => {
+    return (
+      total +
+      (payoffShare?.totalHands * payoffShare?.installmentAmount -
+        (hand.totalPaid || 0))
+    );
+  }, 0);
+
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500 bg-gray-50/30 min-h-screen relative">
       {isProcessing && (
-        <div className="fixed inset-0 z-[200] bg-white/60 backdrop-blur-sm flex items-center justify-center">
+        <div className="fixed inset-0 z-[200] bg-white/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white p-6 rounded-3xl shadow-2xl flex flex-col items-center gap-4">
             <Loader2 className="w-10 h-10 animate-spin text-blue-600" />
             <p className="font-bold text-gray-800">กำลังประมวลผล...</p>
@@ -472,14 +576,24 @@ export default function SharesDashboardPage() {
                     <MoreVertical className="w-5 h-5" />
                   </button>
 
+                  {/* 🌟 เมนู Dropdown */}
                   {activeMenuId === share.id && (
                     <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-100 shadow-2xl rounded-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+                      <button
+                        onClick={() => openPayoffModal(share)}
+                        className="w-full text-left px-5 py-4 text-sm font-bold text-emerald-600 hover:bg-emerald-50 flex items-center gap-3 border-b border-gray-50 transition-colors"
+                      >
+                        <Coins className="w-4 h-4" /> โปะปิดมือแชร์
+                      </button>
+
                       <button
                         onClick={() => openEditModal(share)}
                         className="w-full text-left px-5 py-4 text-sm font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-3 border-b border-gray-50 transition-colors"
                       >
-                        <Edit2 className="w-4 h-4 text-blue-500" /> แก้ไขข้อมูล
+                        <Edit2 className="w-4 h-4 text-blue-500" />{" "}
+                        แก้ไขข้อมูลวง
                       </button>
+
                       <button
                         onClick={() => handleDeleteShare(share.id, share.name)}
                         className="w-full text-left px-5 py-4 text-sm font-bold text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors"
@@ -573,6 +687,236 @@ export default function SharesDashboardPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================== */}
+      {/* 🌟 MODAL: โปะปิดมือแชร์ (หลัก) */}
+      {/* ========================================== */}
+      {payoffModalOpen && payoffShare && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-gray-900/70 backdrop-blur-sm">
+          <div className="relative bg-white w-full sm:max-w-lg rounded-[2rem] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-5 sm:p-6 bg-emerald-50 border-b border-emerald-100 flex justify-between items-center">
+              <div>
+                <h3 className="font-black text-emerald-800 text-lg flex items-center gap-2">
+                  <Coins className="w-5 h-5 text-emerald-600" /> โปะปิดมือแชร์
+                </h3>
+                <p className="text-[10px] font-bold text-emerald-600 uppercase mt-1 tracking-widest">
+                  วงแชร์: {payoffShare.name}
+                </p>
+              </div>
+              <button
+                onClick={() => setPayoffModalOpen(false)}
+                className="p-2 text-emerald-600 hover:bg-emerald-100 rounded-xl transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 sm:p-6 space-y-6">
+              {/* 1. ปุ่มเรียกหน้าต่างเลือกมือแชร์ (Nested Modal Trigger) */}
+              <div>
+                <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest block mb-2">
+                  เลือกมือแชร์ที่ต้องการโปะปิดวง
+                </label>
+
+                {isFetchingHands ? (
+                  <div className="flex items-center gap-2 text-gray-400 text-sm font-bold bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                    <Loader2 className="w-5 h-5 animate-spin text-emerald-500" />{" "}
+                    กำลังโหลดรายชื่อ...
+                  </div>
+                ) : (
+                  <div
+                    onClick={() => {
+                      setTempSelectedHandIds([...selectedHandIds]); // ก๊อปปี้ค่าปัจจุบันส่งไปให้หน้าเลือก
+                      setIsHandSelectionModalOpen(true);
+                    }}
+                    className={`w-full bg-white border ${selectedHandIds.length > 0 ? "border-emerald-300 shadow-sm" : "border-gray-200 hover:border-emerald-300"} rounded-2xl p-4 flex items-center justify-between cursor-pointer transition-all`}
+                  >
+                    {selectedHandIds.length > 0 ? (
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex flex-col items-center justify-center shrink-0 shadow-sm">
+                          <span className="text-[8px] font-black uppercase mb-[-4px]">
+                            เลือก
+                          </span>
+                          <span className="text-xl font-black leading-none">
+                            {selectedHandIds.length}
+                          </span>
+                        </div>
+                        <div>
+                          <p className="font-bold text-gray-900 text-base">
+                            เลือกแล้ว {selectedHandIds.length} มือ
+                          </p>
+                          <p className="text-[10px] font-black uppercase tracking-widest mt-0.5 text-emerald-600">
+                            คลิกเพื่อเพิ่ม/แก้ไข
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3 py-1">
+                        <div className="w-10 h-10 rounded-full bg-emerald-50 flex items-center justify-center">
+                          <Users className="w-5 h-5 text-emerald-500" />
+                        </div>
+                        <span className="font-bold text-gray-400 text-sm">
+                          -- จิ้มเพื่อเลือกมือแชร์ --
+                        </span>
+                      </div>
+                    )}
+                    <ChevronRight className="w-5 h-5 text-gray-300" />
+                  </div>
+                )}
+                {payoffHands.length === 0 && !isFetchingHands && (
+                  <p className="text-xs text-red-500 mt-2 font-bold">
+                    *ไม่พบรายชื่อลูกแชร์ที่สามารถโปะได้ในวงนี้
+                  </p>
+                )}
+              </div>
+
+              {/* 2. พรีวิวยอดที่ต้องจ่าย (รวมทุกมือที่เลือก) */}
+              {selectedHandIds.length > 0 && (
+                <div className="bg-orange-50 p-5 rounded-2xl border border-orange-100 animate-in fade-in duration-300">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-sm font-bold text-orange-600">
+                      ยอดค้างชำระรวม ({selectedHandIds.length} มือ):
+                    </span>
+                    <span className="text-2xl sm:text-3xl font-black text-orange-600">
+                      ฿{Math.max(0, amountToPayoff).toLocaleString()}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-orange-500/80 font-bold">
+                    *คำนวณจากค่างวดทั้งหมด หักลบยอดที่จ่ายไปแล้วของทุกมือ
+                  </p>
+                </div>
+              )}
+
+              {/* 3. เลือกวันที่รับเงิน */}
+              <div>
+                <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest block mb-2">
+                  ระบุวันที่รับเงิน (เพื่อบันทึกประวัติ)
+                </label>
+                <div className="flex items-center bg-white border border-gray-200 rounded-2xl px-4 py-3.5 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-50 transition-all">
+                  <Calendar className="w-5 h-5 text-emerald-500 mr-3" />
+                  <input
+                    type="date"
+                    value={payoffDate}
+                    onChange={(e) => setPayoffDate(e.target.value)}
+                    className="w-full outline-none bg-transparent font-black text-gray-700 uppercase tracking-widest"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-gray-100 bg-gray-50 flex gap-3">
+              <button
+                onClick={() => setPayoffModalOpen(false)}
+                className="flex-1 px-4 py-3.5 rounded-xl font-bold text-sm text-gray-600 bg-white border border-gray-200 hover:bg-gray-100 transition-colors"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={confirmEarlyPayoff}
+                disabled={selectedHandIds.length === 0 || isProcessing}
+                className="flex-1 px-4 py-3.5 rounded-xl font-bold text-sm text-white bg-emerald-500 hover:bg-emerald-600 shadow-md flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+              >
+                {isProcessing ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-5 h-5" />
+                )}
+                ยืนยันปิดวง ({selectedHandIds.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================== */}
+      {/* 🌟 NESTED MODAL: หน้าต่างเลือกลูกค้า (เลือกได้หลายมือ) */}
+      {/* ========================================== */}
+      {isHandSelectionModalOpen && (
+        <div className="fixed inset-0 z-[130] flex items-end sm:items-center justify-center bg-gray-900/70 backdrop-blur-sm sm:p-4">
+          <div className="relative bg-white w-full sm:max-w-2xl lg:max-w-3xl rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom-10 sm:zoom-in-95 duration-200">
+            <div className="p-5 sm:px-8 sm:py-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <div>
+                <h3 className="font-black text-gray-800 text-lg sm:text-xl">
+                  เลือกมือแชร์ที่ต้องการ
+                </h3>
+                <p className="text-[10px] font-bold text-gray-500 uppercase mt-1 tracking-widest">
+                  สามารถเลือกพร้อมกันได้หลายมือ
+                </p>
+              </div>
+              <button
+                onClick={() => setIsHandSelectionModalOpen(false)}
+                className="p-2 text-gray-400 hover:bg-gray-200 rounded-xl transition-colors"
+              >
+                <X className="w-5 h-5 sm:w-6 sm:h-6" />
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-6 max-h-[60vh] sm:max-h-[65vh] overflow-y-auto custom-scrollbar bg-gray-50/50">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                {payoffHands.map((hand) => {
+                  const isSelected = tempSelectedHandIds.includes(hand.id);
+                  return (
+                    <div
+                      key={hand.id}
+                      onClick={() => toggleHandSelection(hand.id)}
+                      className={`p-4 sm:p-5 rounded-2xl border flex items-center gap-4 cursor-pointer transition-all ${
+                        isSelected
+                          ? "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500 shadow-md scale-[1.02]"
+                          : "border-gray-200 bg-white hover:border-emerald-300 hover:shadow-sm"
+                      }`}
+                    >
+                      <div
+                        className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex flex-col items-center justify-center shrink-0 shadow-sm transition-colors ${isSelected ? "bg-emerald-100 text-emerald-600" : hand.status === "alive" ? "bg-blue-50 text-blue-600" : "bg-red-50 text-red-600"}`}
+                      >
+                        <span className="text-[8px] font-black uppercase mb-[-4px]">
+                          มือ
+                        </span>
+                        <span className="text-xl sm:text-2xl font-black leading-none">
+                          {hand.handNumber}
+                        </span>
+                      </div>
+                      <div className="flex-1">
+                        <p
+                          className={`font-bold text-base sm:text-lg transition-colors ${isSelected ? "text-emerald-700" : "text-gray-900"}`}
+                        >
+                          {hand.customerName}
+                        </p>
+                        <p
+                          className={`text-[10px] font-black uppercase tracking-widest mt-0.5 transition-colors ${isSelected ? "text-emerald-600" : hand.status === "alive" ? "text-blue-500" : "text-red-500"}`}
+                        >
+                          {hand.status === "alive"
+                            ? "มือเป็น (รอรับเงิน)"
+                            : "มือตาย (เปียแล้ว)"}
+                        </p>
+                      </div>
+
+                      {/* Checkbox Icon */}
+                      <div
+                        className={`w-6 h-6 rounded-full flex items-center justify-center border-2 transition-all ${isSelected ? "border-emerald-500 bg-emerald-500 text-white" : "border-gray-300 bg-transparent"}`}
+                      >
+                        {isSelected && <Check className="w-4 h-4" />}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="p-4 sm:p-6 border-t border-gray-100 bg-white">
+              <button
+                onClick={() => {
+                  setSelectedHandIds(tempSelectedHandIds);
+                  setIsHandSelectionModalOpen(false);
+                }}
+                disabled={tempSelectedHandIds.length === 0}
+                className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-black py-4 rounded-xl shadow-md disabled:opacity-50 transition-all text-sm uppercase tracking-widest flex items-center justify-center gap-2"
+              >
+                ยืนยันการเลือก ({tempSelectedHandIds.length})
+              </button>
+            </div>
           </div>
         </div>
       )}

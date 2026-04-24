@@ -31,6 +31,8 @@ import {
   Camera,
   Crown,
   Undo2,
+  Coins,
+  CheckCircle2,
 } from "lucide-react";
 import { toPng } from "html-to-image";
 
@@ -114,10 +116,12 @@ export default function ShareCommandCenterPage() {
   const handleCheckAll = async () => {
     if (share.status === "completed") return;
 
-    // หากรองมือที่ยังไม่ได้จ่าย และไม่ใช่มือท้าวแชร์
+    // ไม่เอามือที่ closed แล้วมาคิดยอด
     const unpaidHands = hands.filter(
       (h) =>
-        h.handNumber !== 1 && !h.paidPeriods?.includes(share.currentPeriod),
+        h.handNumber !== 1 &&
+        !h.paidPeriods?.includes(share.currentPeriod) &&
+        h.status !== "closed",
     );
 
     if (unpaidHands.length === 0) {
@@ -278,36 +282,30 @@ export default function ShareCommandCenterPage() {
   }
 
   const currentPeriod = share.currentPeriod;
-
   const totalCollectedPerPeriod = share.installmentAmount * share.totalHands;
   const adminProfit = totalCollectedPerPeriod - share.poolAmount;
 
-  const standardGuaranteeDeduction = share.installmentAmount * 3;
-  const memberActualReceived = share.poolAmount - standardGuaranteeDeduction;
+  // 🌟 ลอจิกการเงิน (หักค้ำ 3 งวด)
+  const DEDUCT_HANDS_COUNT = 3;
+  const standardGuaranteeDeduction =
+    share.installmentAmount * DEDUCT_HANDS_COUNT;
 
-  const currentHandSaved = currentPeriod * share.installmentAmount;
-  const memberCurrentHandDebt = memberActualReceived - currentHandSaved;
-  const displayDeadDebt = memberCurrentHandDebt > 0 ? memberCurrentHandDebt : 0;
+  // 🌟 ยอดหนี้ตั้งต้น คือ 6,000 เต็ม (ยอดกองกลาง)
+  const totalObligationPerHand = share.poolAmount;
 
-  // 🌟 คำนวณยอดสุทธิ (Net Balance) ของลูกค้าแต่ละคนในวงนี้แบบ Real-time
-  const customerNetBalances = {};
-  hands.forEach((h) => {
-    const cid = h.customerId;
-    if (!customerNetBalances[cid]) customerNetBalances[cid] = 0;
+  // ==========================================
+  // 🌟 ดึงตัวเลขมาโชว์บนการ์ดแบบเพียวๆ (ไม่บวกกัน)
+  // ==========================================
+  // จำนวนงวดมาตรฐานที่ลูกแชร์ต้องจ่ายมาแล้ว (ก่อนเช็คชื่อรอบปัจจุบัน) คือ (currentPeriod - 1)
+  const basePaidPeriodsCount = Math.max(0, currentPeriod - 1);
+  const singleHandTotalPaid = basePaidPeriodsCount * share.installmentAmount;
 
-    const isTao = h.handNumber === 1;
-    const isAlive = h.status === "alive";
-    const totalPaid = Number(h.totalPaid) || 0;
+  // ยอดโชว์สำหรับ "มือเป็น" (เงินออมสะสมของ 1 มือ)
+  const displayAliveSaved = singleHandTotalPaid;
 
-    if (isAlive) {
-      customerNetBalances[cid] += totalPaid;
-    } else {
-      const deduction = isTao ? 0 : standardGuaranteeDeduction;
-      const actualRec = share.poolAmount - deduction;
-      const debt = actualRec - totalPaid > 0 ? actualRec - totalPaid : 0;
-      customerNetBalances[cid] -= debt;
-    }
-  });
+  // ยอดโชว์สำหรับ "มือตาย" (หนี้คงเหลือของ 1 มือ) = ฐานหนี้เต็ม - ที่จ่ายมาแล้ว
+  let displayDeadDebt = totalObligationPerHand - singleHandTotalPaid;
+  if (displayDeadDebt < 0) displayDeadDebt = 0;
 
   const eligibleCandidates = hands.filter(
     (h) =>
@@ -382,13 +380,13 @@ export default function ShareCommandCenterPage() {
                   เงินออมสะสม (มือเป็น)
                 </p>
                 <p className="text-3xl font-black text-[#1e40af]">
-                  + ฿{currentHandSaved.toLocaleString()}
+                  + ฿{displayAliveSaved.toLocaleString()}
                 </p>
               </div>
 
               <div className="bg-[#fffdfd] border border-red-100 rounded-[1rem] px-6 py-4 shadow-sm min-w-[220px]">
                 <p className="text-sm font-bold text-[#b91c1c] tracking-wide mb-1">
-                  หนี้คงเหลือ (ลูกแชร์มือตาย)
+                  หนี้คงเหลือ (มือตาย)
                 </p>
                 <p className="text-3xl font-black text-[#991b1b]">
                   - ฿{displayDeadDebt.toLocaleString()}
@@ -442,7 +440,6 @@ export default function ShareCommandCenterPage() {
             </div>
           </div>
 
-          {/* 🌟 เพิ่มปุ่มติ๊กรับยอดทั้งหมด */}
           <button
             type="button"
             onClick={handleCheckAll}
@@ -481,12 +478,16 @@ export default function ShareCommandCenterPage() {
               {hands.map((hand) => {
                 const isTao = hand.handNumber === 1;
                 const isAlive = hand.status === "alive";
+                const isClosed = hand.status === "closed";
                 const hasPaidThisPeriod =
                   hand.paidPeriods?.includes(currentPeriod);
 
+                // 🌟 ใช้คณิตศาสตร์ 100%
+                const realTotalPaid =
+                  (hand.paidPeriods?.length || 0) * share.installmentAmount;
                 const prevPaid = hasPaidThisPeriod
-                  ? hand.totalPaid - share.installmentAmount
-                  : hand.totalPaid;
+                  ? realTotalPaid - share.installmentAmount
+                  : realTotalPaid;
 
                 const handGuaranteeDeduction = isTao
                   ? 0
@@ -494,54 +495,83 @@ export default function ShareCommandCenterPage() {
                 const handActualReceived =
                   share.poolAmount - handGuaranteeDeduction;
 
-                const currentDebt = handActualReceived - hand.totalPaid;
+                // 🌟 หนี้คงเหลือที่แท้จริง = กองกลางเต็ม - จ่ายไปแล้ว
+                let currentRemainingDebt =
+                  totalObligationPerHand - realTotalPaid;
+                if (currentRemainingDebt < 0) currentRemainingDebt = 0;
+
                 const displayAmount = isAlive
-                  ? hand.totalPaid
-                  : currentDebt > 0
-                    ? currentDebt
-                    : 0;
+                  ? realTotalPaid
+                  : currentRemainingDebt;
+                const remainingPeriodsCount = Math.ceil(
+                  currentRemainingDebt / share.installmentAmount,
+                );
 
                 return (
                   <tr
                     key={hand.id}
-                    className={`hover:bg-blue-50/30 transition-colors ${
-                      hasPaidThisPeriod ? "bg-green-50/10" : "bg-white"
+                    className={`transition-colors ${
+                      isClosed
+                        ? "bg-emerald-600/90 text-white" // 🌟 สีเขียวมรกตทึบ
+                        : hasPaidThisPeriod
+                          ? "bg-green-50/10 hover:bg-blue-50/30"
+                          : "bg-white hover:bg-blue-50/30"
                     }`}
                   >
-                    <td className="px-5 py-4 text-center font-bold text-gray-500">
+                    <td
+                      className={`px-5 py-4 text-center font-bold ${isClosed ? "text-emerald-100" : "text-gray-500"}`}
+                    >
                       {hand.handNumber}
                     </td>
 
                     <td className="px-5 py-4">
-                      <p className="font-semibold text-gray-900">
-                        {hand.customerName}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p
+                          className={`font-semibold ${isClosed ? "text-white" : "text-gray-900"}`}
+                        >
+                          {hand.customerName}
+                        </p>
+                        {isClosed && (
+                          <span className="text-[10px] font-black uppercase bg-white text-emerald-700 px-2 py-0.5 rounded shadow-sm flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" /> โปะจบแล้ว
+                          </span>
+                        )}
+                      </div>
 
                       {isTao && (
-                        <p className="text-[11px] text-gray-500 font-medium mt-0.5">
+                        <p
+                          className={`text-[11px] font-medium mt-0.5 ${isClosed ? "text-emerald-100" : "text-gray-500"}`}
+                        >
                           ท้าวแชร์ (ไม่ต้องส่ง)
                         </p>
                       )}
 
                       {hand.wonAtPeriod && !isTao && (
-                        <div className="mt-1.5 inline-flex items-center gap-1 bg-red-50 border border-red-100 px-2 py-0.5 rounded text-[10px] font-bold text-red-600">
+                        <div
+                          className={`mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${isClosed ? "bg-emerald-800/40 text-emerald-50 border border-emerald-500" : "bg-red-50 border border-red-100 text-red-600"}`}
+                        >
                           <Award className="w-3 h-3 pointer-events-none" />{" "}
-                          รับงวด {hand.wonAtPeriod} | หักค้ำ 3 งวด (฿
-                          {handGuaranteeDeduction.toLocaleString()}) | รับจริง ฿
+                          รับงวด {hand.wonAtPeriod} | รับจริง ฿
                           {handActualReceived.toLocaleString()}
                         </div>
                       )}
                       {hand.wonAtPeriod && isTao && (
-                        <div className="mt-1.5 inline-flex items-center gap-1 bg-green-50 border border-green-100 px-2 py-0.5 rounded text-[10px] font-bold text-green-600">
+                        <div
+                          className={`mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${isClosed ? "bg-emerald-800/40 text-emerald-50 border border-emerald-500" : "bg-green-50 border border-green-100 text-green-600"}`}
+                        >
                           <Crown className="w-3 h-3 pointer-events-none" />{" "}
                           รับงวด 1 | รับเต็ม ฿
-                          {handActualReceived.toLocaleString()} (ไม่หักค้ำ)
+                          {share.poolAmount.toLocaleString()}
                         </div>
                       )}
                     </td>
 
                     <td className="px-5 py-4 text-center">
-                      {isAlive ? (
+                      {isClosed ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold bg-white/20 text-white border border-white/20 shadow-sm">
+                          ปิดบัญชีแล้ว
+                        </span>
+                      ) : isAlive ? (
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-green-50 text-green-700 border border-green-200">
                           มือเป็น
                         </span>
@@ -552,32 +582,48 @@ export default function ShareCommandCenterPage() {
                       )}
                     </td>
 
-                    <td className="px-5 py-4 text-right border-l border-gray-100 bg-gray-50/30">
-                      {!isTao ? (
+                    <td
+                      className={`px-5 py-4 text-right border-l ${isClosed ? "border-emerald-500 bg-emerald-700/20" : "border-gray-100 bg-gray-50/30"}`}
+                    >
+                      {!isTao && !isClosed ? (
                         <span className="font-bold text-gray-700">
                           ฿{share.installmentAmount.toLocaleString()}
                         </span>
                       ) : (
-                        <span className="text-gray-400">-</span>
+                        <span
+                          className={`font-bold ${isClosed ? "text-emerald-100" : "text-gray-400"}`}
+                        >
+                          -
+                        </span>
                       )}
                     </td>
 
-                    <td className="px-5 py-4 text-right bg-gray-50/30">
-                      {!isTao ? (
+                    <td
+                      className={`px-5 py-4 text-right ${isClosed ? "bg-emerald-700/20" : "bg-gray-50/30"}`}
+                    >
+                      {isClosed ? (
+                        <span className="font-bold text-white text-sm">
+                          เคลียร์ยอดแล้ว
+                        </span>
+                      ) : !isTao ? (
                         hasPaidThisPeriod ? (
                           <div className="flex flex-col items-end">
-                            <span className="text-[11px] text-gray-500 font-medium">
+                            <span
+                              className={`text-[11px] font-medium ${isClosed ? "text-emerald-200" : "text-gray-500"}`}
+                            >
                               {prevPaid.toLocaleString()} +{" "}
                               {share.installmentAmount.toLocaleString()} =
                             </span>
-                            <span className="font-bold text-green-700 text-sm">
-                              ฿{hand.totalPaid.toLocaleString()}
+                            <span
+                              className={`font-bold text-sm ${isClosed ? "text-white" : "text-green-700"}`}
+                            >
+                              ฿{realTotalPaid.toLocaleString()}
                             </span>
                           </div>
                         ) : (
                           <div className="flex flex-col items-end">
                             <span className="font-bold text-gray-800 text-sm">
-                              ฿{hand.totalPaid.toLocaleString()}
+                              ฿{realTotalPaid.toLocaleString()}
                             </span>
                             <span className="text-[11px] text-orange-500 font-semibold mt-0.5">
                               รอรับยอด
@@ -585,12 +631,24 @@ export default function ShareCommandCenterPage() {
                           </div>
                         )
                       ) : (
-                        <span className="text-gray-400">-</span>
+                        <span
+                          className={`font-bold ${isClosed ? "text-emerald-100" : "text-gray-400"}`}
+                        >
+                          -
+                        </span>
                       )}
                     </td>
 
                     <td className="px-5 py-4 text-right">
-                      {isAlive ? (
+                      {isTao ? (
+                        <span
+                          className={`font-bold ${isClosed ? "text-emerald-200" : "text-gray-400"}`}
+                        >
+                          ท้าวแชร์ (ไม่มีหนี้)
+                        </span>
+                      ) : isClosed ? (
+                        <span className="text-emerald-200 font-bold">-</span>
+                      ) : isAlive ? (
                         <div className="flex flex-col items-end">
                           <span className="font-bold text-green-600 text-sm">
                             + ฿{displayAmount.toLocaleString()}
@@ -604,30 +662,40 @@ export default function ShareCommandCenterPage() {
                           <span className="font-bold text-red-600 text-sm">
                             - ฿{displayAmount.toLocaleString()}
                           </span>
-                          <span className="text-[10px] text-gray-500 font-medium">
-                            หนี้คงเหลือ (หักค้ำ)
-                          </span>
+                          {currentRemainingDebt > 0 ? (
+                            <span className="text-[10px] text-red-500 font-bold mt-0.5">
+                              ส่งต่ออีก {remainingPeriodsCount} งวด
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-green-500 font-bold mt-0.5">
+                              ส่งครบแล้ว ไม่ต้องส่งต่อ
+                            </span>
+                          )}
                         </div>
                       )}
                     </td>
 
                     <td className="px-5 py-4 text-center">
-                      {isTao ? (
-                        <span className="text-[11px] text-gray-400 font-semibold bg-gray-100 px-3 py-1.5 rounded-lg cursor-not-allowed">
-                          ข้าม
+                      {isTao || isClosed ? (
+                        <span
+                          className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-not-allowed ${isClosed ? "bg-white/20 text-white" : "bg-gray-100 text-gray-400"}`}
+                        >
+                          {isClosed ? "เรียบร้อย" : "ข้าม"}
                         </span>
                       ) : (
                         <button
                           type="button"
                           onClick={() => togglePaidStatus(hand)}
                           disabled={
-                            isProcessing || share.status === "completed"
+                            isProcessing ||
+                            share.status === "completed" ||
+                            (currentRemainingDebt === 0 && !isAlive)
                           }
                           className={`w-10 h-10 mx-auto rounded-xl flex items-center justify-center transition-all border cursor-pointer ${
                             hasPaidThisPeriod
                               ? "bg-green-600 border-green-600 text-white shadow-sm"
                               : "bg-white border-gray-300 text-gray-300 hover:border-green-500 hover:text-green-600"
-                          } disabled:opacity-50`}
+                          } disabled:opacity-50 disabled:bg-gray-100`}
                         >
                           <Check
                             className="w-5 h-5 pointer-events-none"
@@ -723,10 +791,6 @@ export default function ShareCommandCenterPage() {
                     #
                   </th>
                   <th className="px-6 py-4 font-semibold">ชื่อลูกค้า</th>
-                  {/* 🌟 เปลี่ยนหัวตารางเป็น "ยอดสุทธิ (ทั้งวง)" */}
-                  <th className="px-6 py-4 font-semibold text-right">
-                    ยอดสุทธิ (ทั้งวง)
-                  </th>
                   <th className="px-6 py-4 font-semibold text-center w-[200px]">
                     จัดการ
                   </th>
@@ -736,10 +800,6 @@ export default function ShareCommandCenterPage() {
                 {eligibleCandidates.map((cand) => {
                   const hasSkipped =
                     cand.skippedPeriods?.includes(currentPeriod);
-
-                  // 🌟 ดึงยอดสุทธิของลูกค้าคนนี้มาโชว์
-                  const netBal = customerNetBalances[cand.customerId] || 0;
-                  const isPositive = netBal >= 0;
 
                   return (
                     <tr
@@ -764,14 +824,6 @@ export default function ShareCommandCenterPage() {
                             </span>
                           )}
                         </div>
-                      </td>
-
-                      {/* 🌟 แสดงยอดสุทธิสีเขียว-แดง */}
-                      <td
-                        className={`px-6 py-4 text-right font-bold ${isPositive ? "text-green-600" : "text-red-600"}`}
-                      >
-                        {isPositive ? "+" : "-"} ฿
-                        {Math.abs(netBal).toLocaleString()}
                       </td>
 
                       <td className="px-6 py-4">
@@ -820,7 +872,7 @@ export default function ShareCommandCenterPage() {
       </div>
 
       {/* ========================================== */}
-      {/* 🌟 MODAL: ใบสรุปรายชื่อ (โชว์คนสละสิทธิ์ด้วย) */}
+      {/* 🌟 MODAL: ใบสรุปรายชื่อ */}
       {/* ========================================== */}
       {showExportModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
