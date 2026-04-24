@@ -19,7 +19,6 @@ import {
   X,
   FileText,
   Banknote,
-  HandCoins,
 } from "lucide-react";
 
 export default function DashboardHome() {
@@ -39,8 +38,8 @@ export default function DashboardHome() {
   const [stats, setStats] = useState({
     totalPrincipalInMarket: 0,
     totalDisbursedPrincipal: 0,
-    totalDisbursedExpectedTotal: 0, // 🌟 เพิ่ม state เก็บยอดรวมรับจริง
-    totalDisbursedExpectedProfit: 0, // 🌟 เพิ่ม state เก็บกำไรสุทธิที่จะได้
+    totalDisbursedExpectedTotal: 0,
+    totalDisbursedExpectedProfit: 0,
     expectedToday: 0,
     collectedAmount: 0,
     expectedProfitToday: 0,
@@ -50,8 +49,6 @@ export default function DashboardHome() {
     pendingAmount: 0,
     collectionRate: 0,
   });
-
-  const [dueShares, setDueShares] = useState([]);
 
   const sortLoansAsc = (arr) => {
     return arr.sort((a, b) => {
@@ -103,42 +100,11 @@ export default function DashboardHome() {
       const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
       const lastDayOfMonth = `${year}-${month}-${String(lastDay).padStart(2, "0")}`;
 
-      const sharesQ = query(
-        collection(db, "shares"),
-        where("status", "==", "active"),
-      );
-      const sharesSnap = await getDocs(sharesQ);
-      const dueSharesTemp = [];
-
-      sharesSnap.forEach((docSnap) => {
-        const s = docSnap.data();
-        if (s.startDate) {
-          const d = new Date(s.startDate);
-          const periodsToAdd = (s.currentPeriod || 1) - 1;
-
-          if (s.frequencyType === "day") {
-            d.setDate(d.getDate() + periodsToAdd * Number(s.frequency || 1));
-          } else if (s.frequencyType === "month") {
-            d.setMonth(d.getMonth() + periodsToAdd * Number(s.frequency || 1));
-          }
-
-          const sYear = d.getFullYear();
-          const sMonth = String(d.getMonth() + 1).padStart(2, "0");
-          const sDay = String(d.getDate()).padStart(2, "0");
-          const calcDueDate = `${sYear}-${sMonth}-${sDay}`;
-
-          if (calcDueDate <= selectedDate) {
-            dueSharesTemp.push({ id: docSnap.id, ...s, calcDueDate });
-          }
-        }
-      });
-      setDueShares(dueSharesTemp);
-
       const loansSnap = await getDocs(collection(db, "loans"));
       let totalMarket = 0;
       let totalDisbursed = 0;
-      let expectedTotalDisbursed = 0; // 🌟 เก็บยอดรวมรับจริงทั้งหมด
-      let expectedProfitDisbursed = 0; // 🌟 เก็บกำไรรวมทั้งหมด
+      let expectedTotalDisbursed = 0;
+      let expectedProfitDisbursed = 0;
 
       const loanMap = new Map();
       const activeLoansMap = new Map();
@@ -179,7 +145,6 @@ export default function DashboardHome() {
         if (rawDisbDate >= firstDayOfMonth && rawDisbDate <= lastDayOfMonth) {
           const principal = loan.principal || 0;
           const totalAmount = loan.totalAmount || 0;
-          // คำนวณกำไร: ถ้าระบบมีเก็บ totalProfit ไว้ก็ใช้เลย ถ้าไม่มีให้เอา totalAmount ลบ principal
           const profit =
             loan.totalProfit || Math.max(0, totalAmount - principal);
 
@@ -361,8 +326,8 @@ export default function DashboardHome() {
       setStats({
         totalPrincipalInMarket: totalMarket,
         totalDisbursedPrincipal: totalDisbursed,
-        totalDisbursedExpectedTotal: expectedTotalDisbursed, // 🌟 บันทึกยอดรวมรับจริง
-        totalDisbursedExpectedProfit: expectedProfitDisbursed, // 🌟 บันทึกกำไรสุทธิรวม
+        totalDisbursedExpectedTotal: expectedTotalDisbursed,
+        totalDisbursedExpectedProfit: expectedProfitDisbursed,
         expectedToday: dayTotalGoal,
         collectedAmount: collectedAmount,
         expectedProfitToday: expectedProfitToday,
@@ -532,51 +497,6 @@ export default function DashboardHome() {
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
         <div className="xl:col-span-2 space-y-8">
-          {/* 🌟 ภารกิจวงแชร์ (หมุนวง) */}
-          {dueShares.length > 0 && (
-            <div className="bg-white rounded-[2.5rem] shadow-sm border border-orange-100 p-6 md:p-8 flex flex-col gap-6 relative overflow-hidden transition-all">
-              <div className="absolute left-0 top-0 bottom-0 w-2 bg-orange-500"></div>
-
-              <div className="flex items-center gap-5 pl-2">
-                <div className="w-14 h-14 rounded-3xl flex items-center justify-center bg-orange-50 text-orange-500 shrink-0">
-                  <HandCoins className="w-7 h-7" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-black text-gray-800 mb-1">
-                    ถึงกำหนดหมุนวงแชร์!
-                  </h3>
-                  <p className="text-sm font-bold text-gray-500">
-                    มีวงแชร์ที่ต้องจัดการจับฉลาก หรือเช็คยอด {dueShares.length}{" "}
-                    วง
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[220px] overflow-y-auto pr-2 custom-scrollbar pl-2">
-                {dueShares.map((s) => (
-                  <Link
-                    key={s.id}
-                    href={`/shares/${s.id}`}
-                    className="bg-white border border-orange-200 hover:bg-orange-50 hover:border-orange-400 text-orange-700 px-4 py-3 rounded-xl font-bold text-xs transition-colors flex items-center justify-between gap-3 shadow-sm"
-                  >
-                    <span className="truncate flex-1">
-                      {s.name}{" "}
-                      <span className="opacity-70 font-semibold">
-                        (งวด {s.currentPeriod})
-                      </span>
-                    </span>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <span className="text-[10px] bg-orange-100 px-2 py-0.5 rounded-md">
-                        ไปที่วง
-                      </span>
-                      <ChevronRight className="w-4 h-4" />
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
-
           <div
             className={`bg-white rounded-[2.5rem] shadow-sm border p-8 flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden transition-all ${stats.pendingTasks > 0 ? "border-rose-100" : "border-gray-100 opacity-60"}`}
           >

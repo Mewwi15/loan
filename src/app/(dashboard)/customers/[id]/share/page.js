@@ -60,7 +60,7 @@ export default function CustomerSharesProfilePage() {
     const unsubHands = onSnapshot(qHands, async (handsSnap) => {
       const handsData = handsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-      // ถอดรหัสวงแชร์ (shareId) ที่ไม่ซ้ำกัน เพื่อไปดึงรายละเอียดวง (กองกลาง, ค่างวด)
+      // ถอดรหัสวงแชร์ (shareId) ที่ไม่ซ้ำกัน เพื่อไปดึงรายละเอียดวง
       const uniqueShareIds = [...new Set(handsData.map((h) => h.shareId))];
 
       if (uniqueShareIds.length === 0) {
@@ -70,7 +70,6 @@ export default function CustomerSharesProfilePage() {
       }
 
       try {
-        // ดึงรายละเอียดวงแชร์ทั้งหมดที่ลูกค้านี้เล่นอยู่
         const sharesPromises = uniqueShareIds.map((id) =>
           getDoc(doc(db, "shares", id)),
         );
@@ -89,10 +88,29 @@ export default function CustomerSharesProfilePage() {
           }))
           .filter((h) => h.shareDetails); // กรองเฉพาะวงที่ยังมีอยู่
 
-        // เรียงลำดับตามชื่อวงและมือที่
+        // 🌟 ลอจิกใหม่: จัดเรียงตามสถานะ (มือเป็น -> มือตาย -> ปิดบัญชี) แล้วค่อยเรียงตามชื่อวง
         mergedHands.sort((a, b) => {
-          if (a.shareName !== b.shareName)
+          // 1. ให้คะแนนสถานะ (Status Priority)
+          const getStatusScore = (status) => {
+            if (status === "alive") return 1; // มือเป็น (ขึ้นก่อน)
+            if (status === "dead") return 2; // มือตาย (อันดับสอง)
+            return 3; // closed (ไว้ล่างสุด)
+          };
+
+          const scoreA = getStatusScore(a.status);
+          const scoreB = getStatusScore(b.status);
+
+          // ถ้าสถานะต่างกัน ให้เรียงตามคะแนนสถานะ
+          if (scoreA !== scoreB) {
+            return scoreA - scoreB;
+          }
+
+          // 2. ถ้าสถานะเดียวกัน ให้เรียงตามชื่อวง
+          if (a.shareName !== b.shareName) {
             return a.shareName.localeCompare(b.shareName);
+          }
+
+          // 3. ถ้าชื่อวงเดียวกัน ให้เรียงตามมือที่
           return a.handNumber - b.handNumber;
         });
 
@@ -120,7 +138,7 @@ export default function CustomerSharesProfilePage() {
   }
 
   // ==========================================
-  // 🧮 คำนวณสรุปยอด (เฉพาะวงที่กำลังดำเนินการ) ลอจิกใหม่ 100%
+  // 🧮 คำนวณสรุปยอด (เฉพาะวงที่กำลังดำเนินการ)
   // ==========================================
   const activeHands = hands.filter((h) => h.shareDetails.status === "active");
   const completedHands = hands.filter(
@@ -136,7 +154,6 @@ export default function CustomerSharesProfilePage() {
     const isAlive = h.status === "alive";
     const isClosed = h.status === "closed";
 
-    // คำนวณยอดจ่ายจริงจากรอยติ๊ก ป้องกันตัวเลขเพี้ยน
     const realTotalPaid =
       (h.paidPeriods?.length || 0) * shareData.installmentAmount;
 
@@ -145,7 +162,6 @@ export default function CustomerSharesProfilePage() {
     if (isAlive) {
       totalAliveSaved += realTotalPaid;
     } else if (h.status === "dead" && !isTao) {
-      // 🌟 หนี้ = (ยอดเก็บรวมทั้งหมดของวง) - (หักค้ำ 3 งวด) - (ยอดที่ส่งมาแล้ว)
       const totalCollected = shareData.installmentAmount * shareData.totalHands;
       const standardGuaranteeDeduction = shareData.installmentAmount * 3;
       const totalObligation = totalCollected - standardGuaranteeDeduction;
@@ -156,7 +172,6 @@ export default function CustomerSharesProfilePage() {
     }
   });
 
-  // ยอดสุทธิ = เงินออม - หนี้
   const netBalance = totalAliveSaved - totalDeadDebt;
 
   return (
@@ -199,7 +214,7 @@ export default function CustomerSharesProfilePage() {
                 รายละเอียดวงแชร์ที่กำลังเดิน
               </h2>
               <p className="text-xs font-medium text-gray-500 mt-0.5">
-                แสดงสถานะและยอดเงินของแต่ละมือ (อัปเดตลอจิกใหม่)
+                แสดงสถานะและยอดเงิน แยกตามกลุ่ม (มือเป็น, มือตาย, ปิดแล้ว)
               </p>
             </div>
           </div>
@@ -240,13 +255,13 @@ export default function CustomerSharesProfilePage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {activeHands.map((hand) => {
+                {activeHands.map((hand, index, array) => {
                   const shareData = hand.shareDetails;
                   const isAlive = hand.status === "alive";
                   const isClosed = hand.status === "closed";
+                  const isDead = hand.status === "dead";
                   const isTao = hand.handNumber === 1;
 
-                  // ลอจิกตัวเลข 100% ตรงกับบอร์ดควบคุม
                   const realTotalPaid =
                     (hand.paidPeriods?.length || 0) *
                     shareData.installmentAmount;
@@ -263,103 +278,163 @@ export default function CustomerSharesProfilePage() {
                     ? realTotalPaid
                     : currentRemainingDebt;
 
+                  // ตรวจสอบว่าต้องโชว์ Header ของกลุ่มสถานะนี้ไหม (Group Separator)
+                  let showGroupHeader = false;
+                  let groupTitle = "";
+                  let groupColorClass = "";
+
+                  if (index === 0) {
+                    showGroupHeader = true;
+                    if (isAlive) {
+                      groupTitle = "กลุ่มมือเป็น (ออมเงิน)";
+                      groupColorClass = "text-blue-600 bg-blue-50/50";
+                    } else if (isDead) {
+                      groupTitle = "กลุ่มมือตาย (ผ่อนหนี้)";
+                      groupColorClass = "text-red-600 bg-red-50/50";
+                    } else {
+                      groupTitle = "ปิดบัญชีแล้ว";
+                      groupColorClass = "text-emerald-600 bg-emerald-50/50";
+                    }
+                  } else {
+                    const prevHand = array[index - 1];
+                    if (prevHand.status !== hand.status) {
+                      showGroupHeader = true;
+                      if (isAlive) {
+                        groupTitle = "กลุ่มมือเป็น (ออมเงิน)";
+                        groupColorClass = "text-blue-600 bg-blue-50/50";
+                      } else if (isDead) {
+                        groupTitle = "กลุ่มมือตาย (ผ่อนหนี้)";
+                        groupColorClass = "text-red-600 bg-red-50/50";
+                      } else {
+                        groupTitle = "ปิดบัญชีแล้ว";
+                        groupColorClass = "text-emerald-600 bg-emerald-50/50";
+                      }
+                    }
+                  }
+
                   return (
-                    <tr
-                      key={hand.id}
-                      className={`transition-colors ${
-                        isClosed
-                          ? "bg-emerald-50/50 opacity-80"
-                          : "hover:bg-blue-50/30 bg-white"
-                      }`}
-                    >
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <p
-                            className={`font-bold ${isClosed ? "text-emerald-900" : "text-gray-900"}`}
+                    <React.Fragment key={hand.id}>
+                      {/* 🌟 หัวข้อแยกกลุ่ม (Group Header) */}
+                      {showGroupHeader && (
+                        <tr>
+                          <td
+                            colSpan="7"
+                            className={`px-6 py-2 text-[10px] font-black uppercase tracking-widest border-y border-gray-100 ${groupColorClass}`}
                           >
-                            {hand.shareName}
+                            {groupTitle}
+                          </td>
+                        </tr>
+                      )}
+
+                      {/* ข้อมูลในตาราง */}
+                      <tr
+                        className={`transition-colors ${
+                          isClosed
+                            ? "bg-gray-50/50 opacity-80"
+                            : "hover:bg-gray-50 bg-white"
+                        }`}
+                      >
+                        <td
+                          className="px-6 py-4 border-l-4"
+                          style={{
+                            borderColor: isAlive
+                              ? "#3b82f6"
+                              : isDead
+                                ? "#ef4444"
+                                : "#10b981",
+                          }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <p
+                              className={`font-bold ${isClosed ? "text-gray-500 line-through decoration-gray-300" : "text-gray-900"}`}
+                            >
+                              {hand.shareName}
+                            </p>
+                            {isClosed && (
+                              <span className="text-[10px] font-black uppercase bg-emerald-500 text-white px-2 py-0.5 rounded shadow-sm flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3" /> โปะจบ
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] font-semibold text-gray-500 mt-0.5">
+                            กองกลาง: ฿{shareData.poolAmount.toLocaleString()} |
+                            งวด: {shareData.currentPeriod}/
+                            {shareData.totalHands}
                           </p>
-                          {isClosed && (
-                            <span className="text-[10px] font-black uppercase bg-emerald-500 text-white px-2 py-0.5 rounded shadow-sm flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> โปะจบ
+                        </td>
+
+                        <td className="px-6 py-4 text-center font-bold text-gray-600">
+                          {hand.handNumber}
+                        </td>
+
+                        <td className="px-6 py-4 text-center">
+                          {isClosed ? (
+                            <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-widest bg-emerald-100 text-emerald-800 border border-emerald-200">
+                              ปิดบัญชีแล้ว
+                            </span>
+                          ) : isAlive ? (
+                            <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-widest bg-blue-50 text-blue-700 border border-blue-200">
+                              มือเป็น
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-widest bg-red-50 text-red-700 border border-red-200">
+                              มือตาย
                             </span>
                           )}
-                        </div>
-                        <p className="text-[11px] font-semibold text-gray-500 mt-0.5">
-                          กองกลาง: ฿{shareData.poolAmount.toLocaleString()} |
-                          งวด: {shareData.currentPeriod}/{shareData.totalHands}
-                        </p>
-                      </td>
+                        </td>
 
-                      <td className="px-6 py-4 text-center font-bold text-gray-600">
-                        {hand.handNumber}
-                      </td>
+                        <td className="px-6 py-4 text-right font-semibold text-gray-700">
+                          {!isTao && !isClosed
+                            ? `฿${shareData.installmentAmount.toLocaleString()}`
+                            : "-"}
+                        </td>
 
-                      <td className="px-6 py-4 text-center">
-                        {isClosed ? (
-                          <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-widest bg-emerald-100 text-emerald-800 border border-emerald-200">
-                            ปิดบัญชีแล้ว
-                          </span>
-                        ) : isAlive ? (
-                          <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-widest bg-blue-50 text-blue-700 border border-blue-200">
-                            มือเป็น
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-widest bg-red-50 text-red-700 border border-red-200">
-                            มือตาย
-                          </span>
-                        )}
-                      </td>
+                        <td className="px-6 py-4 text-right font-bold text-gray-500">
+                          {isClosed
+                            ? "เคลียร์แล้ว"
+                            : `฿${realTotalPaid.toLocaleString()}`}
+                        </td>
 
-                      <td className="px-6 py-4 text-right font-semibold text-gray-700">
-                        {!isTao && !isClosed
-                          ? `฿${shareData.installmentAmount.toLocaleString()}`
-                          : "-"}
-                      </td>
-
-                      <td className="px-6 py-4 text-right font-bold text-gray-500">
-                        {isClosed
-                          ? "เคลียร์แล้ว"
-                          : `฿${realTotalPaid.toLocaleString()}`}
-                      </td>
-
-                      <td className="px-6 py-4 text-right bg-gray-50/30">
-                        {isClosed ? (
-                          <span className="text-emerald-500 font-bold">-</span>
-                        ) : isTao ? (
-                          <span className="text-gray-400 font-bold">
-                            ไม่มีหนี้
-                          </span>
-                        ) : isAlive ? (
-                          <div className="flex flex-col items-end">
-                            <span className="font-black text-blue-600 text-base">
-                              + ฿{displayAmount.toLocaleString()}
+                        <td className="px-6 py-4 text-right bg-gray-50/30">
+                          {isClosed ? (
+                            <span className="text-emerald-500 font-bold">
+                              -
                             </span>
-                            <span className="text-[10px] text-gray-500 font-bold">
-                              ยอดออมสะสม
+                          ) : isTao ? (
+                            <span className="text-gray-400 font-bold">
+                              ไม่มีหนี้
                             </span>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-end">
-                            <span className="font-black text-red-600 text-base">
-                              - ฿{displayAmount.toLocaleString()}
-                            </span>
-                            <span className="text-[10px] text-gray-500 font-bold">
-                              หนี้คงเหลือ
-                            </span>
-                          </div>
-                        )}
-                      </td>
+                          ) : isAlive ? (
+                            <div className="flex flex-col items-end">
+                              <span className="font-black text-blue-600 text-base">
+                                + ฿{displayAmount.toLocaleString()}
+                              </span>
+                              <span className="text-[10px] text-gray-500 font-bold">
+                                ยอดออมสะสม
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-end">
+                              <span className="font-black text-red-600 text-base">
+                                - ฿{displayAmount.toLocaleString()}
+                              </span>
+                              <span className="text-[10px] text-gray-500 font-bold">
+                                หนี้คงเหลือ
+                              </span>
+                            </div>
+                          )}
+                        </td>
 
-                      <td className="px-6 py-4 text-center">
-                        <Link
-                          href={`/shares/${hand.shareId}`}
-                          className="inline-flex items-center justify-center w-full px-3 py-2 bg-white border border-gray-200 hover:border-blue-400  hover:text-blue-600 rounded-lg text-xs font-bold transition-all shadow-sm"
-                        >
-                          ไปที่วง
-                        </Link>
-                      </td>
-                    </tr>
+                        <td className="px-6 py-4 text-center">
+                          <Link
+                            href={`/shares/${hand.shareId}`}
+                            className="inline-flex items-center justify-center w-full px-3 py-2 bg-white border border-gray-200 hover:border-blue-400  hover:text-blue-600 rounded-lg text-xs font-bold transition-all shadow-sm"
+                          >
+                            ไปที่วง
+                          </Link>
+                        </td>
+                      </tr>
+                    </React.Fragment>
                   );
                 })}
               </tbody>
