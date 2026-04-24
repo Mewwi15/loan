@@ -40,6 +40,8 @@ import {
   Target,
   Archive,
   Award,
+  Package,
+  RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -198,7 +200,8 @@ export default function CustomerDetailPage({ params }) {
   const [isProcessingAction, setIsProcessingAction] = useState(false);
 
   const [customerStats, setCustomerStats] = useState({
-    expectedProfit: 0,
+    expectedProfitNormal: 0,
+    expectedProfitPD: 0,
     profit2025: 0,
     activeSharesCount: 0,
     netShareBalance: 0,
@@ -238,6 +241,7 @@ export default function CustomerDetailPage({ params }) {
     startDate: new Date().toISOString().split("T")[0],
     frequency: 1,
     type: "day",
+    category: "normal",
   });
 
   const fetchData = useCallback(async () => {
@@ -308,11 +312,16 @@ export default function CustomerDetailPage({ params }) {
 
         setLoans(loanList);
 
-        let totalExpectedProfit = 0;
+        let profitNormal = 0;
+        let profitPD = 0;
         loanList
           .filter((l) => l.status !== "closed")
           .forEach((loan) => {
-            totalExpectedProfit += loan.totalProfit || 0;
+            if (loan.category === "PD") {
+              profitPD += loan.totalProfit || 0;
+            } else {
+              profitNormal += loan.totalProfit || 0;
+            }
           });
 
         const sharesQ = query(
@@ -374,7 +383,8 @@ export default function CustomerDetailPage({ params }) {
 
         setCustomerShares(enrichedHands);
         setCustomerStats({
-          expectedProfit: totalExpectedProfit,
+          expectedProfitNormal: profitNormal,
+          expectedProfitPD: profitPD,
           profit2025: customerData.manualProfit2025 || 0,
           activeSharesCount: enrichedHands.length,
           netShareBalance: netBalance,
@@ -399,15 +409,25 @@ export default function CustomerDetailPage({ params }) {
         where("status", "==", "active"),
       );
       const snap = await getDocs(q);
+
       let count = 0;
-      let debt = 0;
+      let debtNormal = 0;
+      let debtPD = 0;
+
       snap.forEach((d) => {
+        const loanData = d.data();
         count++;
-        debt += d.data().remainingBalance || 0;
+        if (loanData.category === "PD") {
+          debtPD += loanData.remainingBalance || 0;
+        } else {
+          debtNormal += loanData.remainingBalance || 0;
+        }
       });
+
       await updateDoc(doc(db, "customers", customerId), {
         activeLoans: count,
-        totalDebt: debt,
+        totalDebt: debtNormal,
+        totalDebtPD: debtPD,
       });
     } catch (error) {
       console.error("Error syncing customer data:", error);
@@ -425,6 +445,42 @@ export default function CustomerDetailPage({ params }) {
     } catch (error) {
       console.error("Error saving profit 2025:", error);
       alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
+    }
+  };
+
+  // 🌟 ฟังก์ชัน สลับประเภทวงโดยตรงบนการ์ด (Toggle Category)
+  const handleToggleCategory = async (loan) => {
+    const newCategory = loan.category === "PD" ? "normal" : "PD";
+    const confirmMsg = `ยืนยันเปลี่ยนวง ${loan.loanNumber || ""} ให้เป็น "${newCategory === "PD" ? "ผ่อนของ (PD)" : "กู้ปกติ"}" ใช่หรือไม่?`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsProcessingAction(true);
+    try {
+      const batch = writeBatch(db);
+
+      // 1. อัปเดตในตาราง loans
+      const loanRef = doc(db, "loans", loan.id);
+      batch.update(loanRef, { category: newCategory });
+
+      // 2. อัปเดตในตาราง schedules (ค่างวดทั้งหมด)
+      const schedulesQ = query(
+        collection(db, "schedules"),
+        where("loanId", "==", loan.id),
+      );
+      const schedulesSnap = await getDocs(schedulesQ);
+      schedulesSnap.forEach((d) => {
+        batch.update(d.ref, { category: newCategory });
+      });
+
+      await batch.commit();
+      await syncCustomerData(); // ซิงค์ยอดหนี้รวมลูกค้า
+      fetchData(); // โหลด UI ใหม่
+    } catch (error) {
+      console.error("Error toggling category:", error);
+      alert("เกิดข้อผิดพลาดในการเปลี่ยนประเภท");
+    } finally {
+      setIsProcessingAction(false);
     }
   };
 
@@ -457,6 +513,7 @@ export default function CustomerDetailPage({ params }) {
       startDate: loan.startDate || new Date().toISOString().split("T")[0],
       frequency: loan.frequency || 1,
       type: loan.frequencyType || "day",
+      category: loan.category || "normal",
     });
     setIsCustomFreq(
       ![1, 5, 7].includes(loan.frequency) && loan.frequencyType === "day",
@@ -476,14 +533,12 @@ export default function CustomerDetailPage({ params }) {
     setFormData((prev) => ({ ...prev, frequency: val, type: type }));
   };
 
-  // 🌟 ฟังก์ชันฮีโร่ใหม่! อัปเดตสัญญาแบบ "จำงวดที่เคยจ่ายแล้ว"
   const handleUpdateContract = async () => {
     setIsSavingContract(true);
     const batch = writeBatch(db);
     try {
       const loanRef = doc(db, "loans", formData.loanId);
 
-      // 1. กวาดข้อมูลตารางค่างวด "เดิม" มาดูก่อนว่างวดไหนจ่ายแล้วบ้าง
       const oldSchedulesQ = query(
         collection(db, "schedules"),
         where("loanId", "==", formData.loanId),
@@ -494,15 +549,14 @@ export default function CustomerDetailPage({ params }) {
       oldSchedulesSnap.forEach((d) => {
         const data = d.data();
         if (data.status === "paid") {
-          paidHistory[data.installmentNo] = data; // 🌟 จำประวัติเอาไว้
+          paidHistory[data.installmentNo] = data;
         }
-        batch.delete(d.ref); // ลบของเก่าทิ้งเพื่อเตรียมจัดตารางใหม่
+        batch.delete(d.ref);
       });
 
       let newRemainingBalance = actualTotalToCollect;
       let newCurrentInstallment = 0;
 
-      // 2. วนลูปสร้างตารางค่างวด "ใหม่" พร้อมคืนค่าสถานะให้
       for (let i = 0; i < count; i++) {
         let dueDate = new Date(formData.startDate);
         if (formData.type === "day") {
@@ -515,9 +569,8 @@ export default function CustomerDetailPage({ params }) {
 
         const installmentNo = i + 1;
         const oldPaidData = paidHistory[installmentNo];
-        const isPaid = !!oldPaidData; // เช็คว่าเคยจ่ายไปแล้วใช่ไหม?
+        const isPaid = !!oldPaidData;
 
-        // ถ้างวดนี้เคยจ่ายแล้ว ให้หักยอดเงินคงเหลือลงอัตโนมัติ
         if (isPaid) {
           newRemainingBalance -= installmentAmount;
           newCurrentInstallment++;
@@ -534,13 +587,13 @@ export default function CustomerDetailPage({ params }) {
           dueDate: dueDate.toISOString().split("T")[0],
           amount: installmentAmount,
           profitShare: profitPerInstallment,
-          status: isPaid ? "paid" : "pending", // 🌟 ถ้างวดเดิมเคยจ่าย ให้เซ็ตเป็น paid คืนทันที
+          status: isPaid ? "paid" : "pending",
           paidAt: oldPaidData ? oldPaidData.paidAt : null,
           paymentDate: oldPaidData ? oldPaidData.paymentDate || null : null,
+          category: formData.category,
         });
       }
 
-      // 3. อัปเดตข้อมูลวงกู้หลัก (หักลบยอดตามที่จ่ายแล้วให้เป๊ะ)
       batch.update(loanRef, {
         loanName: formData.loanName,
         loanNumber: formData.loanNumber,
@@ -551,23 +604,22 @@ export default function CustomerDetailPage({ params }) {
         principal: principal,
         interestRate: percent,
         totalAmount: actualTotalToCollect,
-        remainingBalance: Math.max(0, newRemainingBalance), // 🌟 ยอดหนี้อัปเดตใหม่
+        remainingBalance: Math.max(0, newRemainingBalance),
         totalInstallments: count,
-        currentInstallment: newCurrentInstallment, // 🌟 จำนวนงวดที่จ่ายแล้ว
+        currentInstallment: newCurrentInstallment,
         installmentAmount: installmentAmount,
         totalProfit: totalProfit,
         profitPerInstallment: profitPerInstallment,
         startDate: formData.startDate,
         frequency: formData.frequency,
         frequencyType: formData.type,
+        category: formData.category,
       });
 
       await batch.commit();
-      await syncCustomerData(); // ซิงค์ยอดสรุปลูกค้าใหม่ให้ตรงกับความจริง
+      await syncCustomerData();
 
-      alert(
-        "✅ อัปเดตสัญญาสำเร็จ! (ระบบทำการติ๊กงวดที่เคยจ่ายไว้ให้เหมือนเดิมเรียบร้อยแล้ว)",
-      );
+      alert("✅ อัปเดตสัญญาสำเร็จ! ประเภทและยอดหนี้ถูกแยกคำนวณเรียบร้อยแล้ว");
       setEditContractModalOpen(false);
       fetchData();
     } catch (error) {
@@ -657,6 +709,7 @@ export default function CustomerDetailPage({ params }) {
           paymentDate: payoffDate,
           createdAt: serverTimestamp(),
           note: "ปิดวงล่วงหน้า (โปะยอด)",
+          category: payoffLoan.category || "normal",
         });
       }
       await batch.commit();
@@ -711,6 +764,8 @@ export default function CustomerDetailPage({ params }) {
     return <div className="p-20 text-center font-black">ไม่พบข้อมูลลูกค้า</div>;
 
   const activeLoans = loans.filter((l) => l.status !== "closed");
+  const normalLoans = activeLoans.filter((l) => l.category !== "PD");
+  const pdLoans = activeLoans.filter((l) => l.category === "PD");
 
   const CUTOFF_DATE = "2026-04-23";
   const closedLoans = loans.filter((l) => {
@@ -844,25 +899,30 @@ export default function CustomerDetailPage({ params }) {
       {/* ======================================================== */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-3 sm:gap-4 mb-5 sm:mb-6">
         <div className="flex items-center gap-2.5 sm:gap-3">
-          <div className="p-2 sm:p-3 bg-orange-50 rounded-xl sm:rounded-2xl">
+          <div className="p-2 sm:p-3 bg-orange-50 rounded-xl sm:rounded-2xl flex flex-col">
             <Wallet className="w-5 h-5 sm:w-6 sm:h-6 text-orange-500" />
           </div>
           <div>
             <h2 className="text-lg sm:text-xl font-black text-gray-800">
               วงกู้ที่กำลังดำเนินการ
             </h2>
-            <p className="text-[9px] sm:text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-              กำลังเดินอยู่ {activeLoans.length} วง
-            </p>
+            <div className="flex gap-2 mt-0.5">
+              <p className="text-[9px] sm:text-[10px] font-bold text-blue-500 uppercase tracking-widest">
+                กู้ปกติ: {normalLoans.length} วง
+              </p>
+              <p className="text-[9px] sm:text-[10px] font-bold text-rose-500 uppercase tracking-widest border-l border-gray-200 pl-2">
+                PD: {pdLoans.length} วง
+              </p>
+            </div>
           </div>
         </div>
 
         <div className="bg-blue-50 px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl border border-blue-100 shadow-sm w-full md:w-auto">
           <p className="text-[9px] sm:text-[10px] font-black uppercase text-blue-500 tracking-widest mb-0.5 flex items-center gap-1">
-            <Target className="w-3 h-3 text-blue-500" /> กำไรคาดหวัง (วงเดิน)
+            <Target className="w-3 h-3 text-blue-500" /> กำไรคาดหวัง (กู้ปกติ)
           </p>
           <p className="text-lg sm:text-xl font-black text-blue-600">
-            ฿{customerStats.expectedProfit.toLocaleString()}
+            ฿{customerStats.expectedProfitNormal.toLocaleString()}
           </p>
         </div>
       </div>
@@ -870,46 +930,84 @@ export default function CustomerDetailPage({ params }) {
       {activeLoans.length > 0 ? (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 sm:gap-8 mb-10 sm:mb-12">
           {activeLoans.map((loan, index) => {
+            const isPD = loan.category === "PD";
             return (
               <div
                 key={loan.id}
-                className="bg-white rounded-[1.5rem] sm:rounded-[2rem] border border-gray-100 shadow-sm hover:shadow-md sm:hover:shadow-xl transition-all duration-300 relative overflow-hidden flex flex-col"
+                className={`bg-white rounded-[1.5rem] sm:rounded-[2rem] border shadow-sm hover:shadow-md sm:hover:shadow-xl transition-all duration-300 relative overflow-hidden flex flex-col ${isPD ? "border-rose-100" : "border-gray-100"}`}
               >
                 <div
-                  className={`absolute top-0 left-0 w-full h-1 sm:h-1.5 ${loan.remainingBalance === 0 ? "bg-green-500" : "bg-orange-500"}`}
+                  className={`absolute top-0 left-0 w-full h-1 sm:h-1.5 ${
+                    loan.remainingBalance === 0
+                      ? "bg-green-500"
+                      : isPD
+                        ? "bg-rose-500"
+                        : "bg-orange-500"
+                  }`}
                 ></div>
 
                 <div className="p-4 sm:p-6 border-b border-gray-50 flex justify-between items-start gap-2 mt-1 sm:mt-0">
-                  <div className="flex items-start gap-3 sm:gap-4">
+                  <div className="flex items-start gap-3 sm:gap-4 w-full">
                     <div
-                      className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center font-black text-lg sm:text-xl shrink-0 shadow-sm"
-                      style={{
-                        backgroundColor: `${loan.bankColor || "#cbd5e1"}15`,
-                        color: loan.bankColor || "#9ca3af",
-                      }}
+                      className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center font-black text-lg sm:text-xl shrink-0 shadow-sm ${isPD ? "bg-rose-100 text-rose-600 border border-rose-200" : ""}`}
+                      style={
+                        !isPD
+                          ? {
+                              backgroundColor: `${loan.bankColor || "#cbd5e1"}15`,
+                              color: loan.bankColor || "#9ca3af",
+                            }
+                          : {}
+                      }
                     >
-                      {loan.loanNumber || index + 1}
+                      {isPD ? (
+                        <Package className="w-5 h-5 sm:w-6 sm:h-6" />
+                      ) : (
+                        loan.loanNumber || index + 1
+                      )}
                     </div>
-                    <div>
-                      <h3 className="text-lg sm:text-xl font-black text-gray-800 tracking-tight flex items-center gap-1 sm:gap-2">
-                        วง {loan.loanNumber || index + 1}
-                      </h3>
-                      <p className="text-[10px] sm:text-[12px] font-black text-gray-500 uppercase tracking-widest mt-0.5">
+                    <div className="flex-1">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-1">
+                        <h3 className="text-lg sm:text-xl font-black text-gray-800 tracking-tight">
+                          วง {loan.loanNumber || index + 1}
+                        </h3>
+                        {/* 🌟 ปุ่มสลับประเภท (คลิกได้เลย) */}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleCategory(loan)}
+                          disabled={isProcessingAction}
+                          className={`text-[9px] sm:text-[10px] font-black uppercase px-2 py-0.5 rounded-md shadow-sm border transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1 cursor-pointer w-max ${
+                            isPD
+                              ? "bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100"
+                              : "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100"
+                          }`}
+                          title="คลิกเพื่อเปลี่ยนประเภท"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          {isPD ? "ผ่อนของ (PD)" : "กู้ปกติ"}
+                        </button>
+                      </div>
+                      <p className="text-[10px] sm:text-[12px] font-black text-gray-500 uppercase tracking-widest">
                         {loan.loanName || loan.customerName}
                       </p>
                     </div>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-[8px] sm:text-[10px] font-black uppercase text-gray-400 tracking-widest mb-0.5 sm:mb-1">
+                    <p
+                      className={`text-[8px] sm:text-[10px] font-black uppercase tracking-widest mb-0.5 sm:mb-1 ${isPD ? "text-rose-400" : "text-gray-400"}`}
+                    >
                       ยอดส่ง/งวด
                     </p>
-                    <p className="text-lg sm:text-2xl font-black text-orange-500 leading-none">
+                    <p
+                      className={`text-lg sm:text-2xl font-black leading-none ${isPD ? "text-rose-500" : "text-orange-500"}`}
+                    >
                       ฿{loan.installmentAmount.toLocaleString()}
                     </p>
                   </div>
                 </div>
 
-                <div className="px-4 py-3 sm:p-6 bg-gray-50/30 grid grid-cols-2 gap-4 sm:gap-6">
+                <div
+                  className={`px-4 py-3 sm:p-6 grid grid-cols-2 gap-4 sm:gap-6 ${isPD ? "bg-rose-50/30" : "bg-gray-50/30"}`}
+                >
                   <div>
                     <p className="text-[9px] sm:text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 flex items-center gap-1.5">
                       <Clock className="w-3 h-3" /> รูปแบบ
@@ -925,15 +1023,21 @@ export default function CustomerDetailPage({ params }) {
                     <p className="text-[9px] sm:text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 flex items-center gap-1.5">
                       <Calendar className="w-3 h-3" /> ยอดคงเหลือ
                     </p>
-                    <p className="text-sm sm:text-base font-black text-gray-700">
+                    <p
+                      className={`text-sm sm:text-base font-black ${isPD ? "text-rose-600" : "text-gray-700"}`}
+                    >
                       ฿{loan.remainingBalance.toLocaleString()}
                     </p>
                   </div>
                 </div>
 
-                <div className="mx-4 sm:mx-6 mb-4 p-3 sm:p-4 bg-blue-50/50 rounded-xl sm:rounded-2xl border border-blue-100 flex justify-between items-center">
+                <div
+                  className={`mx-4 sm:mx-6 mb-4 p-3 sm:p-4 rounded-xl sm:rounded-2xl border flex justify-between items-center ${isPD ? "bg-rose-50/50 border-rose-100" : "bg-blue-50/50 border-blue-100"}`}
+                >
                   <div>
-                    <p className="text-[9px] sm:text-[10px] font-black text-blue-500 uppercase tracking-widest mb-0.5">
+                    <p
+                      className={`text-[9px] sm:text-[10px] font-black uppercase tracking-widest mb-0.5 ${isPD ? "text-rose-500" : "text-blue-500"}`}
+                    >
                       วันที่ปล่อย
                     </p>
                     <p className="text-[10px] sm:text-sm font-bold text-gray-700">
@@ -945,7 +1049,9 @@ export default function CustomerDetailPage({ params }) {
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-[9px] sm:text-[10px] font-black text-blue-500 uppercase tracking-widest mb-0.5">
+                    <p
+                      className={`text-[9px] sm:text-[10px] font-black uppercase tracking-widest mb-0.5 ${isPD ? "text-rose-500" : "text-blue-500"}`}
+                    >
                       ปล่อยกู้ (เงินต้น)
                     </p>
                     <p className="text-xs sm:text-sm font-black text-gray-800">
@@ -959,7 +1065,7 @@ export default function CustomerDetailPage({ params }) {
                     <button
                       onClick={() => handleCloseLoan(loan.id)}
                       disabled={isProcessingAction}
-                      className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-red-500 hover:text-red-600 bg-red-50 hover:bg-red-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1 disabled:opacity-50"
+                      className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-red-500 hover:text-red-600 bg-red-50 hover:bg-red-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1 disabled:opacity-50 cursor-pointer"
                       title="ลบวงกู้"
                     >
                       <PowerOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
@@ -967,7 +1073,7 @@ export default function CustomerDetailPage({ params }) {
                     </button>
                     <button
                       onClick={() => openEditContract(loan)}
-                      className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600 bg-blue-50 hover:bg-blue-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1"
+                      className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600 bg-blue-50 hover:bg-blue-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1 cursor-pointer"
                     >
                       <Edit className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                       <span className="hidden min-[400px]:inline">แก้</span>
@@ -978,7 +1084,7 @@ export default function CustomerDetailPage({ params }) {
                         setPayoffDate(new Date().toISOString().split("T")[0]);
                         setEarlyPayoffModalOpen(true);
                       }}
-                      className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1"
+                      className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1 cursor-pointer"
                       title="โปะยอดที่เหลือ"
                     >
                       <Coins className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
@@ -987,7 +1093,7 @@ export default function CustomerDetailPage({ params }) {
                   </div>
                   <button
                     onClick={() => openSchedule(loan)}
-                    className="bg-gray-900 hover:bg-black text-white px-3 py-1.5 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all shadow-md flex items-center gap-1 sm:gap-1.5"
+                    className="bg-gray-900 hover:bg-black text-white px-3 py-1.5 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all shadow-md flex items-center gap-1 sm:gap-1.5 cursor-pointer"
                   >
                     <FileText className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> ตาราง
                     <ChevronRight className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
@@ -1005,352 +1111,9 @@ export default function CustomerDetailPage({ params }) {
         </div>
       )}
 
-      <div className="w-full h-px bg-gray-100 mb-8 sm:mb-12"></div>
-
-      {/* ======================================================== */}
-      {/* 🤝 โซนที่ 3: รายการวงแชร์ที่กำลังดำเนินการ (Bottom Section) */}
-      {/* ======================================================== */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-3 sm:gap-4 mb-5 sm:mb-6">
-        <div className="flex items-center gap-2.5 sm:gap-3">
-          <div className="p-2 sm:p-3 bg-orange-50 rounded-xl sm:rounded-2xl">
-            <HandCoins className="w-5 h-5 sm:w-6 sm:h-6 text-orange-500" />
-          </div>
-          <div>
-            <h2 className="text-lg sm:text-xl font-black text-gray-800">
-              วงแชร์ที่กำลังดำเนินการ
-            </h2>
-            <p className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">
-              กำลังเล่นอยู่ {customerShares.length} มือ
-            </p>
-          </div>
-        </div>
-
-        <div
-          className={`px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl border shadow-sm w-full md:w-auto ${
-            customerStats.netShareBalance > 0
-              ? "bg-green-50 border-green-200"
-              : customerStats.netShareBalance < 0
-                ? "bg-red-50 border-red-200"
-                : "bg-white border-gray-100"
-          }`}
-        >
-          <div className="flex justify-between items-center gap-4 sm:gap-6">
-            <p
-              className={`text-[9px] sm:text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${
-                customerStats.netShareBalance > 0
-                  ? "text-green-700"
-                  : customerStats.netShareBalance < 0
-                    ? "text-red-700"
-                    : "text-gray-400"
-              }`}
-            >
-              <Calculator className="w-3 h-3" /> สถานะสุทธิแชร์
-              {customerStats.netShareBalance !== 0 && (
-                <span
-                  className={`ml-1.5 sm:ml-2 text-[8px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded-md ${
-                    customerStats.netShareBalance > 0
-                      ? "bg-green-200 text-green-800"
-                      : "bg-red-200 text-red-800"
-                  }`}
-                >
-                  {customerStats.netShareBalance > 0
-                    ? "เราติดเงิน"
-                    : "หนี้ลูกค้า"}
-                </span>
-              )}
-            </p>
-            <p
-              className={`text-lg sm:text-xl font-black ${
-                customerStats.netShareBalance > 0
-                  ? "text-green-700"
-                  : customerStats.netShareBalance < 0
-                    ? "text-red-700"
-                    : "text-gray-800"
-              }`}
-            >
-              {customerStats.netShareBalance > 0 ? "+" : ""} ฿
-              {customerStats.netShareBalance.toLocaleString()}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {customerShares.length > 0 ? (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 sm:gap-8">
-          {customerShares.map((hand) => {
-            const shareData = hand.shareDetails;
-            const isAlive = hand.status === "alive";
-            const displayAmount = isAlive
-              ? hand.totalPaid
-              : shareData.poolAmount - hand.totalPaid;
-
-            return (
-              <div
-                key={hand.id}
-                className="bg-white rounded-[1.5rem] sm:rounded-[2rem] border border-gray-100 shadow-sm hover:shadow-xl transition-all duration-300 relative overflow-hidden flex flex-col"
-              >
-                <div
-                  className={`absolute top-0 left-0 w-full h-1 sm:h-1.5 ${isAlive ? "bg-blue-500" : "bg-red-500"}`}
-                ></div>
-
-                <div className="p-4 sm:p-6 border-b border-gray-50 flex justify-between items-start gap-2">
-                  <div className="flex items-start gap-3 sm:gap-4">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center font-black text-lg sm:text-xl shrink-0 shadow-sm bg-orange-50 text-orange-500 border border-orange-100">
-                      {hand.handNumber}
-                    </div>
-                    <div>
-                      <h3 className="text-lg sm:text-xl font-black text-gray-800 tracking-tight flex items-center gap-2">
-                        มือที่ {hand.handNumber}
-                      </h3>
-                      <p className="text-[10px] sm:text-[12px] font-black text-gray-500 uppercase tracking-widest mt-0.5">
-                        {hand.shareName}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-[8px] sm:text-[10px] font-black uppercase text-gray-400 tracking-widest mb-0.5 sm:mb-1">
-                      ยอดส่ง/งวด
-                    </p>
-                    <p className="text-lg sm:text-2xl font-black text-orange-500">
-                      ฿{(shareData.installmentAmount || 0).toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="p-4 sm:p-6 bg-gray-50/30 grid grid-cols-2 gap-4 sm:gap-6">
-                  <div>
-                    <p className="text-[9px] sm:text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 flex items-center gap-1.5">
-                      <Clock className="w-3 h-3" /> รูปแบบแชร์
-                    </p>
-                    <p className="text-sm sm:text-base font-black text-gray-700">
-                      {shareData.totalHands} มือ •{" "}
-                      {shareData.frequencyType === "day"
-                        ? `ราย ${shareData.frequency} วัน`
-                        : "รายเดือน"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[9px] sm:text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 flex items-center gap-1.5">
-                      <User className="w-3 h-3" /> สถานะมือ
-                    </p>
-                    <p
-                      className={`text-sm sm:text-base font-black ${isAlive ? "text-blue-600" : "text-red-600"}`}
-                    >
-                      {isAlive ? "มือเป็น (รอรับ)" : "มือตาย (เปียแล้ว)"}
-                    </p>
-                  </div>
-                </div>
-
-                <div
-                  className={`mx-4 sm:mx-6 mb-4 p-3 sm:p-4 rounded-xl sm:rounded-2xl border flex justify-between items-center ${isAlive ? "bg-blue-50/50 border-blue-100" : "bg-red-50/50 border-red-100"}`}
-                >
-                  <div>
-                    <p
-                      className={`text-[9px] sm:text-[10px] font-black uppercase tracking-widest mb-0.5 ${isAlive ? "text-blue-500" : "text-red-500"}`}
-                    >
-                      {isAlive ? "ยอดออมสะสม" : "ยอดหนี้คงเหลือ"}
-                    </p>
-                    <p className="text-[10px] sm:text-sm font-bold text-gray-700">
-                      ฿{(displayAmount || 0).toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p
-                      className={`text-[9px] sm:text-[10px] font-black uppercase tracking-widest mb-0.5 ${isAlive ? "text-blue-500" : "text-red-500"}`}
-                    >
-                      กองกลาง (บิตแรก)
-                    </p>
-                    <p className="text-xs sm:text-sm font-black text-gray-800">
-                      ฿{(shareData.poolAmount || 0).toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="p-3 sm:p-5 bg-white border-t border-gray-50 flex justify-end">
-                  <Link
-                    href={`/shares/${hand.shareId}`}
-                    className="bg-gray-900 hover:bg-black text-white px-4 py-2 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all shadow-md flex items-center gap-1.5"
-                  >
-                    <HandCoins className="w-3 h-3 sm:w-4 sm:h-4" />{" "}
-                    ไปที่หน้าแชร์{" "}
-                    <ChevronRight className="w-3 h-3 sm:w-4 sm:h-4" />
-                  </Link>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="py-16 text-center text-gray-400 bg-gray-50/50 rounded-[1.5rem] sm:rounded-[2rem] border-2 border-dashed border-gray-100">
-          <p className="font-black text-xs sm:text-sm uppercase tracking-[0.2em]">
-            ไม่ได้ลงเล่นแชร์ในระบบ
-          </p>
-        </div>
-      )}
-
       {/* ======================================================== */}
       {/* 🌟🌟 MODALS ทั้งหมด 🌟🌟 */}
       {/* ======================================================== */}
-
-      {/* Modal: ประวัติวงกู้ที่ปิดแล้ว */}
-      {isClosedLoansModalOpen && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
-          <div
-            className="absolute inset-0 bg-gray-900/70 backdrop-blur-sm"
-            onClick={() => setIsClosedLoansModalOpen(false)}
-          ></div>
-          <div className="relative bg-white w-full max-w-2xl rounded-[1.5rem] sm:rounded-[2.5rem] shadow-2xl flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
-            <div className="p-5 sm:p-8 border-b border-gray-100 flex justify-between items-center bg-gray-50/80">
-              <div>
-                <h3 className="font-black text-gray-800 text-base sm:text-xl flex items-center gap-1.5 sm:gap-2">
-                  <Archive className="w-5 h-5 sm:w-6 sm:h-6 text-green-500" />{" "}
-                  ประวัติที่ปิดยอดแล้ว
-                </h3>
-                <p className="text-[8px] sm:text-[10px] font-bold text-green-600 uppercase mt-1 tracking-widest bg-green-100 px-1.5 sm:px-2 py-0.5 rounded-md inline-block">
-                  กำไรที่เก็บได้: ฿{closedLoansProfit.toLocaleString()}
-                </p>
-              </div>
-              <button
-                onClick={() => setIsClosedLoansModalOpen(false)}
-                className="p-2 text-gray-400 hover:bg-rose-50 hover:text-rose-500 rounded-xl transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="overflow-y-auto max-h-[60vh] bg-gray-50 p-4 sm:p-8">
-              {closedLoans.length > 0 ? (
-                <div className="space-y-3 sm:space-y-4">
-                  {closedLoans.map((loan) => (
-                    <div
-                      key={loan.id}
-                      className="bg-white border border-gray-200 p-4 sm:p-5 rounded-xl sm:rounded-[1.5rem] shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 hover:border-green-300 transition-colors"
-                    >
-                      <div className="flex items-center gap-3 sm:gap-4">
-                        <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg sm:rounded-2xl bg-green-50 text-green-600 flex items-center justify-center font-black text-lg sm:text-xl shrink-0">
-                          <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6" />
-                        </div>
-                        <div>
-                          <h4 className="font-black text-gray-800 text-sm sm:text-lg">
-                            วง {loan.loanNumber || "-"}
-                          </h4>
-                          <p className="text-[9px] sm:text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">
-                            {loan.loanName || loan.customerName}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="bg-gray-50 rounded-lg sm:rounded-xl p-2.5 sm:p-3 flex justify-between sm:justify-end gap-4 sm:gap-6 sm:text-right border border-gray-100">
-                        <div>
-                          <p className="text-[8px] sm:text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5 sm:mb-1">
-                            จัดเก็บ
-                          </p>
-                          <p className="font-black text-xs sm:text-base text-gray-700">
-                            ฿{(loan.totalAmount || 0).toLocaleString()}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-[8px] sm:text-[10px] font-black text-green-500 uppercase tracking-widest mb-0.5 sm:mb-1">
-                            กำไร
-                          </p>
-                          <p className="font-black text-xs sm:text-base text-green-600">
-                            ฿{(loan.totalProfit || 0).toLocaleString()}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-10 sm:py-16 text-gray-400">
-                  <Archive className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-2 sm:mb-3 text-gray-300" />
-                  <p className="font-black text-xs sm:text-sm uppercase tracking-widest">
-                    ยังไม่มีประวัติการปิดวง
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="p-4 sm:p-6 border-t border-gray-100 bg-white">
-              <button
-                onClick={() => setIsClosedLoansModalOpen(false)}
-                className="w-full py-3 sm:py-4 bg-gray-900 text-white rounded-xl sm:rounded-2xl font-black text-[10px] sm:text-xs uppercase tracking-widest hover:bg-black transition-colors"
-              >
-                ปิดหน้าต่าง
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal โปะปิดวง */}
-      {earlyPayoffModalOpen && payoffLoan && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
-          <div
-            className="absolute inset-0 bg-gray-900/70 backdrop-blur-sm"
-            onClick={() =>
-              !isProcessingPayoff && setEarlyPayoffModalOpen(false)
-            }
-          ></div>
-          <div className="relative bg-white w-full max-w-md rounded-[1.5rem] sm:rounded-[2rem] shadow-2xl flex flex-col animate-in zoom-in-95 duration-200 overflow-hidden">
-            <div className="p-5 sm:p-6 bg-emerald-50 border-b border-emerald-100 flex justify-between items-center">
-              <div>
-                <h3 className="font-black text-emerald-800 text-base sm:text-lg flex items-center gap-1.5 sm:gap-2">
-                  <Coins className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600" />{" "}
-                  โปะปิดวงล่วงหน้า
-                </h3>
-                <p className="text-[9px] sm:text-[10px] font-bold text-emerald-600 uppercase mt-1 tracking-widest">
-                  วงที่ {payoffLoan.loanNumber || "-"} • คงเหลือ ฿
-                  {payoffLoan.remainingBalance.toLocaleString()}
-                </p>
-              </div>
-              <button
-                onClick={() => setEarlyPayoffModalOpen(false)}
-                disabled={isProcessingPayoff}
-                className="p-2 text-emerald-600 hover:bg-emerald-100 rounded-xl transition-colors"
-              >
-                <X className="w-4 h-4 sm:w-5 sm:h-5" />
-              </button>
-            </div>
-            <div className="p-5 sm:p-6 space-y-4">
-              <div className="bg-gray-50 p-4 rounded-xl sm:rounded-2xl border border-gray-100">
-                <label className="text-[9px] sm:text-[10px] font-black uppercase text-gray-500 tracking-widest block mb-2">
-                  ระบุวันที่รับเงิน (เพื่อบันทึกกำไร)
-                </label>
-                <div className="flex items-center bg-white border border-gray-200 rounded-lg sm:rounded-xl px-3 py-2 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-50 transition-all">
-                  <Calendar className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-500 mr-2" />
-                  <input
-                    type="date"
-                    value={payoffDate}
-                    onChange={(e) => setPayoffDate(e.target.value)}
-                    className="w-full outline-none bg-transparent font-black text-sm sm:text-base text-gray-700 uppercase tracking-widest"
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="p-4 border-t border-gray-100 bg-gray-50 flex gap-2 sm:gap-3">
-              <button
-                onClick={() => setEarlyPayoffModalOpen(false)}
-                disabled={isProcessingPayoff}
-                className="flex-1 px-3 py-2.5 sm:px-4 sm:py-3 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm text-gray-500 bg-white border border-gray-200 hover:bg-gray-100"
-              >
-                ยกเลิก
-              </button>
-              <button
-                onClick={confirmEarlyPayoff}
-                disabled={isProcessingPayoff || !payoffDate}
-                className="flex-1 px-3 py-2.5 sm:px-4 sm:py-3 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm text-white bg-emerald-500 hover:bg-emerald-600 shadow-md flex items-center justify-center gap-1.5 sm:gap-2"
-              >
-                {isProcessingPayoff ? (
-                  <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                )}{" "}
-                ยืนยันรับยอด
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Modal แก้ไขสัญญา */}
       {editContractModalOpen && (
@@ -1378,7 +1141,44 @@ export default function CustomerDetailPage({ params }) {
                 <X className="w-5 h-5" />
               </button>
             </div>
+
             <div className="overflow-y-auto p-5 sm:p-8 flex-1 space-y-4 sm:space-y-6">
+              {/* 🌟 Dropdown เลือกประเภทวง (กู้ปกติ / ผ่อนของ) */}
+              <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2 flex items-center gap-2">
+                  <Package className="w-4 h-4 text-blue-500" /> ประเภทวง
+                  (Category)
+                </label>
+                <div className="flex gap-4 mt-2">
+                  <label className="flex items-center gap-2 cursor-pointer bg-white px-4 py-2 border rounded-xl hover:border-blue-300 transition-colors">
+                    <input
+                      type="radio"
+                      name="category"
+                      value="normal"
+                      checked={formData.category === "normal"}
+                      onChange={handleFormChange}
+                      className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="font-bold text-gray-700 text-sm">
+                      เงินกู้ปกติ
+                    </span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer bg-white px-4 py-2 border rounded-xl hover:border-rose-300 transition-colors">
+                    <input
+                      type="radio"
+                      name="category"
+                      value="PD"
+                      checked={formData.category === "PD"}
+                      onChange={handleFormChange}
+                      className="w-4 h-4 text-rose-600 focus:ring-rose-500"
+                    />
+                    <span className="font-bold text-rose-600 text-sm">
+                      ผ่อนของ (PD)
+                    </span>
+                  </label>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                 <div>
                   <label className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest ml-1 text-gray-400">
