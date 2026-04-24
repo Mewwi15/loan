@@ -410,6 +410,36 @@ export default function ShareCommandCenterPage() {
     totalObligationPerHand - displayAliveSaved,
   );
 
+  // คำนวณยอดสุทธิ (Net Balance) ของลูกค้าทุกคน สำหรับแสดงในตารางที่ 2
+  const customerNetBalances = {};
+  hands.forEach((h) => {
+    const cid = h.customerId;
+    if (!customerNetBalances[cid]) customerNetBalances[cid] = 0;
+
+    const isAlive = h.status === "alive";
+    const isClosed = h.status === "closed";
+
+    // สำหรับคนที่สวมสิทธิ์ คิดเฉพาะยอดจ่ายหลังรับช่วงต่อมาแล้ว
+    const isSwapped = !!h.isSwapped;
+    const realTotalPaid = isSwapped
+      ? (h.paidPeriods?.filter((p) => p >= h.swappedAtPeriod).length || 0) *
+        share.installmentAmount
+      : (h.paidPeriods?.length || 0) * share.installmentAmount;
+
+    if (isClosed) return;
+
+    if (isAlive) {
+      customerNetBalances[cid] += realTotalPaid;
+    } else if (h.status === "dead") {
+      const baseDebtForThisHand = isSwapped
+        ? h.customBaseDebt || 0
+        : totalObligationPerHand;
+      let actualRemainingDebt = baseDebtForThisHand - realTotalPaid;
+      if (actualRemainingDebt < 0) actualRemainingDebt = 0;
+      customerNetBalances[cid] -= actualRemainingDebt;
+    }
+  });
+
   const eligibleCandidates = hands.filter(
     (h) =>
       h.status === "alive" &&
@@ -935,6 +965,9 @@ export default function ShareCommandCenterPage() {
                     #
                   </th>
                   <th className="px-6 py-4 font-semibold">ชื่อลูกค้า</th>
+                  <th className="px-6 py-4 font-semibold text-right">
+                    ยอดสุทธิ
+                  </th>
                   <th className="px-6 py-4 font-semibold text-center w-[240px]">
                     จัดการ
                   </th>
@@ -944,6 +977,9 @@ export default function ShareCommandCenterPage() {
                 {eligibleCandidates.map((cand) => {
                   const hasSkipped =
                     cand.skippedPeriods?.includes(currentPeriod);
+
+                  const netBal = customerNetBalances[cand.customerId] || 0;
+                  const isPositive = netBal >= 0;
 
                   return (
                     <tr
@@ -973,6 +1009,13 @@ export default function ShareCommandCenterPage() {
                             </span>
                           )}
                         </div>
+                      </td>
+
+                      <td
+                        className={`px-6 py-4 text-right font-bold ${isPositive ? "text-green-600" : "text-red-600"}`}
+                      >
+                        {isPositive ? "+" : "-"} ฿
+                        {Math.abs(netBal).toLocaleString()}
                       </td>
 
                       <td className="px-6 py-4">
