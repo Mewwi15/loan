@@ -81,55 +81,93 @@ export default function CustomersPage() {
       },
       { threshold: 0 },
     );
-
-    if (headerRef.current) {
-      observer.observe(headerRef.current);
-    }
-
+    if (headerRef.current) observer.observe(headerRef.current);
     return () => observer.disconnect();
   }, []);
 
+  // 🌟 ฟังก์ชันฮีโร่: ซิงค์ยอดเป๊ะ 100% (ใช้ Logic กรองวงซ้ำแบบเดียวกับหน้า ID)
   const fixCustomerStats = async (customerList) => {
     try {
-      const loansQ = query(
-        collection(db, "loans"),
-        where("status", "==", "active"),
-      );
-      const loansSnap = await getDocs(loansQ);
-
-      const loanStats = {};
-      loansSnap.forEach((docSnap) => {
-        const data = docSnap.data();
-        const cid = data.customerId;
-        if (!loanStats[cid]) {
-          loanStats[cid] = { count: 0, debtNormal: 0, debtPD: 0 };
-        }
-
-        loanStats[cid].count += 1;
-        if (data.category === "PD") {
-          loanStats[cid].debtPD += data.remainingBalance || 0;
-        } else {
-          loanStats[cid].debtNormal += data.remainingBalance || 0;
-        }
-      });
+      // 1. ดึงวงกู้ "ทั้งหมด" (ทั้งปิดแล้วและกำลังเดิน) เพื่อเอามารวมและกรองวงเล็บ ()
+      const loansSnap = await getDocs(collection(db, "loans"));
+      const allLoans = loansSnap.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
 
       const batch = writeBatch(db);
       let needsUpdate = false;
 
       for (const customer of customerList) {
-        const actualCount = loanStats[customer.id]?.count || 0;
-        const actualDebtNormal = loanStats[customer.id]?.debtNormal || 0;
-        const actualDebtPD = loanStats[customer.id]?.debtPD || 0;
+        const customerId = customer.id;
 
+        // 2. สร้างเงื่อนไขชื่อรูปแบบต่างๆ เพื่อหาประวัติวงเก่า
+        const formattedName =
+          customer.nickname && customer.name
+            ? `${customer.nickname} (${customer.name})`
+            : customer.nickname || customer.name || "";
+
+        const searchNames = [];
+        if (customer.name) searchNames.push(customer.name);
+        if (customer.nickname) searchNames.push(customer.nickname);
+        if (formattedName && !searchNames.includes(formattedName))
+          searchNames.push(formattedName);
+
+        // 3. กรองหาวงกู้ของคนนี้ (หาทั้งจาก ID และจากชื่อเก่าๆ)
+        const myLoans = allLoans.filter(
+          (l) =>
+            l.customerId === customerId || searchNames.includes(l.customerName),
+        );
+
+        // 4. ลอจิกกรองวงซ้ำ (Deduplicate) ให้ความสำคัญกับวงที่มี () ก่อน และยึดสถานะ Active
+        const loanMap = new Map();
+        myLoans.forEach((data) => {
+          const key = String(data.loanNumber || data.id).trim();
+          if (loanMap.has(key)) {
+            const existing = loanMap.get(key);
+            if (existing.status === "closed" && data.status === "active") {
+              loanMap.set(key, data);
+            } else if (existing.status === data.status) {
+              if (
+                !existing.customerName?.includes("(") &&
+                data.customerName?.includes("(")
+              ) {
+                loanMap.set(key, data);
+              }
+            }
+          } else {
+            loanMap.set(key, data);
+          }
+        });
+
+        // 5. เลือกเฉพาะวงที่ยัง Active จริงๆ หลังจากการกรองซ้ำแล้ว
+        const finalActiveLoans = Array.from(loanMap.values()).filter(
+          (l) => l.status !== "closed",
+        );
+
+        let activeCount = finalActiveLoans.length; // จำนวนวงกู้ล้วนๆ ไม่รวมวงแชร์
+        let debtNormal = 0;
+        let debtPD = 0;
+
+        // คำนวณยอดหนี้แยกประเภท
+        finalActiveLoans.forEach((data) => {
+          if (data.category === "PD") {
+            debtPD += data.remainingBalance || 0;
+          } else {
+            debtNormal += data.remainingBalance || 0;
+          }
+        });
+
+        // ตรวจสอบว่ามีข้อมูลเปลี่ยนไหม ถ้าเปลี่ยนให้บันทึกลง Database
         if (
-          customer.activeLoans !== actualCount ||
-          customer.totalDebt !== actualDebtNormal ||
-          customer.totalDebtPD !== actualDebtPD
+          customer.activeLoans !== activeCount ||
+          customer.totalDebt !== debtNormal ||
+          customer.totalDebtPD !== debtPD
         ) {
-          batch.update(doc(db, "customers", customer.id), {
-            activeLoans: actualCount,
-            totalDebt: actualDebtNormal,
-            totalDebtPD: actualDebtPD,
+          batch.update(doc(db, "customers", customerId), {
+            activeLoans: activeCount,
+            totalDebt: debtNormal,
+            totalDebtPD: debtPD,
           });
           needsUpdate = true;
         }
@@ -137,9 +175,7 @@ export default function CustomersPage() {
 
       if (needsUpdate) {
         await batch.commit();
-        console.log(
-          "✅ Auto-Sync: ซิงค์จำนวนวงและยอดหนี้ให้ถูกต้องเรียบร้อยแล้ว!",
-        );
+        console.log("✅ Auto-Sync: ซิงค์ยอดวงกู้สำเร็จตรงกันกับหน้า ID 100%");
       }
     } catch (error) {
       console.error("Error fixing customer stats:", error);
@@ -177,35 +213,25 @@ export default function CustomersPage() {
     return () => unsubscribe();
   }, []);
 
-  // 🌟 ฟังก์ชันฮีโร่: จำตำแหน่งลูกค้าและเลื่อนหน้าจออัตโนมัติ
+  // 🌟 UX: Scroll Restoration (จำตำแหน่งเลื่อน)
   useEffect(() => {
-    // จะทำงานเมื่อโหลดข้อมูลเสร็จแล้วเท่านั้น
     if (!loading && customers.length > 0) {
       const lastViewedId = sessionStorage.getItem("lastViewedCustomer");
       if (lastViewedId) {
-        // ใช้ setTimeout เล็กน้อยเพื่อให้แน่ใจว่าเบราว์เซอร์วาดหน้าจอเสร็จแล้ว
         setTimeout(() => {
           const element = document.getElementById(`customer-${lastViewedId}`);
           if (element) {
-            // สั่งเลื่อนมาให้การ์ดนี้อยู่กลางหน้าจอ
             element.scrollIntoView({ behavior: "smooth", block: "center" });
-
-            // ใส่เอฟเฟกต์กระพริบเบาๆ ให้แอดมินรู้ว่าอยู่ตรงนี้
-            element.classList.add(
-              "ring-4",
-              "ring-orange-200",
-              "scale-[1.01]",
-              "transition-all",
+            element.classList.add("ring-4", "ring-orange-200", "scale-[1.01]");
+            setTimeout(
+              () =>
+                element.classList.remove(
+                  "ring-4",
+                  "ring-orange-200",
+                  "scale-[1.01]",
+                ),
+              1500,
             );
-            setTimeout(() => {
-              element.classList.remove(
-                "ring-4",
-                "ring-orange-200",
-                "scale-[1.01]",
-              );
-            }, 1500);
-
-            // เคลียร์ความจำทิ้ง จะได้ไม่เลื่อนมั่วเวลาเข้ามาครั้งหน้า
             sessionStorage.removeItem("lastViewedCustomer");
           }
         }, 300);
@@ -213,7 +239,6 @@ export default function CustomersPage() {
     }
   }, [loading, customers]);
 
-  // ฟังก์ชันเวลากดคลิกลูกค้า
   const handleCustomerClick = (customerId) => {
     sessionStorage.setItem("lastViewedCustomer", customerId);
     router.push(`/customers/${customerId}`);
@@ -234,21 +259,20 @@ export default function CustomersPage() {
   const handleQuickAdd = async (e) => {
     e.preventDefault();
     setIsSaving(true);
-
     try {
       if (newCustomer.code.trim()) {
-        const checkQuery = query(
-          collection(db, "customers"),
-          where("code", "==", newCustomer.code.trim().toUpperCase()),
+        const checkSnap = await getDocs(
+          query(
+            collection(db, "customers"),
+            where("code", "==", newCustomer.code.trim().toUpperCase()),
+          ),
         );
-        const checkSnap = await getDocs(checkQuery);
         if (!checkSnap.empty) {
           alert("❌ รหัสลูกค้านี้มีในระบบแล้ว กรุณาใช้รหัสอื่นครับ");
           setIsSaving(false);
           return;
         }
       }
-
       if (!newCustomer.nickname.trim() && !newCustomer.name.trim()) {
         alert("กรุณากรอกชื่อเล่น หรือ ชื่อจริง อย่างน้อย 1 อย่างครับ");
         setIsSaving(false);
@@ -290,8 +314,7 @@ export default function CustomersPage() {
       setSelectedFile(null);
       alert("เพิ่มข้อมูลลูกค้าสำเร็จ!");
     } catch (error) {
-      console.error("Error adding customer:", error);
-      alert("ไม่สามารถเพิ่มข้อมูลได้ กรุณาลองใหม่อีกครั้ง");
+      console.error("Add Error:", error);
     } finally {
       setIsSaving(false);
     }
@@ -301,51 +324,33 @@ export default function CustomersPage() {
     if (!customerToDelete) return;
     setLoading(true);
     const batch = writeBatch(db);
-
     try {
-      const customerRef = doc(db, "customers", customerToDelete.id);
-      batch.delete(customerRef);
-
-      const searchNames = [];
-      if (customerToDelete.name) searchNames.push(customerToDelete.name);
-      if (customerToDelete.nickname)
-        searchNames.push(customerToDelete.nickname);
-
-      if (searchNames.length > 0) {
-        const loansQuery = query(
+      batch.delete(doc(db, "customers", customerToDelete.id));
+      const loansSnapshot = await getDocs(
+        query(
           collection(db, "loans"),
-          where("customerName", "in", searchNames),
+          where("customerId", "==", customerToDelete.id),
+        ),
+      );
+      for (const loanDoc of loansSnapshot.docs) {
+        batch.delete(loanDoc.ref);
+        const schSnap = await getDocs(
+          query(collection(db, "schedules"), where("loanId", "==", loanDoc.id)),
         );
-        const loansSnapshot = await getDocs(loansQuery);
-
-        for (const loanDoc of loansSnapshot.docs) {
-          const loanId = loanDoc.id;
-          batch.delete(loanDoc.ref);
-
-          const schedulesQuery = query(
-            collection(db, "schedules"),
-            where("loanId", "==", loanId),
-          );
-          const schedulesSnapshot = await getDocs(schedulesQuery);
-          schedulesSnapshot.forEach((sDoc) => batch.delete(sDoc.ref));
-
-          const transQuery = query(
+        schSnap.forEach((s) => batch.delete(s.ref));
+        const trSnap = await getDocs(
+          query(
             collection(db, "transactions"),
-            where("loanId", "==", loanId),
-          );
-          const transSnapshot = await getDocs(transQuery);
-          transSnapshot.forEach((tDoc) => batch.delete(tDoc.ref));
-        }
+            where("loanId", "==", loanDoc.id),
+          ),
+        );
+        trSnap.forEach((t) => batch.delete(t.ref));
       }
-
       await batch.commit();
-
       setDeleteModalOpen(false);
-      setCustomerToDelete(null);
-      alert("ลบข้อมูลลูกค้าและประวัติทั้งหมดเรียบร้อยแล้ว");
+      alert("ลบข้อมูลเรียบร้อยแล้ว");
     } catch (error) {
       console.error("Delete Error:", error);
-      alert("เกิดข้อผิดพลาดในการลบข้อมูล");
     } finally {
       setLoading(false);
     }
@@ -353,7 +358,6 @@ export default function CustomersPage() {
 
   const openEditModal = (e, customer) => {
     e.stopPropagation();
-    e.preventDefault();
     setCustomerToEdit(customer);
     setEditCustomerData({
       code: customer.code || "",
@@ -369,33 +373,7 @@ export default function CustomersPage() {
     e.preventDefault();
     setIsUpdating(true);
     const batch = writeBatch(db);
-
     try {
-      if (editCustomerData.code.trim()) {
-        const checkQuery = query(
-          collection(db, "customers"),
-          where("code", "==", editCustomerData.code.trim().toUpperCase()),
-        );
-        const checkSnap = await getDocs(checkQuery);
-        const isDuplicate = checkSnap.docs.some(
-          (doc) => doc.id !== customerToEdit.id,
-        );
-
-        if (isDuplicate) {
-          alert("❌ รหัสลูกค้านี้มีในระบบแล้ว กรุณาใช้รหัสอื่นครับ");
-          setIsUpdating(false);
-          return;
-        }
-      }
-
-      if (!editCustomerData.nickname.trim() && !editCustomerData.name.trim()) {
-        alert("กรุณากรอกชื่อเล่น หรือ ชื่อจริง อย่างน้อย 1 อย่างครับ");
-        setIsUpdating(false);
-        return;
-      }
-
-      const newDisplayName = editCustomerData.nickname || editCustomerData.name;
-
       const customerRef = doc(db, "customers", customerToEdit.id);
       batch.update(customerRef, {
         code: editCustomerData.code.trim().toUpperCase(),
@@ -404,41 +382,11 @@ export default function CustomersPage() {
         phone: editCustomerData.phone.trim(),
         facebook: editCustomerData.facebook.trim(),
       });
-
-      const loansQ = query(
-        collection(db, "loans"),
-        where("customerId", "==", customerToEdit.id),
-      );
-      const loansSnap = await getDocs(loansQ);
-      loansSnap.forEach((d) =>
-        batch.update(d.ref, { customerName: newDisplayName }),
-      );
-
-      const schQ = query(
-        collection(db, "schedules"),
-        where("customerId", "==", customerToEdit.id),
-      );
-      const schSnap = await getDocs(schQ);
-      schSnap.forEach((d) =>
-        batch.update(d.ref, { customerName: newDisplayName }),
-      );
-
-      const transQ = query(
-        collection(db, "transactions"),
-        where("customerId", "==", customerToEdit.id),
-      );
-      const transSnap = await getDocs(transQ);
-      transSnap.forEach((d) =>
-        batch.update(d.ref, { customerName: newDisplayName }),
-      );
-
       await batch.commit();
-      alert("✅ อัปเดตข้อมูลลูกค้าสำเร็จ!");
+      alert("✅ อัปเดตสำเร็จ!");
       setEditModalOpen(false);
-      setCustomerToEdit(null);
     } catch (error) {
-      console.error("Error updating customer:", error);
-      alert("เกิดข้อผิดพลาดในการอัปเดตข้อมูล");
+      console.error("Update Error:", error);
     } finally {
       setIsUpdating(false);
     }
@@ -456,13 +404,6 @@ export default function CustomersPage() {
     return matchSearch && matchStatus;
   });
 
-  const confirmDelete = (e, customer) => {
-    e.stopPropagation();
-    e.preventDefault();
-    setCustomerToDelete(customer);
-    setDeleteModalOpen(true);
-  };
-
   const getCustomerDisplayName = (nickname, name) => {
     if (nickname && name) return `${nickname} (${name})`;
     if (nickname) return nickname;
@@ -471,15 +412,9 @@ export default function CustomersPage() {
 
   return (
     <div className="pb-24 px-4 sm:px-10 font-sans animate-in fade-in duration-500 relative min-h-screen">
-      {/* 🌟 ปุ่ม Floating Button */}
       <button
         onClick={() => setIsModalOpen(true)}
-        className={`fixed bottom-8 right-8 z-50 flex items-center justify-center w-14 h-14 bg-gray-900 hover:bg-black text-white rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.5)] transition-all duration-300 active:scale-95 border border-gray-700 ${
-          showFab
-            ? "scale-100 opacity-100"
-            : "scale-0 opacity-0 pointer-events-none"
-        }`}
-        title="เพิ่มลูกค้าใหม่"
+        className={`fixed bottom-8 right-8 z-50 flex items-center justify-center w-14 h-14 bg-gray-900 hover:bg-black text-white rounded-full shadow-2xl transition-all duration-300 active:scale-95 border border-gray-700 ${showFab ? "scale-100 opacity-100" : "scale-0 opacity-0 pointer-events-none"}`}
       >
         <Plus className="w-7 h-7 text-orange-500" />
       </button>
@@ -497,10 +432,9 @@ export default function CustomersPage() {
             <span className="text-orange-500">{customers.length}</span> รายการ
           </p>
         </div>
-
         <button
           onClick={() => setIsModalOpen(true)}
-          className="w-full md:w-auto flex items-center justify-center gap-2 bg-gray-900 hover:bg-black text-white px-8 py-4 rounded-2xl shadow-xl transition-all active:scale-95 text-sm font-black uppercase tracking-widest"
+          className="w-full md:w-auto flex items-center justify-center gap-2 bg-gray-900 hover:bg-black text-white px-8 py-4 rounded-2xl shadow-xl transition-all font-black uppercase tracking-widest text-sm"
         >
           <UserPlus className="w-5 h-5 text-orange-500" /> เพิ่มลูกค้าใหม่
         </button>
@@ -511,16 +445,14 @@ export default function CustomersPage() {
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 group-focus-within:text-orange-500 transition-colors" />
           <input
             type="text"
-            placeholder="ค้นหารหัส, ชื่อ, ชื่อเล่น หรือ เบอร์โทรศัพท์..."
+            placeholder="ค้นหาลูกค้า..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-12 pr-4 py-3 bg-transparent outline-none font-bold text-gray-700 placeholder:text-gray-300"
           />
         </div>
-        <div className="hidden xl:block w-px h-8 bg-gray-100 mx-2"></div>
-
         <div className="flex w-full xl:w-auto items-center gap-2 px-2 pb-2 xl:pb-0">
-          <div className="relative flex-1 xl:w-auto">
+          <div className="relative flex-1">
             <Filter className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <select
               value={statusFilter}
@@ -532,19 +464,16 @@ export default function CustomersPage() {
               <option value="ค้างชำระ">🔴 ค้างชำระ</option>
             </select>
           </div>
-
           <div className="flex bg-gray-100 p-1 rounded-xl">
             <button
               onClick={() => setViewMode("list")}
-              className={`p-2 rounded-lg transition-all ${viewMode === "list" ? "bg-white text-orange-500 shadow-sm" : "text-gray-400 hover:text-gray-600"}`}
-              title="มุมมองแบบรายการแนวยาว"
+              className={`p-2 rounded-lg transition-all ${viewMode === "list" ? "bg-white text-orange-500 shadow-sm" : "text-gray-400"}`}
             >
               <List className="w-5 h-5" />
             </button>
             <button
               onClick={() => setViewMode("grid")}
-              className={`p-2 rounded-lg transition-all ${viewMode === "grid" ? "bg-white text-orange-500 shadow-sm" : "text-gray-400 hover:text-gray-600"}`}
-              title="มุมมองแบบการ์ด"
+              className={`p-2 rounded-lg transition-all ${viewMode === "grid" ? "bg-white text-orange-500 shadow-sm" : "text-gray-400"}`}
             >
               <LayoutGrid className="w-5 h-5" />
             </button>
@@ -555,269 +484,118 @@ export default function CustomersPage() {
       {loading ? (
         <div className="py-20 flex flex-col items-center gap-4 text-gray-400">
           <Loader2 className="w-10 h-10 animate-spin text-orange-500" />
-          <p className="font-black text-[10px] uppercase tracking-[0.2em]">
-            กำลังดึงข้อมูล...
-          </p>
+          <p className="font-black text-[10px] uppercase">กำลังดึงข้อมูล...</p>
         </div>
       ) : (
-        <>
-          {/* ======================================================== */}
-          {/* 🌟 VIEW MODE: LIST */}
-          {/* ======================================================== */}
-          {viewMode === "list" && (
-            <div className="flex flex-col gap-4">
-              {filteredCustomers.map((customer) => (
-                <div
-                  key={customer.id}
-                  id={`customer-${customer.id}`} // 🌟 เพิ่ม ID ให้หาจอเจอ
-                  onClick={() => handleCustomerClick(customer.id)}
-                  className="group flex flex-col lg:flex-row items-start lg:items-center justify-between bg-white rounded-2xl p-5 border border-gray-100 shadow-sm hover:shadow-md hover:border-orange-200 transition-all cursor-pointer gap-4"
-                >
-                  <div className="flex items-center gap-4 w-full lg:w-1/3">
-                    <div className="min-w-[4rem] px-2 h-14 bg-orange-50 rounded-xl flex items-center justify-center text-lg font-black text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all duration-300 shrink-0 shadow-inner tracking-wider">
-                      {customer.code
-                        ? customer.code
-                        : (customer.nickname || customer.name).charAt(0)}
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="text-lg font-black text-gray-800 group-hover:text-orange-500 transition-colors truncate">
-                        {getCustomerDisplayName(
-                          customer.nickname,
-                          customer.name,
-                        )}
-                      </h3>
-                      <div className="flex items-center gap-3 mt-1 text-[11px] font-bold text-gray-500">
-                        <span>📞 {customer.phone || "-"}</span>
-                        {customer.facebook && (
-                          <span className="flex items-center gap-1 text-[#1877F2]">
-                            <MessageCircle className="w-3 h-3" />{" "}
-                            {customer.facebook}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 🌟 แสดงยอดหนี้ปกติ และ ยอดผ่อนของ (PD) */}
-                  <div className="grid grid-cols-2 md:flex md:flex-wrap items-start md:items-center gap-y-4 gap-x-6 w-full lg:w-auto lg:flex-1 border-t lg:border-t-0 lg:border-l-2 border-orange-100 pt-4 lg:pt-0 lg:pl-6 relative">
-                    {customer.documentUrl && (
-                      <div className="absolute -left-[11px] top-1/2 -translate-y-1/2 bg-white rounded-full p-1 border border-orange-200 hidden lg:block">
-                        <FileText className="w-3 h-3 text-orange-500" />
-                      </div>
-                    )}
-
-                    <div>
-                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
-                        ยอดหนี้ปกติ
-                      </p>
-                      <p
-                        className={`text-base font-black ${customer.totalDebt < 0 ? "text-red-500" : "text-gray-800"}`}
-                      >
-                        ฿{(customer.totalDebt || 0).toLocaleString()}
-                      </p>
-                    </div>
-
-                    <div className="md:border-l border-gray-100 md:pl-6">
-                      <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-0.5 flex items-center gap-1">
-                        <Package className="w-3 h-3" /> ยอดผ่อนของ (PD)
-                      </p>
-                      <p className="text-base font-black text-rose-500">
-                        ฿{(customer.totalDebtPD || 0).toLocaleString()}
-                      </p>
-                    </div>
-
-                    <div className="col-span-2 md:border-l border-gray-100 md:pl-6">
-                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
-                        รวมทุกวง
-                      </p>
-                      <p className="text-base font-black text-gray-500">
-                        {customer.activeLoans || 0} วง
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between w-full lg:w-auto gap-4 pt-4 lg:pt-0 border-t lg:border-t-0 border-gray-50">
-                    <span
-                      className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg shrink-0 ${customer.status === "ปกติ" ? "bg-green-50 text-green-600" : "bg-rose-50 text-rose-500"}`}
-                    >
-                      {customer.status}
-                    </span>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          const displayName =
-                            customer.nickname || customer.name;
-                          router.push(
-                            `/loans/new?name=${encodeURIComponent(displayName)}&id=${customer.id}`,
-                          );
-                        }}
-                        className="text-[10px] font-black text-orange-500 bg-orange-50 hover:bg-orange-500 hover:text-white px-3 py-2 rounded-xl uppercase tracking-widest transition-all flex items-center gap-1 shadow-sm relative z-20"
-                      >
-                        <FileSignature className="w-4 h-4" />{" "}
-                        <span className="hidden xl:inline">สร้างสัญญา</span>
-                      </button>
-                      <button
-                        onClick={(e) => openEditModal(e, customer)}
-                        className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-colors relative z-20"
-                        title="แก้ไขข้อมูลลูกค้า"
-                      >
-                        <UserCog className="w-5 h-5" />
-                      </button>
-                      <button
-                        onClick={(e) => confirmDelete(e, customer)}
-                        className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors relative z-20"
-                        title="ลบข้อมูลลูกค้า"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                    </div>
-                  </div>
+        <div
+          className={
+            viewMode === "list"
+              ? "flex flex-col gap-4"
+              : "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6"
+          }
+        >
+          {filteredCustomers.map((customer) => (
+            <div
+              key={customer.id}
+              id={`customer-${customer.id}`}
+              onClick={() => handleCustomerClick(customer.id)}
+              className={`bg-white rounded-[1.5rem] p-5 border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer relative group ${viewMode === "list" ? "flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4" : "flex flex-col gap-5"}`}
+            >
+              <div className="flex items-center gap-4 min-w-0 flex-1">
+                <div className="min-w-[3.5rem] h-14 bg-orange-50 rounded-xl flex items-center justify-center text-lg font-black text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all duration-300 shadow-inner">
+                  {customer.code ||
+                    (customer.nickname || customer.name).charAt(0)}
                 </div>
-              ))}
-            </div>
-          )}
-
-          {/* ======================================================== */}
-          {/* 🌟 VIEW MODE: GRID */}
-          {/* ======================================================== */}
-          {viewMode === "grid" && (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
-              {filteredCustomers.map((customer) => (
-                <div
-                  key={customer.id}
-                  id={`customer-${customer.id}`} // 🌟 เพิ่ม ID ให้หาจอเจอ
-                  onClick={() => handleCustomerClick(customer.id)}
-                  className="group block bg-white rounded-[2rem] p-8 border border-gray-100 shadow-sm hover:shadow-xl hover:shadow-orange-100/40 hover:border-orange-200 transition-all duration-300 relative space-y-6 cursor-pointer"
-                >
-                  <div className="absolute top-6 right-6 flex gap-2 z-20">
-                    <button
-                      onClick={(e) => openEditModal(e, customer)}
-                      className="p-2.5 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-colors"
-                      title="แก้ไขข้อมูลลูกค้า"
-                    >
-                      <UserCog className="w-5 h-5" />
-                    </button>
-                    <button
-                      onClick={(e) => confirmDelete(e, customer)}
-                      className="p-2.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
-                      title="ลบข้อมูลลูกค้า"
-                    >
-                      <Trash2 className="w-5 h-5" />
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-4 pt-2 relative z-10">
-                    <div className="min-w-[4rem] px-2 h-16 bg-orange-50 rounded-2xl flex items-center justify-center text-xl font-black text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all duration-300 shrink-0 shadow-inner tracking-wider">
-                      {customer.code
-                        ? customer.code
-                        : (customer.nickname || customer.name).charAt(0)}
-                    </div>
-
-                    <div className="flex-1 min-w-0 pr-16">
-                      <h3 className="text-xl font-black text-gray-800 group-hover:text-orange-500 transition-colors truncate">
-                        {getCustomerDisplayName(
-                          customer.nickname,
-                          customer.name,
-                        )}
-                      </h3>
-                      <div className="flex flex-col gap-1 mt-1">
-                        <p className="text-[11px] font-bold text-gray-500 tracking-wider">
-                          📞 {customer.phone || "-"}
-                        </p>
-                        {customer.facebook && (
-                          <p className="text-[10px] font-bold text-[#1877F2] truncate flex items-center gap-1">
-                            <MessageCircle className="w-3 h-3" />{" "}
-                            {customer.facebook}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-3 border-l-2 border-orange-100 pl-6 py-1 relative z-10">
-                    {customer.documentUrl && (
-                      <div
-                        className="absolute -left-[11px] top-4 bg-white rounded-full p-1 border border-orange-200"
-                        title="มีเอกสารแนบ"
-                      >
-                        <FileText className="w-3 h-3 text-orange-500" />
-                      </div>
-                    )}
-
-                    <div className="flex justify-between items-end">
-                      <div>
-                        <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest mb-1">
-                          ยอดหนี้ปกติ
-                        </p>
-                        <p
-                          className={`text-xl font-black ${customer.totalDebt < 0 ? "text-red-500" : "text-gray-800"}`}
-                        >
-                          ฿{(customer.totalDebt || 0).toLocaleString()}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-1">
-                          รวมทุกวง
-                        </p>
-                        <p
-                          className={`text-base font-black ${customer.activeLoans < 0 ? "text-red-500" : "text-gray-400"}`}
-                        >
-                          {customer.activeLoans || 0} วง
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="border-t border-gray-50 pt-3 flex justify-between items-end">
-                      <div>
-                        <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1 flex items-center gap-1">
-                          <Package className="w-3 h-3" /> ยอดผ่อนของ (PD)
-                        </p>
-                        <p className="text-lg font-black text-rose-500">
-                          ฿{(customer.totalDebtPD || 0).toLocaleString()}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-4 border-t border-gray-50 relative z-20">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg ${customer.status === "ปกติ" ? "bg-green-50 text-green-600" : "bg-rose-50 text-rose-500"}`}
-                      >
-                        {customer.status}
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-lg font-black text-gray-800 truncate">
+                    {getCustomerDisplayName(customer.nickname, customer.name)}
+                  </h3>
+                  <div className="flex items-center gap-3 mt-1 text-[11px] font-bold text-gray-500">
+                    <span>📞 {customer.phone || "-"}</span>
+                    {customer.facebook && (
+                      <span className="flex items-center gap-1 text-[#1877F2] truncate">
+                        <MessageCircle className="w-3 h-3" />{" "}
+                        {customer.facebook}
                       </span>
-
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          const displayName =
-                            customer.nickname || customer.name;
-                          router.push(
-                            `/loans/new?name=${encodeURIComponent(displayName)}&id=${customer.id}`,
-                          );
-                        }}
-                        className="text-[10px] font-black text-orange-500 bg-orange-50 hover:bg-orange-500 hover:text-white px-3 py-1.5 rounded-lg uppercase tracking-widest transition-all flex items-center gap-1 shadow-sm"
-                      >
-                        <FileSignature className="w-3 h-3" /> สร้างสัญญา
-                      </button>
-                    </div>
-
-                    <div className="flex items-center gap-1 text-[11px] font-black text-gray-300 group-hover:text-orange-500 uppercase tracking-widest transition-colors pointer-events-none">
-                      ดูรายละเอียด <ArrowUpRight className="w-4 h-4" />
-                    </div>
+                    )}
                   </div>
                 </div>
-              ))}
+              </div>
+
+              {/* 🌟 แสดงยอดหนี้ ปกติ และ PD */}
+              <div
+                className={`grid grid-cols-2 md:flex items-start md:items-center gap-y-4 gap-x-8 border-t lg:border-t-0 lg:border-l-2 border-orange-100 pt-4 lg:pt-0 lg:pl-6 relative ${viewMode === "grid" ? "border-t border-l-0 pt-4 pl-0" : ""}`}
+              >
+                <div>
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
+                    ยอดหนี้ปกติ
+                  </p>
+                  <p
+                    className={`text-base font-black ${customer.totalDebt < 0 ? "text-red-500" : "text-gray-800"}`}
+                  >
+                    ฿{(customer.totalDebt || 0).toLocaleString()}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-0.5 flex items-center gap-1">
+                    <Package className="w-3 h-3" /> ยอดหนี้ PD
+                  </p>
+                  <p className="text-base font-black text-rose-500">
+                    ฿{(customer.totalDebtPD || 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="col-span-2 md:border-l md:border-gray-100 md:pl-6">
+                  <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-0.5">
+                    รวมวงกู้ทั้งหมด
+                  </p>
+                  <p className="text-base font-black text-blue-600">
+                    {customer.activeLoans || 0} วง
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-4 w-full lg:w-auto">
+                <span
+                  className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg ${customer.status === "ปกติ" ? "bg-green-50 text-green-600" : "bg-rose-50 text-rose-500"}`}
+                >
+                  {customer.status}
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      router.push(
+                        `/loans/new?name=${encodeURIComponent(customer.nickname || customer.name)}&id=${customer.id}`,
+                      );
+                    }}
+                    className="p-2 text-orange-500 bg-orange-50 hover:bg-orange-500 hover:text-white rounded-xl transition-all shadow-sm"
+                  >
+                    <FileSignature className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={(e) => openEditModal(e, customer)}
+                    className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-colors"
+                  >
+                    <UserCog className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCustomerToDelete(customer);
+                      setDeleteModalOpen(true);
+                    }}
+                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
             </div>
-          )}
-        </>
+          ))}
+        </div>
       )}
 
-      {/* --- MODAL: เพิ่มลูกค้าใหม่ --- */}
+      {/* --- MODALS --- */}
       {isModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div
@@ -841,23 +619,19 @@ export default function CustomersPage() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-
             <form onSubmit={handleQuickAdd} className="space-y-5">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
-                    รหัสลูกค้า (ถ้ามี)
+                    รหัสลูกค้า
                   </label>
                   <input
                     type="text"
                     value={newCustomer.code}
                     onChange={(e) =>
-                      setNewCustomer({
-                        ...newCustomer,
-                        code: e.target.value,
-                      })
+                      setNewCustomer({ ...newCustomer, code: e.target.value })
                     }
-                    className="w-full px-5 py-4 bg-orange-50/50 border border-transparent focus:border-orange-500 focus:bg-white rounded-2xl outline-none font-black text-orange-500 text-sm transition-all uppercase placeholder:normal-case"
+                    className="w-full px-5 py-4 bg-orange-50/50 rounded-2xl outline-none font-black text-orange-500 text-sm transition-all uppercase placeholder:normal-case"
                     placeholder="เช่น A01"
                   />
                 </div>
@@ -874,106 +648,78 @@ export default function CustomersPage() {
                         nickname: e.target.value,
                       })
                     }
-                    className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-orange-500 focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
-                    placeholder="เช่น จูน"
+                    className="w-full px-5 py-4 bg-gray-50 rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
+                    placeholder="จูน"
                   />
                 </div>
               </div>
-
-              <div>
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
-                  ชื่อจริง-นามสกุล (ไม่บังคับ)
-                </label>
+              <input
+                type="text"
+                value={newCustomer.name}
+                onChange={(e) =>
+                  setNewCustomer({ ...newCustomer, name: e.target.value })
+                }
+                className="w-full px-5 py-4 bg-gray-50 rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
+                placeholder="ชื่อจริง-นามสกุล"
+              />
+              <div className="grid grid-cols-2 gap-4">
+                <input
+                  type="tel"
+                  value={newCustomer.phone}
+                  onChange={(e) =>
+                    setNewCustomer({ ...newCustomer, phone: e.target.value })
+                  }
+                  className="w-full px-5 py-4 bg-gray-50 rounded-2xl outline-none font-bold text-sm text-gray-700"
+                  placeholder="เบอร์โทรศัพท์"
+                />
                 <input
                   type="text"
-                  value={newCustomer.name}
+                  value={newCustomer.facebook}
                   onChange={(e) =>
-                    setNewCustomer({ ...newCustomer, name: e.target.value })
+                    setNewCustomer({ ...newCustomer, facebook: e.target.value })
                   }
-                  className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-orange-500 focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
-                  placeholder="ชื่อ-สกุล"
+                  className="w-full px-5 py-4 bg-gray-50 rounded-2xl outline-none font-bold text-sm text-gray-700"
+                  placeholder="ชื่อเฟสบุ๊ค"
                 />
               </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
-                    เบอร์โทรศัพท์
-                  </label>
-                  <input
-                    type="tel"
-                    value={newCustomer.phone}
-                    onChange={(e) =>
-                      setNewCustomer({ ...newCustomer, phone: e.target.value })
-                    }
-                    className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-orange-500 focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
-                    placeholder="08X-XXX"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1 flex items-center gap-1">
-                    <MessageCircle className="w-3 h-3 text-[#1877F2]" />{" "}
-                    ชื่อเฟสบุ๊ค
-                  </label>
-                  <input
-                    type="text"
-                    value={newCustomer.facebook}
-                    onChange={(e) =>
-                      setNewCustomer({
-                        ...newCustomer,
-                        facebook: e.target.value,
-                      })
-                    }
-                    className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-[#1877F2] focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
-                    placeholder="ชื่อเฟส"
-                  />
-                </div>
-              </div>
-
               <div className="pt-2">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-2">
-                  เอกสารประกอบการกู้ (PDF เท่านั้น)
+                  เอกสารประกอบการกู้ (PDF)
                 </label>
-                <div className="relative">
-                  <input
-                    type="file"
-                    accept="application/pdf"
-                    onChange={handleFileChange}
-                    className="hidden"
-                    id="file-upload"
-                  />
-                  <label
-                    htmlFor="file-upload"
-                    className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-2xl cursor-pointer transition-all ${selectedFile ? "border-green-500 bg-green-50" : "border-gray-200 bg-gray-50 hover:bg-gray-100 hover:border-orange-300"}`}
-                  >
-                    {selectedFile ? (
-                      <div className="text-center">
-                        <CheckCircle2 className="w-8 h-8 text-green-500 mx-auto mb-2" />
-                        <p className="text-xs font-black text-green-700">
-                          {selectedFile.name}
-                        </p>
-                        <p className="text-[10px] font-bold text-green-600/70 mt-1">
-                          อัปโหลดไฟล์เรียบร้อย เปลี่ยนไฟล์คลิกที่นี่
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="text-center opacity-60">
-                        <UploadCloud className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                        <p className="text-xs font-black text-gray-600">
-                          คลิกเพื่อเลือกไฟล์ PDF
-                        </p>
-                      </div>
-                    )}
-                  </label>
-                </div>
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  onChange={handleFileChange}
+                  className="hidden"
+                  id="file-upload"
+                />
+                <label
+                  htmlFor="file-upload"
+                  className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-2xl cursor-pointer transition-all ${selectedFile ? "border-green-500 bg-green-50" : "border-gray-200 bg-gray-50 hover:bg-gray-100"}`}
+                >
+                  {selectedFile ? (
+                    <div className="text-center">
+                      <CheckCircle2 className="w-8 h-8 text-green-500 mx-auto mb-2" />
+                      <p className="text-xs font-black text-green-700">
+                        {selectedFile.name}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="text-center opacity-60">
+                      <UploadCloud className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                      <p className="text-xs font-black text-gray-600">
+                        คลิกเพื่อเลือกไฟล์ PDF
+                      </p>
+                    </div>
+                  )}
+                </label>
               </div>
-
               <div className="pt-4 flex gap-4">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
                   disabled={isSaving}
-                  className="w-full py-4 rounded-2xl font-black text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
+                  className="w-full py-4 rounded-2xl font-black text-gray-600 bg-gray-100 hover:bg-gray-200"
                 >
                   ยกเลิก
                 </button>
@@ -986,8 +732,8 @@ export default function CustomersPage() {
                     <Loader2 className="w-5 h-5 animate-spin" />
                   ) : (
                     <Save className="w-5 h-5" />
-                  )}
-                  {isSaving ? "กำลังบันทึกและอัปโหลด..." : "บันทึกข้อมูล"}
+                  )}{" "}
+                  บันทึก
                 </button>
               </div>
             </form>
@@ -995,137 +741,95 @@ export default function CustomersPage() {
         </div>
       )}
 
-      {/* 🌟 MODAL: แก้ไขข้อมูลลูกค้า */}
       {editModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div
             className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm"
             onClick={() => !isUpdating && setEditModalOpen(false)}
           ></div>
-          <div className="relative bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl p-8 animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-start mb-6">
-              <div>
-                <h2 className="text-2xl font-black text-gray-800 flex items-center gap-2">
-                  <UserCog className="w-6 h-6 text-blue-500" />{" "}
-                  แก้ไขข้อมูลลูกค้า
-                </h2>
-                <p className="text-[12px] font-bold text-gray-400 uppercase tracking-widest mt-1">
-                  การแก้ไขชื่อจะอัปเดตไปยังทุกวงกู้และทุกประวัติการจ่าย
-                </p>
-              </div>
-              <button
-                onClick={() => !isUpdating && setEditModalOpen(false)}
-                className="p-2 text-gray-400 hover:bg-gray-100 rounded-xl transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
+          <div className="relative bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl p-8 animate-in zoom-in-95 duration-200">
+            <h2 className="text-2xl font-black text-gray-800 flex items-center gap-2 mb-6">
+              <UserCog className="w-6 h-6 text-blue-500" /> แก้ไขข้อมูลลูกค้า
+            </h2>
             <form onSubmit={handleUpdateCustomer} className="space-y-5">
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
-                    รหัสลูกค้า
-                  </label>
-                  <input
-                    type="text"
-                    value={editCustomerData.code}
-                    onChange={(e) =>
-                      setEditCustomerData({
-                        ...editCustomerData,
-                        code: e.target.value,
-                      })
-                    }
-                    className="w-full px-5 py-4 bg-orange-50/50 border border-transparent focus:border-orange-500 focus:bg-white rounded-2xl outline-none font-black text-orange-500 text-sm transition-all uppercase"
-                    placeholder="เช่น A01"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
-                    ชื่อเล่น *
-                  </label>
-                  <input
-                    type="text"
-                    value={editCustomerData.nickname}
-                    onChange={(e) =>
-                      setEditCustomerData({
-                        ...editCustomerData,
-                        nickname: e.target.value,
-                      })
-                    }
-                    className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
-                  ชื่อจริง-นามสกุล (ไม่บังคับ)
-                </label>
                 <input
                   type="text"
-                  value={editCustomerData.name}
+                  value={editCustomerData.code}
                   onChange={(e) =>
                     setEditCustomerData({
                       ...editCustomerData,
-                      name: e.target.value,
+                      code: e.target.value,
                     })
                   }
-                  className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
+                  className="w-full px-5 py-4 bg-orange-50/50 rounded-2xl outline-none font-black text-orange-500 text-sm transition-all uppercase"
+                  placeholder="รหัสลูกค้า"
+                />
+                <input
+                  type="text"
+                  value={editCustomerData.nickname}
+                  onChange={(e) =>
+                    setEditCustomerData({
+                      ...editCustomerData,
+                      nickname: e.target.value,
+                    })
+                  }
+                  className="w-full px-5 py-4 bg-gray-50 rounded-2xl outline-none font-bold text-sm text-gray-700"
+                  placeholder="ชื่อเล่น"
                 />
               </div>
+              <input
+                type="text"
+                value={editCustomerData.name}
+                onChange={(e) =>
+                  setEditCustomerData({
+                    ...editCustomerData,
+                    name: e.target.value,
+                  })
+                }
+                className="w-full px-5 py-4 bg-gray-50 rounded-2xl outline-none font-bold text-sm text-gray-700"
+                placeholder="ชื่อจริง-นามสกุล"
+              />
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
-                    เบอร์โทรศัพท์
-                  </label>
-                  <input
-                    type="tel"
-                    value={editCustomerData.phone}
-                    onChange={(e) =>
-                      setEditCustomerData({
-                        ...editCustomerData,
-                        phone: e.target.value,
-                      })
-                    }
-                    className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-1">
-                    ชื่อเฟสบุ๊ค
-                  </label>
-                  <input
-                    type="text"
-                    value={editCustomerData.facebook}
-                    onChange={(e) =>
-                      setEditCustomerData({
-                        ...editCustomerData,
-                        facebook: e.target.value,
-                      })
-                    }
-                    className="w-full px-5 py-4 bg-gray-50 border border-transparent focus:border-blue-500 focus:bg-white rounded-2xl outline-none font-bold text-sm transition-all text-gray-700"
-                  />
-                </div>
+                <input
+                  type="tel"
+                  value={editCustomerData.phone}
+                  onChange={(e) =>
+                    setEditCustomerData({
+                      ...editCustomerData,
+                      phone: e.target.value,
+                    })
+                  }
+                  className="w-full px-5 py-4 bg-gray-50 rounded-2xl outline-none font-bold text-sm text-gray-700"
+                  placeholder="เบอร์โทรศัพท์"
+                />
+                <input
+                  type="text"
+                  value={editCustomerData.facebook}
+                  onChange={(e) =>
+                    setEditCustomerData({
+                      ...editCustomerData,
+                      facebook: e.target.value,
+                    })
+                  }
+                  className="w-full px-5 py-4 bg-gray-50 rounded-2xl outline-none font-bold text-sm text-gray-700"
+                  placeholder="เฟสบุ๊ค"
+                />
               </div>
               <div className="pt-4 flex gap-4">
                 <button
                   type="button"
                   onClick={() => setEditModalOpen(false)}
                   disabled={isUpdating}
-                  className="w-full py-4 rounded-2xl font-black text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
+                  className="w-full py-4 rounded-2xl font-black text-gray-600 bg-gray-100 hover:bg-gray-200"
                 >
                   ยกเลิก
                 </button>
                 <button
                   type="submit"
                   disabled={isUpdating}
-                  className="w-full bg-blue-500 hover:bg-blue-600 text-white py-4 rounded-2xl font-black shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="w-full bg-blue-500 hover:bg-blue-600 text-white py-4 rounded-2xl font-black shadow-xl transition-all flex items-center justify-center gap-2"
                 >
-                  {isUpdating ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <Save className="w-5 h-5" />
-                  )}
                   บันทึกการแก้ไข
                 </button>
               </div>
@@ -1134,7 +838,6 @@ export default function CustomersPage() {
         </div>
       )}
 
-      {/* --- DELETE CONFIRMATION MODAL --- */}
       {deleteModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div
@@ -1151,26 +854,22 @@ export default function CustomersPage() {
             <p className="text-sm font-bold text-gray-500 mb-8">
               ข้อมูลและประวัติเงินกู้ทั้งหมดของ{" "}
               <span className="text-gray-800">
-                {customerToDelete?.name || customerToDelete?.nickname}
+                {customerToDelete?.nickname || customerToDelete?.name}
               </span>{" "}
               จะหายไปถาวร
             </p>
             <div className="flex gap-4">
               <button
                 onClick={() => setDeleteModalOpen(false)}
-                className="w-full py-4 rounded-2xl font-black text-gray-600 bg-gray-50 hover:bg-gray-100 transition-colors"
+                className="w-full py-4 rounded-2xl font-black text-gray-600 bg-gray-50"
               >
                 ยกเลิก
               </button>
               <button
                 onClick={handleDelete}
-                className="w-full py-4 rounded-2xl font-black text-white bg-red-500 hover:bg-red-600 shadow-xl transition-all"
+                className="w-full py-4 rounded-2xl font-black text-white bg-red-500 hover:bg-red-600"
               >
-                {loading ? (
-                  <Loader2 className="w-5 h-5 animate-spin mx-auto" />
-                ) : (
-                  "ยืนยันการลบ"
-                )}
+                ยืนยันการลบ
               </button>
             </div>
           </div>

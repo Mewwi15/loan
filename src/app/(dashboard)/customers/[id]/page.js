@@ -13,6 +13,7 @@ import {
   updateDoc,
   writeBatch,
   serverTimestamp,
+  increment,
 } from "firebase/firestore";
 import {
   ArrowLeft,
@@ -42,6 +43,7 @@ import {
   Award,
   Package,
   RefreshCw,
+  Undo2,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -448,7 +450,6 @@ export default function CustomerDetailPage({ params }) {
     }
   };
 
-  // 🌟 ฟังก์ชัน สลับประเภทวงโดยตรงบนการ์ด (Toggle Category)
   const handleToggleCategory = async (loan) => {
     const newCategory = loan.category === "PD" ? "normal" : "PD";
     const confirmMsg = `ยืนยันเปลี่ยนวง ${loan.loanNumber || ""} ให้เป็น "${newCategory === "PD" ? "ผ่อนของ (PD)" : "กู้ปกติ"}" ใช่หรือไม่?`;
@@ -458,12 +459,9 @@ export default function CustomerDetailPage({ params }) {
     setIsProcessingAction(true);
     try {
       const batch = writeBatch(db);
-
-      // 1. อัปเดตในตาราง loans
       const loanRef = doc(db, "loans", loan.id);
       batch.update(loanRef, { category: newCategory });
 
-      // 2. อัปเดตในตาราง schedules (ค่างวดทั้งหมด)
       const schedulesQ = query(
         collection(db, "schedules"),
         where("loanId", "==", loan.id),
@@ -474,8 +472,8 @@ export default function CustomerDetailPage({ params }) {
       });
 
       await batch.commit();
-      await syncCustomerData(); // ซิงค์ยอดหนี้รวมลูกค้า
-      fetchData(); // โหลด UI ใหม่
+      await syncCustomerData();
+      fetchData();
     } catch (error) {
       console.error("Error toggling category:", error);
       alert("เกิดข้อผิดพลาดในการเปลี่ยนประเภท");
@@ -533,6 +531,7 @@ export default function CustomerDetailPage({ params }) {
     setFormData((prev) => ({ ...prev, frequency: val, type: type }));
   };
 
+  // 🌟 ลอจิกใหม่: อัปเดตสัญญาโดยรักษาตำแหน่งงวดที่เคยจ่ายไว้ที่เดิมเป๊ะๆ (ไม่มีการถมฟันหลอ)
   const handleUpdateContract = async () => {
     setIsSavingContract(true);
     const batch = writeBatch(db);
@@ -545,13 +544,14 @@ export default function CustomerDetailPage({ params }) {
       );
       const oldSchedulesSnap = await getDocs(oldSchedulesQ);
 
-      const paidHistory = {};
+      // เก็บประวัติเก่าโดยอิงจาก "เลขงวด" (installmentNo) เป็นหลัก
+      const paidHistoryMap = {};
       oldSchedulesSnap.forEach((d) => {
         const data = d.data();
         if (data.status === "paid") {
-          paidHistory[data.installmentNo] = data;
+          paidHistoryMap[data.installmentNo] = data;
         }
-        batch.delete(d.ref);
+        batch.delete(d.ref); // ลบของเก่าเตรียมสร้างใหม่
       });
 
       let newRemainingBalance = actualTotalToCollect;
@@ -568,7 +568,9 @@ export default function CustomerDetailPage({ params }) {
         }
 
         const installmentNo = i + 1;
-        const oldPaidData = paidHistory[installmentNo];
+
+        // 🌟 เช็คว่าเลขงวดนี้ ในอดีตเคยถูกติ๊กจ่ายไว้หรือไม่
+        const oldPaidData = paidHistoryMap[installmentNo];
         const isPaid = !!oldPaidData;
 
         if (isPaid) {
@@ -619,7 +621,7 @@ export default function CustomerDetailPage({ params }) {
       await batch.commit();
       await syncCustomerData();
 
-      alert("✅ อัปเดตสัญญาสำเร็จ! ประเภทและยอดหนี้ถูกแยกคำนวณเรียบร้อยแล้ว");
+      alert("✅ อัปเดตสัญญาสำเร็จ! ตำแหน่งงวดที่เคยชำระยังอยู่ครบถ้วน");
       setEditContractModalOpen(false);
       fetchData();
     } catch (error) {
@@ -713,9 +715,7 @@ export default function CustomerDetailPage({ params }) {
         });
       }
       await batch.commit();
-
       await syncCustomerData();
-
       alert(
         `🎉 ปิดวงล่วงหน้าสำเร็จ!\nยอดที่รับ: ฿${totalPaidAmount.toLocaleString()}`,
       );
@@ -752,6 +752,90 @@ export default function CustomerDetailPage({ params }) {
     }
   };
 
+  // 🌟 ฟีเจอร์ใหม่: บอสสามารถคลิกจิ้มแก้ยอดหน้าตารางค่างวดได้เลย!
+  const toggleScheduleStatus = async (scheduleItem) => {
+    const isCurrentlyPaid = scheduleItem.status === "paid";
+
+    // ถามย้ำเพื่อความชัวร์
+    const confirmMsg = isCurrentlyPaid
+      ? `ต้องการยกเลิกการรับเงินงวดที่ ${scheduleItem.installmentNo} ใช่หรือไม่?\n(สถานะจะกลับเป็น "ค้างชำระ" และยอดหนี้จะเพิ่มขึ้น)`
+      : `ต้องการเปลี่ยนงวดที่ ${scheduleItem.installmentNo} เป็น "ชำระแล้ว" ใช่หรือไม่?\n(ยอดหนี้จะลดลง)`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsProcessingAction(true);
+    try {
+      const batch = writeBatch(db);
+
+      // 1. เปลี่ยนสถานะค่างวด
+      const scheduleRef = doc(db, "schedules", scheduleItem.id);
+      batch.update(scheduleRef, {
+        status: isCurrentlyPaid ? "pending" : "paid",
+        paidAt: isCurrentlyPaid ? null : serverTimestamp(),
+      });
+
+      // 2. ปรับตัวเลขในตารางวงกู้ (Loans)
+      const loanRef = doc(db, "loans", selectedLoan.id);
+      const amountChange = isCurrentlyPaid
+        ? scheduleItem.amount
+        : -scheduleItem.amount;
+      const installmentChange = isCurrentlyPaid ? -1 : 1;
+
+      batch.update(loanRef, {
+        remainingBalance: increment(amountChange),
+        currentInstallment: increment(installmentChange),
+      });
+
+      // 3. ดึง transaction ที่เคยสร้างไว้มาลบออก (ถ้ายกเลิก) หรือสร้างใหม่ (ถ้าติ๊กเพิ่ม)
+      if (isCurrentlyPaid) {
+        // ถ้ายกเลิก ให้หาบิลที่มีเลขงวดตรงกัน แล้วลบทิ้ง (หรือจะไม่ลบก็ได้ แต่นี่คือลบเพื่อความเนียน)
+        const transQ = query(
+          collection(db, "transactions"),
+          where("loanId", "==", selectedLoan.id),
+          where("installmentNo", "==", scheduleItem.installmentNo),
+        );
+        const transSnap = await getDocs(transQ);
+        transSnap.forEach((t) => batch.delete(t.ref));
+      } else {
+        // ถ้าติ๊กใหม่ ให้สร้างบิล
+        const transRef = doc(collection(db, "transactions"));
+        batch.set(transRef, {
+          loanId: selectedLoan.id,
+          customerId: customerId,
+          customerName: selectedLoan.customerName,
+          amountPaid: scheduleItem.amount,
+          profitShare: scheduleItem.profitShare || 0,
+          penalty: 0,
+          installmentNo: scheduleItem.installmentNo,
+          paymentDate: new Date().toISOString().split("T")[0], // วันที่กดแก้
+          createdAt: serverTimestamp(),
+          note: "บันทึกจากการแก้ไขตารางค่างวด (Manual)",
+          category: selectedLoan.category || "normal",
+        });
+      }
+
+      await batch.commit();
+
+      // 4. ซิงค์ยอดรวมหน้าโปรไฟล์ลูกค้าใหม่
+      await syncCustomerData();
+
+      // 5. อัปเดต UI หน้าจอทันที
+      setLoanSchedule((prev) =>
+        prev.map((s) =>
+          s.id === scheduleItem.id
+            ? { ...s, status: isCurrentlyPaid ? "pending" : "paid" }
+            : s,
+        ),
+      );
+      fetchData(); // รีเฟรชหน้าหลักเพื่ออัปเดตยอดคงเหลือในตาราง
+    } catch (error) {
+      console.error("Error toggling status:", error);
+      alert("เกิดข้อผิดพลาดในการปรับสถานะ");
+    } finally {
+      setIsProcessingAction(false);
+    }
+  };
+
   if (loading)
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-gray-400 font-black text-[10px] uppercase tracking-[0.3em]">
@@ -783,7 +867,6 @@ export default function CustomerDetailPage({ params }) {
 
   return (
     <div className="w-full pb-20 px-3 sm:px-10 font-sans animate-in fade-in duration-500">
-      {/* 👤 ส่วนหัว: ข้อมูลลูกค้า */}
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 sm:gap-6 mb-6 pt-6 sm:pt-10">
         <div className="flex items-start gap-4 sm:gap-6 w-full">
           <Link
@@ -818,9 +901,6 @@ export default function CustomerDetailPage({ params }) {
         </div>
       </div>
 
-      {/* ======================================================== */}
-      {/* 🏆 โซนที่ 1: ภาพรวมประวัติกำไร (Top Section) */}
-      {/* ======================================================== */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-8">
         <div className="bg-[#1F2335] p-5 sm:p-6 rounded-2xl sm:rounded-[2rem] shadow-xl flex flex-col justify-center relative overflow-hidden text-white transition-transform hover:-translate-y-1">
           <div className="absolute top-0 right-0 w-20 h-20 bg-green-500/20 rounded-full blur-xl -mr-6 -mt-6"></div>
@@ -894,9 +974,6 @@ export default function CustomerDetailPage({ params }) {
 
       <div className="w-full h-px bg-gray-100 mb-8 sm:mb-12"></div>
 
-      {/* ======================================================== */}
-      {/* 💼 โซนที่ 2: รายการวงกู้ที่กำลังดำเนินการ (Middle Section) */}
-      {/* ======================================================== */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-3 sm:gap-4 mb-5 sm:mb-6">
         <div className="flex items-center gap-2.5 sm:gap-3">
           <div className="p-2 sm:p-3 bg-orange-50 rounded-xl sm:rounded-2xl flex flex-col">
@@ -970,7 +1047,6 @@ export default function CustomerDetailPage({ params }) {
                         <h3 className="text-lg sm:text-xl font-black text-gray-800 tracking-tight">
                           วง {loan.loanNumber || index + 1}
                         </h3>
-                        {/* 🌟 ปุ่มสลับประเภท (คลิกได้เลย) */}
                         <button
                           type="button"
                           onClick={() => handleToggleCategory(loan)}
@@ -1143,7 +1219,6 @@ export default function CustomerDetailPage({ params }) {
             </div>
 
             <div className="overflow-y-auto p-5 sm:p-8 flex-1 space-y-4 sm:space-y-6">
-              {/* 🌟 Dropdown เลือกประเภทวง (กู้ปกติ / ผ่อนของ) */}
               <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
                 <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2 flex items-center gap-2">
                   <Package className="w-4 h-4 text-blue-500" /> ประเภทวง
@@ -1518,15 +1593,15 @@ export default function CustomerDetailPage({ params }) {
         </div>
       )}
 
-      {/* Modal ดูตารางงวด */}
+      {/* Modal ดูตารางงวด พร้อมปุ่มแก้บิลสุดเทพ */}
       {scheduleModalOpen && selectedLoan && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div
             className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm"
-            onClick={() => setScheduleModalOpen(false)}
+            onClick={() => !isProcessingAction && setScheduleModalOpen(false)}
           ></div>
           <div className="relative bg-white w-full max-w-lg rounded-[1.5rem] sm:rounded-[2.5rem] shadow-2xl flex flex-col max-h-[85vh] animate-in zoom-in-95">
-            <div className="p-5 sm:p-8 border-b border-gray-100 flex justify-between items-center">
+            <div className="p-5 sm:p-8 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 rounded-t-[1.5rem] sm:rounded-t-[2.5rem]">
               <div>
                 <h2 className="text-lg sm:text-2xl font-black text-gray-800 flex items-center gap-2 sm:gap-3">
                   <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6 text-orange-500" />{" "}
@@ -1537,36 +1612,54 @@ export default function CustomerDetailPage({ params }) {
                     วง {selectedLoan.loanNumber || "-"}
                   </span>
                   <p className="text-[9px] sm:text-[14px] font-black text-gray-400 uppercase tracking-widest">
-                    {selectedLoan.totalInstallments} งวด
+                    แตะที่ ❌ หรือ ✅ เพื่อแก้ไขสถานะงวด
                   </p>
                 </div>
               </div>
               <button
-                onClick={() => setScheduleModalOpen(false)}
-                className="p-2 sm:p-2.5 bg-gray-50 hover:bg-red-50 text-gray-400 hover:text-red-500 rounded-lg sm:rounded-xl transition-all"
+                onClick={() =>
+                  !isProcessingAction && setScheduleModalOpen(false)
+                }
+                className="p-2 sm:p-2.5 bg-white border border-gray-200 hover:bg-red-50 text-gray-400 hover:text-red-500 rounded-lg sm:rounded-xl transition-all shadow-sm"
               >
                 <X className="w-5 h-5 sm:w-6 sm:h-6" />
               </button>
             </div>
-            <div className="overflow-y-auto p-4 sm:p-8 bg-gray-50/50 flex-1">
-              {loadingSchedule ? (
+
+            <div className="overflow-y-auto p-4 sm:p-8 bg-gray-50/30 flex-1">
+              {loadingSchedule || isProcessingAction ? (
                 <div className="py-16 sm:py-20 flex flex-col items-center gap-3 text-gray-300 font-black text-[10px] uppercase">
-                  <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" />{" "}
-                  กำลังโหลด...
+                  <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin text-orange-500" />{" "}
+                  กำลังประมวลผล...
                 </div>
               ) : (
                 <div className="space-y-2.5 sm:space-y-3">
                   {loanSchedule.map((item) => (
                     <div
                       key={item.id}
-                      className={`flex items-center justify-between p-3.5 sm:p-5 rounded-xl sm:rounded-[1.5rem] border bg-white transition-all ${item.status === "paid" ? "opacity-50 grayscale" : "border-gray-100 shadow-sm"}`}
+                      className={`flex items-center justify-between p-3.5 sm:p-5 rounded-xl sm:rounded-[1.5rem] border bg-white transition-all group hover:border-blue-300 ${item.status === "paid" ? "opacity-60 hover:opacity-100" : "border-gray-100 shadow-sm"}`}
                     >
                       <div className="flex items-center gap-3 sm:gap-4">
-                        {item.status === "paid" ? (
-                          <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6 text-green-500" />
-                        ) : (
-                          <CircleDashed className="w-5 h-5 sm:w-6 sm:h-6 text-orange-300" />
-                        )}
+                        {/* 🌟 ปุ่มคลิกเปลี่ยนสถานะค่างวดแบบ Manual */}
+                        <button
+                          onClick={() => toggleScheduleStatus(item)}
+                          title={
+                            item.status === "paid"
+                              ? "คลิกเพื่อยกเลิกการจ่าย (กลับเป็นค้างชำระ)"
+                              : "คลิกเพื่อยืนยันการจ่าย"
+                          }
+                          className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center shrink-0 transition-transform active:scale-90 hover:scale-105 ${item.status === "paid" ? "bg-green-50 text-green-500 hover:bg-red-50 hover:text-red-500" : "bg-orange-50 text-orange-400 hover:bg-green-50 hover:text-green-500"}`}
+                        >
+                          {item.status === "paid" ? (
+                            <>
+                              <CheckCircle2 className="w-6 h-6 group-hover:hidden" />
+                              <Undo2 className="w-6 h-6 hidden group-hover:block" />
+                            </>
+                          ) : (
+                            <CircleDashed className="w-6 h-6" />
+                          )}
+                        </button>
+
                         <div>
                           <p className="text-xs sm:text-sm font-black text-gray-800">
                             งวดที่ {item.installmentNo}
@@ -1583,7 +1676,7 @@ export default function CustomerDetailPage({ params }) {
                           ฿{item.amount.toLocaleString()}
                         </p>
                         <p
-                          className={`text-[7px] sm:text-[9px] font-black uppercase ${item.status === "paid" ? "text-green-600" : "text-green-500"}`}
+                          className={`text-[7px] sm:text-[9px] font-black uppercase ${item.status === "paid" ? "text-gray-400" : "text-green-500"}`}
                         >
                           กำไร: ฿{(item.profitShare || 0).toLocaleString()}
                         </p>
@@ -1593,6 +1686,7 @@ export default function CustomerDetailPage({ params }) {
                 </div>
               )}
             </div>
+
             <div className="p-5 sm:p-8 border-t border-gray-100 bg-white rounded-b-[1.5rem] sm:rounded-b-[2.5rem] flex justify-between items-center">
               <div>
                 <p className="text-[8px] sm:text-[10px] font-black text-gray-400 uppercase tracking-widest">
@@ -1603,7 +1697,9 @@ export default function CustomerDetailPage({ params }) {
                 </p>
               </div>
               <button
-                onClick={() => setScheduleModalOpen(false)}
+                onClick={() =>
+                  !isProcessingAction && setScheduleModalOpen(false)
+                }
                 className="bg-gray-900 hover:bg-black text-white px-6 sm:px-10 py-2.5 sm:py-4 rounded-xl sm:rounded-2xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest"
               >
                 ปิดหน้าต่าง

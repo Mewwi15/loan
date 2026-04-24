@@ -8,7 +8,6 @@ import {
   where,
   getDocs,
   doc,
-  getDoc,
   writeBatch,
   serverTimestamp,
   increment,
@@ -34,44 +33,77 @@ export default function DailyCheckPage() {
   const [loading, setLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
+  // 🌟 ลอจิกใหม่: บังคับดึงงวดที่เก่าที่สุดที่ยังไม่จ่าย (แก้ปัญหากดข้ามงวด)
   const fetchDailyJobs = useCallback(async () => {
     if (!selectedDate) return;
 
     setLoading(true);
     try {
-      const q = query(
-        collection(db, "schedules"),
-        where("dueDate", "==", selectedDate),
-        where("status", "==", "pending"),
+      // 1. ดึงวงกู้ที่กำลังดำเนินการทั้งหมดมาเตรียมไว้
+      const loansQ = query(
+        collection(db, "loans"),
+        where("status", "==", "active"),
+      );
+      const loansSnap = await getDocs(loansQ);
+      const activeLoansMap = new Map();
+      loansSnap.forEach((docSnap) =>
+        activeLoansMap.set(docSnap.id, docSnap.data()),
       );
 
-      const querySnapshot = await getDocs(q);
-      const jobs = [];
+      // 2. ดึงตารางค่างวดที่ยัง "pending" (ค้างจ่าย) ทั้งหมด
+      const schedulesQ = query(
+        collection(db, "schedules"),
+        where("status", "==", "pending"),
+      );
+      const schedulesSnap = await getDocs(schedulesQ);
 
-      for (const docSnap of querySnapshot.docs) {
-        const scheduleData = docSnap.data();
-        const loanRef = doc(db, "loans", scheduleData.loanId);
-        const loanSnap = await getDoc(loanRef);
+      // 3. กรองหา "งวดที่เก่าที่สุด" ของแต่ละวงกู้
+      const earliestPendingMap = new Map();
 
-        if (loanSnap.exists() && loanSnap.data().status !== "closed") {
-          const loanData = loanSnap.data();
-          jobs.push({
-            id: docSnap.id,
-            ...scheduleData,
-            customerId: scheduleData.customerId || loanData.customerId || null,
-            remainingBefore: loanData.remainingBalance,
-            loanNumber: loanData.loanNumber || "-",
-            loanName: loanData.loanName || loanData.customerName,
-            bankName: loanData.bankName || "ไม่ระบุ",
-            bankOwner: loanData.bankOwner || "ไม่ระบุ",
-            bankColor: loanData.bankColor || "#cbd5e1",
-            isChecked: false,
-            penalty: 0,
-          });
+      schedulesSnap.forEach((docSnap) => {
+        const data = docSnap.data();
+
+        // ตรวจสอบว่าวงกู้นี้ยัง Active อยู่
+        if (activeLoansMap.has(data.loanId)) {
+          // ดึงเฉพาะงวดที่กำหนดจ่าย "ก่อนหรือตรงกับ" วันที่แอดมินเลือก
+          if (data.dueDate <= selectedDate) {
+            const currentEarliest = earliestPendingMap.get(data.loanId);
+            // ถ้ายังไม่มีใน Map หรือ งวดนี้เก่ากว่า (เลขน้อยกว่า) ให้บันทึกทับ
+            if (
+              !currentEarliest ||
+              data.installmentNo < currentEarliest.installmentNo
+            ) {
+              earliestPendingMap.set(data.loanId, { id: docSnap.id, ...data });
+            }
+          }
         }
+      });
+
+      // 4. ประกอบร่างข้อมูลสำหรับนำไปแสดงผล
+      const jobs = [];
+      for (const [loanId, schedule] of earliestPendingMap.entries()) {
+        const loanData = activeLoansMap.get(loanId);
+        jobs.push({
+          id: schedule.id,
+          ...schedule,
+          customerId: schedule.customerId || loanData.customerId || null,
+          remainingBefore: loanData.remainingBalance,
+          loanNumber: loanData.loanNumber || "-",
+          loanName: loanData.loanName || loanData.customerName,
+          bankName: loanData.bankName || "ไม่ระบุ",
+          bankOwner: loanData.bankOwner || "ไม่ระบุ",
+          bankColor: loanData.bankColor || "#cbd5e1",
+          isChecked: false,
+          penalty: 0,
+          isOverdue: schedule.dueDate < selectedDate, // เช็คว่าเป็นหนี้ค้างของวันก่อนหน้าหรือไม่
+        });
       }
 
+      // 5. เรียงลำดับ: เอาคนที่ "ค้างชำระ" ขึ้นก่อน แล้วตามด้วยเลขวงกู้
       jobs.sort((a, b) => {
+        if (a.isOverdue && !b.isOverdue) return -1;
+        if (!a.isOverdue && b.isOverdue) return 1;
+
         const numA =
           parseInt(String(a.loanNumber || "999999").trim(), 10) || 999999;
         const numB =
@@ -134,6 +166,7 @@ export default function DailyCheckPage() {
 
     try {
       for (const item of itemsToPay) {
+        // 1. อัปเดตสถานะค่างวดเป็นจ่ายแล้ว
         const scheduleRef = doc(db, "schedules", item.id);
         batch.update(scheduleRef, {
           status: "paid",
@@ -141,18 +174,21 @@ export default function DailyCheckPage() {
           appliedPenalty: item.penalty,
         });
 
+        // 2. ลดหนี้คงเหลือ และเพิ่มจำนวนงวดที่จ่ายแล้วในวงกู้
         const loanRef = doc(db, "loans", item.loanId);
         batch.update(loanRef, {
           remainingBalance: increment(-item.amount),
           currentInstallment: increment(1),
         });
 
+        // 3. ลดหนี้รวมในหน้าโปรไฟล์ลูกค้า
         if (item.customerId) {
           const customerRef = doc(db, "customers", item.customerId);
           batch.update(customerRef, {
             totalDebt: increment(-item.amount),
           });
         } else {
+          // Fallback เผื่อไม่มี customerId ให้ค้นหาจากชื่อแทน
           const customerQuery = query(
             collection(db, "customers"),
             where("name", "==", item.customerName),
@@ -166,6 +202,7 @@ export default function DailyCheckPage() {
           }
         }
 
+        // 4. บันทึกลงประวัติการทำธุรกรรม (Transactions)
         const transRef = doc(collection(db, "transactions"));
         batch.set(transRef, {
           loanId: item.loanId,
@@ -175,14 +212,14 @@ export default function DailyCheckPage() {
           profitShare: item.profitShare || 0,
           penalty: item.penalty || 0,
           installmentNo: item.installmentNo,
-          paymentDate: selectedDate,
+          paymentDate: selectedDate, // ยึดตามวันที่แอดมินเลือก
           createdAt: serverTimestamp(),
         });
       }
 
       await batch.commit();
       alert("✅ ตัดยอดและบันทึกกำไรเรียบร้อยแล้ว");
-      fetchDailyJobs();
+      fetchDailyJobs(); // รีเฟรชจอ ถ้างวดถัดไปถึงกำหนดจ่ายพอดี มันจะเด้งขึ้นมาให้ทันที
     } catch (error) {
       console.error("Error saving payments:", error);
       alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
@@ -192,7 +229,6 @@ export default function DailyCheckPage() {
   };
 
   return (
-    // 🌟 เปลี่ยน Padding ซ้ายขวาให้เหมาะกับ iPad (md:px-6 lg:px-8)
     <div className="w-full pb-20 px-4 md:px-6 lg:px-8 font-sans animate-in fade-in duration-500">
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6 mb-8 pt-6 md:pt-10">
         <div>
@@ -233,7 +269,6 @@ export default function DailyCheckPage() {
           </div>
         ) : filteredQueue.length > 0 ? (
           <div className="overflow-x-auto w-full">
-            {/* 🌟 เอา min-w-[1000px] ออก เปลี่ยนเป็น min-w-[700px] ให้พอดีจอ iPad แนวนอน/แนวตั้ง */}
             <table className="w-full text-left min-w-[700px] xl:min-w-full">
               <thead className="bg-gray-50/50 border-b border-gray-50">
                 <tr className="text-[10px] md:text-[12px] font-black text-gray-400 uppercase tracking-[0.1em] md:tracking-[0.2em]">
@@ -300,7 +335,13 @@ export default function DailyCheckPage() {
                               <span className="text-[8px] md:text-[9px] font-bold text-gray-500 uppercase tracking-widest bg-white border border-gray-100 shadow-sm px-1.5 md:px-2 py-0.5 rounded-md">
                                 งวดที่ {item.installmentNo}
                               </span>
-                              <span className="text-[9px] md:text-[10px] font-bold text-gray-400 truncate max-w-[80px] md:max-w-[120px]">
+                              {/* 🌟 ไฮไลท์เตือนชัดๆ ถ้างวดนี้คือยอดที่ค้างมาจากวันก่อนๆ */}
+                              {item.isOverdue && (
+                                <span className="text-[8px] md:text-[9px] font-bold text-red-600 uppercase tracking-widest bg-red-50 border border-red-200 px-1.5 md:px-2 py-0.5 rounded-md shadow-sm animate-pulse">
+                                  ค้างชำระ
+                                </span>
+                              )}
+                              <span className="text-[9px] md:text-[10px] font-bold text-gray-400 truncate max-w-[80px] md:max-w-[120px] ml-1">
                                 {item.customerName}
                               </span>
                             </div>
