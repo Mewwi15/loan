@@ -290,22 +290,45 @@ export default function ShareCommandCenterPage() {
   const standardGuaranteeDeduction =
     share.installmentAmount * DEDUCT_HANDS_COUNT;
 
-  // 🌟 ยอดหนี้ตั้งต้น คือ 6,000 เต็ม (ยอดกองกลาง)
-  const totalObligationPerHand = share.poolAmount;
+  // 🌟 ฐานหนี้ = (ยอดเก็บรวม/งวด) - (หักค้ำท้าย) *** ตามลอจิกของบอสเป๊ะๆ ***
+  const totalObligationPerHand =
+    totalCollectedPerPeriod - standardGuaranteeDeduction;
 
   // ==========================================
-  // 🌟 ดึงตัวเลขมาโชว์บนการ์ดแบบเพียวๆ (ไม่บวกกัน)
+  // 🌟 ดึงตัวแปรมาตรฐาน 1 มือ มาแสดงบนการ์ด
   // ==========================================
-  // จำนวนงวดมาตรฐานที่ลูกแชร์ต้องจ่ายมาแล้ว (ก่อนเช็คชื่อรอบปัจจุบัน) คือ (currentPeriod - 1)
-  const basePaidPeriodsCount = Math.max(0, currentPeriod - 1);
-  const singleHandTotalPaid = basePaidPeriodsCount * share.installmentAmount;
+  const standardPaidPeriods = Math.max(0, currentPeriod - 1);
 
-  // ยอดโชว์สำหรับ "มือเป็น" (เงินออมสะสมของ 1 มือ)
-  const displayAliveSaved = singleHandTotalPaid;
+  // 🟢 ยอดออมสะสม (ของ 1 มือ)
+  const displayAliveSaved = standardPaidPeriods * share.installmentAmount;
 
-  // ยอดโชว์สำหรับ "มือตาย" (หนี้คงเหลือของ 1 มือ) = ฐานหนี้เต็ม - ที่จ่ายมาแล้ว
-  let displayDeadDebt = totalObligationPerHand - singleHandTotalPaid;
-  if (displayDeadDebt < 0) displayDeadDebt = 0;
+  // 🔴 หนี้คงเหลือ (ของ 1 มือ) = ฐานหนี้ - ที่ออมมาแล้ว
+  const displayDeadDebt = Math.max(
+    0,
+    totalObligationPerHand - displayAliveSaved,
+  );
+
+  // คำนวณยอดสุทธิ (Net Balance) ของลูกค้าทุกคน สำหรับแสดงในตารางที่ 2
+  const customerNetBalances = {};
+  hands.forEach((h) => {
+    const cid = h.customerId;
+    if (!customerNetBalances[cid]) customerNetBalances[cid] = 0;
+
+    const isAlive = h.status === "alive";
+    const isClosed = h.status === "closed";
+    const realTotalPaid =
+      (h.paidPeriods?.length || 0) * share.installmentAmount;
+
+    if (isClosed) return;
+
+    if (isAlive) {
+      customerNetBalances[cid] += realTotalPaid;
+    } else if (h.status === "dead") {
+      let actualRemainingDebt = totalObligationPerHand - realTotalPaid;
+      if (actualRemainingDebt < 0) actualRemainingDebt = 0;
+      customerNetBalances[cid] -= actualRemainingDebt;
+    }
+  });
 
   const eligibleCandidates = hands.filter(
     (h) =>
@@ -375,6 +398,7 @@ export default function ShareCommandCenterPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-4">
+              {/* 🌟 การ์ดแสดงยอดแบบ 1 มือ (ไม่รวมยอดคนอื่น) */}
               <div className="bg-[#f8fafc] border border-blue-100 rounded-[1rem] px-6 py-4 shadow-sm min-w-[220px]">
                 <p className="text-sm font-bold text-[#2563eb] tracking-wide mb-1">
                   เงินออมสะสม (มือเป็น)
@@ -482,20 +506,20 @@ export default function ShareCommandCenterPage() {
                 const hasPaidThisPeriod =
                   hand.paidPeriods?.includes(currentPeriod);
 
-                // 🌟 ใช้คณิตศาสตร์ 100%
                 const realTotalPaid =
                   (hand.paidPeriods?.length || 0) * share.installmentAmount;
                 const prevPaid = hasPaidThisPeriod
                   ? realTotalPaid - share.installmentAmount
                   : realTotalPaid;
 
+                // 🌟 ยอดรับจริง = กองกลาง - หักค้ำ (ตามป้ายแดงเดิม)
                 const handGuaranteeDeduction = isTao
                   ? 0
                   : standardGuaranteeDeduction;
                 const handActualReceived =
                   share.poolAmount - handGuaranteeDeduction;
 
-                // 🌟 หนี้คงเหลือที่แท้จริง = กองกลางเต็ม - จ่ายไปแล้ว
+                // 🌟 หนี้คงเหลือที่แท้จริง = ฐานหนี้ (ยอดเก็บรวม-หักค้ำ) - จ่ายไปแล้ว
                 let currentRemainingDebt =
                   totalObligationPerHand - realTotalPaid;
                 if (currentRemainingDebt < 0) currentRemainingDebt = 0;
@@ -791,6 +815,9 @@ export default function ShareCommandCenterPage() {
                     #
                   </th>
                   <th className="px-6 py-4 font-semibold">ชื่อลูกค้า</th>
+                  <th className="px-6 py-4 font-semibold text-right">
+                    ยอดสุทธิ (ทั้งวง)
+                  </th>
                   <th className="px-6 py-4 font-semibold text-center w-[200px]">
                     จัดการ
                   </th>
@@ -800,6 +827,9 @@ export default function ShareCommandCenterPage() {
                 {eligibleCandidates.map((cand) => {
                   const hasSkipped =
                     cand.skippedPeriods?.includes(currentPeriod);
+
+                  const netBal = customerNetBalances[cand.customerId] || 0;
+                  const isPositive = netBal >= 0;
 
                   return (
                     <tr
@@ -824,6 +854,13 @@ export default function ShareCommandCenterPage() {
                             </span>
                           )}
                         </div>
+                      </td>
+
+                      <td
+                        className={`px-6 py-4 text-right font-bold ${isPositive ? "text-green-600" : "text-red-600"}`}
+                      >
+                        {isPositive ? "+" : "-"} ฿
+                        {Math.abs(netBal).toLocaleString()}
                       </td>
 
                       <td className="px-6 py-4">
