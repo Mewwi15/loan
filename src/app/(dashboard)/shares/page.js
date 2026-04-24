@@ -36,7 +36,8 @@ import {
   Calculator,
   Check,
   Coins,
-  User,
+  Search, // 🌟 นำเข้า Icon Search
+  Archive, // 🌟 นำเข้า Icon Archive สำหรับปิดวง
   ChevronRight,
 } from "lucide-react";
 
@@ -189,6 +190,7 @@ const ADMIN_BANK_ACCOUNTS = RAW_BANK_ACCOUNTS.map((b, idx) => ({
 
 export default function SharesDashboardPage() {
   const [shares, setShares] = useState([]);
+  const [searchTerm, setSearchTerm] = useState(""); // 🌟 State สำหรับการค้นหา
   const [loading, setLoading] = useState(true);
 
   const [activeMenuId, setActiveMenuId] = useState(null);
@@ -196,12 +198,11 @@ export default function SharesDashboardPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isBankDropdownOpen, setIsBankDropdownOpen] = useState(false);
 
-  // 🌟 State สำหรับระบบโปะปิดวง
+  // State สำหรับระบบโปะปิดวง
   const [payoffModalOpen, setPayoffModalOpen] = useState(false);
   const [payoffShare, setPayoffShare] = useState(null);
   const [payoffHands, setPayoffHands] = useState([]);
 
-  // 🌟 เปลี่ยนจาก ID เดียว เป็น Array เพื่อรองรับการเลือกหลายมือ
   const [selectedHandIds, setSelectedHandIds] = useState([]);
   const [tempSelectedHandIds, setTempSelectedHandIds] = useState([]);
 
@@ -244,6 +245,27 @@ export default function SharesDashboardPage() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // 🌟 ฟังก์ชัน ปิดวงแชร์ (ย้ายไปประวัติ)
+  const handleCloseShare = async (shareId, shareName) => {
+    setActiveMenuId(null);
+    const confirmMsg = `ยืนยันการปิดวงแชร์ "${shareName}" ใช่หรือไม่?\n\n*วงแชร์จะถูกย้ายไปที่ "ประวัติวงแชร์ที่จบแล้ว" และไม่สามารถทำรายการค่างวดต่อได้`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsProcessing(true);
+    try {
+      await updateDoc(doc(db, "shares", shareId), {
+        status: "completed",
+        closedAt: new Date().toISOString(),
+      });
+      alert("✅ ปิดวงแชร์และย้ายไปประวัติเรียบร้อยแล้ว");
+    } catch (error) {
+      console.error("Error closing share:", error);
+      alert("เกิดข้อผิดพลาดในการปิดวงแชร์");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handleDeleteShare = async (shareId, shareName) => {
     setActiveMenuId(null);
@@ -351,12 +373,11 @@ export default function SharesDashboardPage() {
     setIsBankDropdownOpen(false);
   };
 
-  // 🌟 ฟังก์ชันเปิด Modal โปะ
   const openPayoffModal = async (share) => {
     setActiveMenuId(null);
     setPayoffShare(share);
     setPayoffDate(new Date().toISOString().split("T")[0]);
-    setSelectedHandIds([]); // ล้างค่าแบบหลายคน
+    setSelectedHandIds([]);
     setTempSelectedHandIds([]);
     setIsHandSelectionModalOpen(false);
     setPayoffModalOpen(true);
@@ -384,17 +405,14 @@ export default function SharesDashboardPage() {
     }
   };
 
-  // 🌟 ฟังก์ชันสลับการเลือกมือแชร์ (Toggle)
   const toggleHandSelection = (handId) => {
-    setTempSelectedHandIds(
-      (prev) =>
-        prev.includes(handId)
-          ? prev.filter((id) => id !== handId) // ถ้ามีอยู่แล้วให้เอาออก
-          : [...prev, handId], // ถ้ายังไม่มีให้เพิ่มเข้าไป
+    setTempSelectedHandIds((prev) =>
+      prev.includes(handId)
+        ? prev.filter((id) => id !== handId)
+        : [...prev, handId],
     );
   };
 
-  // 🌟 ฟังก์ชันยืนยันการโปะ (อัปเดตหลายมือพร้อมกัน)
   const confirmEarlyPayoff = async () => {
     if (selectedHandIds.length === 0)
       return alert("กรุณาเลือกมือแชร์อย่างน้อย 1 มือครับ");
@@ -403,7 +421,6 @@ export default function SharesDashboardPage() {
     try {
       const batch = writeBatch(db);
 
-      // วนลูปอัปเดตทุกมือแชร์ที่เลือก
       selectedHandIds.forEach((handId) => {
         const handRef = doc(db, "share_hands", handId);
         batch.update(handRef, {
@@ -438,13 +455,20 @@ export default function SharesDashboardPage() {
     );
   }
 
-  const activeShares = shares.filter((s) => s.status === "active");
-  const completedShares = shares.filter((s) => s.status === "completed");
+  // 🌟 จัดการค้นหา
+  const filteredShares = shares.filter((share) =>
+    share.name.toLowerCase().includes(searchTerm.toLowerCase()),
+  );
+
+  const activeShares = filteredShares.filter((s) => s.status === "active");
+  const completedShares = filteredShares.filter(
+    (s) => s.status === "completed",
+  );
+
   const selectedBankData = ADMIN_BANK_ACCOUNTS.find(
     (b) => b.id === editingShare?.bankAccountId,
   );
 
-  // 🌟 คำนวณยอดหนี้รวมของ "ทุกมือ" ที่ถูกเลือก
   const selectedHandsDataList = payoffHands.filter((h) =>
     selectedHandIds.includes(h.id),
   );
@@ -498,7 +522,7 @@ export default function SharesDashboardPage() {
               วงแชร์ที่กำลังเดิน
             </p>
             <p className="text-3xl font-black text-gray-900">
-              {activeShares.length}{" "}
+              {shares.filter((s) => s.status === "active").length}{" "}
               <span className="text-sm font-semibold text-gray-500">วง</span>
             </p>
           </div>
@@ -513,7 +537,8 @@ export default function SharesDashboardPage() {
             </p>
             <p className="text-3xl font-black text-gray-900">
               ฿
-              {activeShares
+              {shares
+                .filter((s) => s.status === "active")
                 .reduce((sum, s) => sum + (s.poolAmount || 0), 0)
                 .toLocaleString()}
             </p>
@@ -528,10 +553,24 @@ export default function SharesDashboardPage() {
               วงแชร์ที่จบแล้ว
             </p>
             <p className="text-3xl font-black text-gray-900">
-              {completedShares.length}{" "}
+              {shares.filter((s) => s.status === "completed").length}{" "}
               <span className="text-sm font-semibold text-gray-500">วง</span>
             </p>
           </div>
+        </div>
+      </div>
+
+      {/* 🌟 SEARCH BAR --- */}
+      <div className="bg-white p-2 rounded-[1.2rem] shadow-sm border border-gray-200 flex items-center">
+        <div className="relative w-full text-gray-400 focus-within:text-blue-600 transition-colors">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5" />
+          <input
+            type="text"
+            placeholder="ค้นหาชื่อวงแชร์..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-12 pr-4 py-3 bg-transparent outline-none font-bold text-gray-700"
+          />
         </div>
       </div>
 
@@ -545,14 +584,8 @@ export default function SharesDashboardPage() {
           <div className="bg-white rounded-3xl p-10 text-center border border-dashed border-gray-300">
             <Wallet className="w-12 h-12 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500 font-semibold mb-4">
-              ยังไม่มีวงแชร์ในระบบ
+              ไม่พบวงแชร์ที่กำลังดำเนินการ
             </p>
-            <Link
-              href="/shares/new"
-              className="inline-flex bg-blue-50 text-blue-600 hover:bg-blue-100 px-6 py-3 rounded-xl font-bold text-sm transition-colors"
-            >
-              เปิดวงแรกเลยคลิก!
-            </Link>
           </div>
         ) : (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -588,10 +621,18 @@ export default function SharesDashboardPage() {
 
                       <button
                         onClick={() => openEditModal(share)}
-                        className="w-full text-left px-5 py-4 text-sm font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-3 border-b border-gray-50 transition-colors"
+                        className="w-full text-left px-5 py-4 text-sm font-bold text-blue-600 hover:bg-blue-50 flex items-center gap-3 border-b border-gray-50 transition-colors"
                       >
-                        <Edit2 className="w-4 h-4 text-blue-500" />{" "}
-                        แก้ไขข้อมูลวง
+                        <Edit2 className="w-4 h-4" /> แก้ไขข้อมูลวง
+                      </button>
+
+                      {/* 🌟 ปุ่มปิดวงแชร์ */}
+                      <button
+                        onClick={() => handleCloseShare(share.id, share.name)}
+                        className="w-full text-left px-5 py-4 text-sm font-bold text-amber-600 hover:bg-amber-50 flex items-center gap-3 border-b border-gray-50 transition-colors"
+                      >
+                        <Archive className="w-4 h-4" /> ปิดวงแชร์
+                        (ย้ายไปประวัติ)
                       </button>
 
                       <button
@@ -639,7 +680,7 @@ export default function SharesDashboardPage() {
                       งวดปัจจุบัน
                     </p>
                     <p className="text-base font-black text-gray-900">
-                      {share.currentPeriod} / {share.totalHands}
+                      {share.currentPeriod || 1} / {share.totalHands}
                     </p>
                   </div>
                 </div>
@@ -666,7 +707,7 @@ export default function SharesDashboardPage() {
             {completedShares.map((share) => (
               <div
                 key={share.id}
-                className="bg-white rounded-2xl p-5 border border-gray-200 shadow-sm flex justify-between items-center relative group"
+                className="bg-white rounded-2xl p-5 border border-gray-200 shadow-sm flex justify-between items-center relative group hover:border-gray-300 transition-all"
               >
                 <button
                   onClick={() => handleDeleteShare(share.id, share.name)}
@@ -676,15 +717,33 @@ export default function SharesDashboardPage() {
                   <Trash2 className="w-4 h-4" />
                 </button>
 
-                <div>
-                  <h4 className="font-bold text-gray-800">{share.name}</h4>
-                  <p className="text-xs text-gray-500 font-medium mt-1 bg-gray-50 inline-block px-2 py-1 rounded">
-                    กองกลาง ฿{share.poolAmount?.toLocaleString()}
-                  </p>
+                <div className="flex-1 pr-6">
+                  <h4 className="font-bold text-gray-800 line-clamp-1">
+                    {share.name}
+                  </h4>
+                  <div className="flex gap-2 mt-1.5">
+                    <p className="text-[10px] text-gray-500 font-bold bg-gray-50 px-2 py-1 rounded border border-gray-100">
+                      กองกลาง ฿{share.poolAmount?.toLocaleString()}
+                    </p>
+                    {share.closedAt && (
+                      <p className="text-[10px] text-amber-600 font-bold bg-amber-50 px-2 py-1 rounded border border-amber-100">
+                        ปิดเมื่อ{" "}
+                        {new Date(share.closedAt).toLocaleDateString("th-TH", {
+                          day: "numeric",
+                          month: "short",
+                          year: "2-digit",
+                        })}
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <div className="w-10 h-10 bg-green-50 text-green-600 rounded-full flex items-center justify-center shrink-0 border border-green-100">
-                  <Check className="w-5 h-5" />
-                </div>
+
+                <Link
+                  href={`/shares/${share.id}`}
+                  className="w-10 h-10 bg-gray-50 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-full flex items-center justify-center shrink-0 border border-gray-200 hover:border-blue-200 transition-colors"
+                >
+                  <ArrowRight className="w-5 h-5" />
+                </Link>
               </div>
             ))}
           </div>
@@ -729,7 +788,7 @@ export default function SharesDashboardPage() {
                 ) : (
                   <div
                     onClick={() => {
-                      setTempSelectedHandIds([...selectedHandIds]); // ก๊อปปี้ค่าปัจจุบันส่งไปให้หน้าเลือก
+                      setTempSelectedHandIds([...selectedHandIds]);
                       setIsHandSelectionModalOpen(true);
                     }}
                     className={`w-full bg-white border ${selectedHandIds.length > 0 ? "border-emerald-300 shadow-sm" : "border-gray-200 hover:border-emerald-300"} rounded-2xl p-4 flex items-center justify-between cursor-pointer transition-all`}

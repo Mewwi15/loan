@@ -33,7 +33,7 @@ import {
   LayoutGrid,
   List,
   Plus,
-  Package, // 🌟 ไอคอนสำหรับ PD
+  Package,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -89,7 +89,6 @@ export default function CustomersPage() {
     return () => observer.disconnect();
   }, []);
 
-  // 🌟 ซิงค์จำนวนวงกู้และยอดหนี้ให้ตรงกับความเป็นจริงเสมอ
   const fixCustomerStats = async (customerList) => {
     try {
       const loansQ = query(
@@ -107,7 +106,6 @@ export default function CustomersPage() {
         }
 
         loanStats[cid].count += 1;
-        // แยกยอดหนี้เก็บไว้ตาม Category
         if (data.category === "PD") {
           loanStats[cid].debtPD += data.remainingBalance || 0;
         } else {
@@ -156,7 +154,6 @@ export default function CustomersPage() {
         ...doc.data(),
       }));
 
-      // สั่งรันฟังก์ชันซิงค์ยอด ทุกครั้งที่โหลดหรือข้อมูลลูกค้าเปลี่ยน
       fixCustomerStats(customerList);
 
       customerList.sort((a, b) => {
@@ -179,6 +176,48 @@ export default function CustomersPage() {
     });
     return () => unsubscribe();
   }, []);
+
+  // 🌟 ฟังก์ชันฮีโร่: จำตำแหน่งลูกค้าและเลื่อนหน้าจออัตโนมัติ
+  useEffect(() => {
+    // จะทำงานเมื่อโหลดข้อมูลเสร็จแล้วเท่านั้น
+    if (!loading && customers.length > 0) {
+      const lastViewedId = sessionStorage.getItem("lastViewedCustomer");
+      if (lastViewedId) {
+        // ใช้ setTimeout เล็กน้อยเพื่อให้แน่ใจว่าเบราว์เซอร์วาดหน้าจอเสร็จแล้ว
+        setTimeout(() => {
+          const element = document.getElementById(`customer-${lastViewedId}`);
+          if (element) {
+            // สั่งเลื่อนมาให้การ์ดนี้อยู่กลางหน้าจอ
+            element.scrollIntoView({ behavior: "smooth", block: "center" });
+
+            // ใส่เอฟเฟกต์กระพริบเบาๆ ให้แอดมินรู้ว่าอยู่ตรงนี้
+            element.classList.add(
+              "ring-4",
+              "ring-orange-200",
+              "scale-[1.01]",
+              "transition-all",
+            );
+            setTimeout(() => {
+              element.classList.remove(
+                "ring-4",
+                "ring-orange-200",
+                "scale-[1.01]",
+              );
+            }, 1500);
+
+            // เคลียร์ความจำทิ้ง จะได้ไม่เลื่อนมั่วเวลาเข้ามาครั้งหน้า
+            sessionStorage.removeItem("lastViewedCustomer");
+          }
+        }, 300);
+      }
+    }
+  }, [loading, customers]);
+
+  // ฟังก์ชันเวลากดคลิกลูกค้า
+  const handleCustomerClick = (customerId) => {
+    sessionStorage.setItem("lastViewedCustomer", customerId);
+    router.push(`/customers/${customerId}`);
+  };
 
   const handleFileChange = (e) => {
     if (e.target.files[0]) {
@@ -235,7 +274,7 @@ export default function CustomersPage() {
         documentUrl: documentUrl,
         activeLoans: 0,
         totalDebt: 0,
-        totalDebtPD: 0, // สร้างฟิลด์หนี้ PD ตอนสร้าง
+        totalDebtPD: 0,
         status: "ปกติ",
         createdAt: serverTimestamp(),
       });
@@ -530,7 +569,8 @@ export default function CustomersPage() {
               {filteredCustomers.map((customer) => (
                 <div
                   key={customer.id}
-                  onClick={() => router.push(`/customers/${customer.id}`)}
+                  id={`customer-${customer.id}`} // 🌟 เพิ่ม ID ให้หาจอเจอ
+                  onClick={() => handleCustomerClick(customer.id)}
                   className="group flex flex-col lg:flex-row items-start lg:items-center justify-between bg-white rounded-2xl p-5 border border-gray-100 shadow-sm hover:shadow-md hover:border-orange-200 transition-all cursor-pointer gap-4"
                 >
                   <div className="flex items-center gap-4 w-full lg:w-1/3">
@@ -558,7 +598,7 @@ export default function CustomersPage() {
                     </div>
                   </div>
 
-                  {/* 🌟 ปรับปรุง: การโชว์ยอดหนี้แบบ List View (รองรับมือถือ) */}
+                  {/* 🌟 แสดงยอดหนี้ปกติ และ ยอดผ่อนของ (PD) */}
                   <div className="grid grid-cols-2 md:flex md:flex-wrap items-start md:items-center gap-y-4 gap-x-6 w-full lg:w-auto lg:flex-1 border-t lg:border-t-0 lg:border-l-2 border-orange-100 pt-4 lg:pt-0 lg:pl-6 relative">
                     {customer.documentUrl && (
                       <div className="absolute -left-[11px] top-1/2 -translate-y-1/2 bg-white rounded-full p-1 border border-orange-200 hidden lg:block">
@@ -648,7 +688,8 @@ export default function CustomersPage() {
               {filteredCustomers.map((customer) => (
                 <div
                   key={customer.id}
-                  onClick={() => router.push(`/customers/${customer.id}`)}
+                  id={`customer-${customer.id}`} // 🌟 เพิ่ม ID ให้หาจอเจอ
+                  onClick={() => handleCustomerClick(customer.id)}
                   className="group block bg-white rounded-[2rem] p-8 border border-gray-100 shadow-sm hover:shadow-xl hover:shadow-orange-100/40 hover:border-orange-200 transition-all duration-300 relative space-y-6 cursor-pointer"
                 >
                   <div className="absolute top-6 right-6 flex gap-2 z-20">
@@ -696,7 +737,6 @@ export default function CustomersPage() {
                     </div>
                   </div>
 
-                  {/* 🌟 ปรับปรุง: การโชว์ยอดหนี้แบบ Grid View แยกกล่องชัดเจน (รองรับมือถือ) */}
                   <div className="flex flex-col gap-3 border-l-2 border-orange-100 pl-6 py-1 relative z-10">
                     {customer.documentUrl && (
                       <div
