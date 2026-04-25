@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -56,14 +57,19 @@ export default function AuthGuard({ children }) {
         handleLogout();
       } else {
         setIsAuth(true);
-
         if (deviceToken) {
           try {
             const docRef = doc(db, "settings", "auth");
             const docSnap = await getDoc(docRef);
             if (docSnap.exists()) {
               const trustedDevices = docSnap.data().trustedDevices || [];
-              if (!trustedDevices.includes(deviceToken)) {
+              // 🌟 ลอจิกใหม่ รองรับทั้งแบบเก่า (String) และแบบใหม่ (Object)
+              const isTrusted = trustedDevices.some((d) =>
+                typeof d === "string"
+                  ? d === deviceToken
+                  : d.token === deviceToken,
+              );
+              if (!isTrusted) {
                 localStorage.removeItem("deviceToken");
                 handleLogout();
               }
@@ -97,13 +103,16 @@ export default function AuthGuard({ children }) {
           const localToken = localStorage.getItem("deviceToken");
 
           if (data.totpSecret) {
-            if (localToken && data.trustedDevices?.includes(localToken)) {
+            const isTrusted = data.trustedDevices?.some((d) =>
+              typeof d === "string" ? d === localToken : d.token === localToken,
+            );
+
+            if (localToken && isTrusted) {
               completeLogin();
             } else {
               setStep("otp");
             }
           } else {
-            // 🌟 สร้างระบบ Google Authenticator ด้วย otpauth (รองรับเบราว์เซอร์ 100%)
             const newSecret = new OTPAuth.Secret({ size: 20 });
             const totp = new OTPAuth.TOTP({
               issuer: "ระบบจัดการแชร์",
@@ -143,8 +152,6 @@ export default function AuthGuard({ children }) {
 
     try {
       const secretToUse = tempSecret || authData.totpSecret;
-
-      // 🌟 โค้ดสำหรับตรวจสอบ OTP ด้วย otpauth
       const totpVerify = new OTPAuth.TOTP({
         secret: OTPAuth.Secret.fromBase32(secretToUse),
         algorithm: "SHA1",
@@ -152,7 +159,6 @@ export default function AuthGuard({ children }) {
         period: 30,
       });
 
-      // เผื่อเวลาให้บอสพิมพ์ช้าได้นิดหน่อย (บวกลบ 30 วินาที)
       const delta = totpVerify.validate({ token: otp, window: 1 });
       const isValid = delta !== null;
 
@@ -166,8 +172,44 @@ export default function AuthGuard({ children }) {
         if (rememberDevice) {
           const newToken = crypto.randomUUID();
           localStorage.setItem("deviceToken", newToken);
+
+          // 🌟 แอบดึงข้อมูลเครื่อง (Device Info) และที่อยู่ (IP Location)
+          let deviceName = "Unknown Device";
+          let locationStr = "ไม่ทราบตำแหน่ง";
+          let ipStr = "";
+
+          try {
+            const ua = navigator.userAgent;
+            if (/Windows/i.test(ua)) deviceName = "Windows PC";
+            else if (/Macintosh/i.test(ua)) deviceName = "Mac Computer";
+            else if (/iPad|iPhone|iPod/i.test(ua))
+              deviceName = "Apple Device (iOS)";
+            else if (/Android/i.test(ua)) deviceName = "Android Device";
+
+            // ดึง IP และ จังหวัด
+            const res = await fetch("https://ipapi.co/json/");
+            if (res.ok) {
+              const locData = await res.json();
+              locationStr = locData.region
+                ? `${locData.region}, ${locData.country_name}`
+                : "ไม่ทราบตำแหน่ง";
+              ipStr = locData.ip || "";
+            }
+          } catch (err) {
+            console.error("Failed to get device info", err);
+          }
+
+          // 🌟 บันทึกเป็น Object ลงไปในฐานข้อมูล
+          const deviceRecord = {
+            token: newToken,
+            device: deviceName,
+            location: locationStr,
+            ip: ipStr,
+            timestamp: new Date().toISOString(),
+          };
+
           await updateDoc(docRef, {
-            trustedDevices: arrayUnion(newToken),
+            trustedDevices: arrayUnion(deviceRecord),
           });
         }
 
@@ -268,7 +310,7 @@ export default function AuthGuard({ children }) {
                 </h2>
                 <p className="text-xs font-bold text-gray-500 mt-2 leading-relaxed px-4">
                   สแกน QR Code นี้ด้วยแอป{" "}
-                  <span className="text-blue-600">Google Authenticator</span>{" "}
+                  <span className="text-blue-600">Microsoft Authenticator</span>{" "}
                   เพื่อเปิดใช้งานระบบความปลอดภัย 2 ชั้น
                 </p>
               </div>
@@ -325,7 +367,7 @@ export default function AuthGuard({ children }) {
                   ยืนยันตัวตน 2 ชั้น (2FA)
                 </h2>
                 <p className="text-xs font-bold text-gray-400 mt-2 px-2">
-                  เปิดแอป Google Authenticator แล้วนำรหัส 6 หลักมากรอก
+                  เปิดแอป Microsoft Authenticator แล้วนำรหัส 6 หลักมากรอก
                 </p>
               </div>
 
@@ -356,7 +398,7 @@ export default function AuthGuard({ children }) {
                       จดจำอุปกรณ์นี้ไว้ (Trusted Device)
                     </p>
                     <p className="text-[10px] font-bold text-gray-500 mt-0.5">
-                      ครั้งต่อไปไม่ต้องกรอก OTP ในเครื่องนี้อีก
+                      ระบบจะบันทึก IP และจังหวัดของเครื่องนี้ไว้
                     </p>
                   </div>
                 </label>

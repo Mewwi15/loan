@@ -15,6 +15,7 @@ import {
   CheckSquare,
   HandCoins,
   PlusCircle,
+  ShieldCheck, // 🌟 เพิ่มไอคอนโล่ความปลอดภัย
 } from "lucide-react";
 
 export default function Sidebar() {
@@ -205,6 +206,26 @@ export default function Sidebar() {
             >
               <PlusCircle className="w-5 h-5" />
               <span>เปิดวงแชร์ใหม่</span>
+            </Link>
+          </div>
+
+          {/* 🌟 โซนที่ 4: การตั้งค่าระบบ (เพิ่มใหม่) */}
+          <div className="space-y-2">
+            <div className="text-gray-400 text-[10px] font-black uppercase tracking-[0.2em] mb-4 ml-4">
+              Settings
+            </div>
+
+            <Link
+              href="/settings"
+              onClick={handleLinkClick}
+              className={`flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all duration-200 ${
+                isActive("/settings")
+                  ? "bg-gray-700 text-white shadow-lg shadow-gray-900/50 font-black"
+                  : "text-gray-400 hover:text-white hover:bg-white/5 font-bold"
+              }`}
+            >
+              <ShieldCheck className="w-5 h-5" />
+              <span>ความปลอดภัย</span>
             </Link>
           </div>
         </nav>
