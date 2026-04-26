@@ -912,16 +912,6 @@ export default function CustomerDetailPage({ params }) {
               </span>
             </div>
 
-            {/* 🌟 ยอดหนี้ที่ใช้ไป (เพิ่มใหม่ใต้ชื่อ) */}
-            <div className="mt-2.5 sm:mt-3 flex items-center gap-1.5">
-              <p className="text-xs sm:text-sm font-bold text-gray-500">
-                ใช้ไป :{" "}
-                <span className="text-rose-500 font-black tracking-wide">
-                  ฿{totalDebtNormal.toLocaleString()}
-                </span>
-              </p>
-            </div>
-
             <div className="mt-3 sm:mt-4">
               <Link
                 href={`/customers/${customerId}/share`}
@@ -930,12 +920,22 @@ export default function CustomerDetailPage({ params }) {
                 <HandCoins className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> ประวัติแชร์
               </Link>
             </div>
+
+            {/* 🌟 ยอดหนี้ที่ใช้ไป (ย้ายมาไว้ใต้ปุ่มประวัติแชร์ และขยายให้ใหญ่เบิ้ม) */}
+            <div className="mt-4 sm:mt-5 flex items-baseline gap-2">
+              <p className="text-sm sm:text-base font-bold text-gray-500">
+                ใช้ไป :
+              </p>
+              <span className="text-rose-500 text-2xl sm:text-3xl font-black tracking-tight leading-none">
+                ฿{totalDebtNormal.toLocaleString()}
+              </span>
+            </div>
           </div>
 
-          {/* 🌟 หลอดวงเงินเครดิต (ฝั่งขวา ลอยๆ ไม่มีกรอบ) */}
+          {/* 🌟 หลอดวงเงินเครดิต (ฝั่งขวา ลอยๆ ขยายไซส์ให้ใหญ่ขึ้นอีก) */}
           <div className="shrink-0 flex flex-col items-center justify-center px-1 sm:px-2 pt-1">
-            {/* ตัวหลอด SVG ปรับไซส์ให้ใหญ่ขึ้นตามแบบ */}
-            <div className="relative w-24 h-24 sm:w-28 sm:h-28 drop-shadow-sm mb-2 sm:mb-3">
+            {/* ตัวหลอด SVG ปรับไซส์ให้ใหญ่ขึ้นอีกระดับ */}
+            <div className="relative w-32 h-32 sm:w-40 sm:h-40 drop-shadow-sm mb-2 sm:mb-3">
               <svg
                 className="w-full h-full transform -rotate-90"
                 viewBox="0 0 36 36"
@@ -959,12 +959,11 @@ export default function CustomerDetailPage({ params }) {
                 />
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center mt-px px-1 text-center">
-                <span className="text-[7px] sm:text-[8px] font-bold text-gray-500 uppercase tracking-widest leading-none">
+                <span className="text-[9px] sm:text-[10px] font-bold text-gray-500 uppercase tracking-widest leading-none">
                   วงเงินคงเหลือ
                 </span>
-                {/* 🌟 แสดงจำนวนเต็มครบถ้วน ไม่มีย่อ */}
                 <span
-                  className="text-[10px] sm:text-[13px] font-black mt-1 leading-none w-full px-1"
+                  className="text-[14px] sm:text-[18px] font-black mt-1 sm:mt-1.5 leading-none w-full px-1"
                   style={{ color: themeColor }}
                 >
                   {availableCredit < 0
@@ -974,9 +973,9 @@ export default function CustomerDetailPage({ params }) {
               </div>
             </div>
 
-            {/* ส่วนวงเงินรวม (แก้ไขได้) จัดไว้ข้างใต้แบบเนียนๆ */}
+            {/* ส่วนวงเงินรวม (แก้ไขได้) */}
             <div className="flex flex-col items-center text-center">
-              <span className="text-[7px] sm:text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+              <span className="text-[8px] sm:text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                 วงเงินรวม (บาท)
               </span>
 
@@ -1012,13 +1011,15 @@ export default function CustomerDetailPage({ params }) {
                   >
                     {creditLimit.toLocaleString()}
                   </span>
-                  <Edit className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-gray-300 group-hover:text-gray-500 transition-colors" />
+                  <Edit className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-gray-300 group-hover:text-gray-500 transition-colors" />
                 </div>
               )}
             </div>
           </div>
         </div>
       </div>
+
+      <div className="w-full h-px bg-gray-100 mb-8 sm:mb-10 mt-2"></div>
 
       {/* --- ส่วน Active Loans (วงกู้ที่กำลังดำเนินการ) --- */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-3 sm:gap-4 mb-5 sm:mb-6">
@@ -1040,19 +1041,10 @@ export default function CustomerDetailPage({ params }) {
             </div>
           </div>
         </div>
-
-        <div className="bg-blue-50 px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl border border-blue-100 shadow-sm w-full md:w-auto">
-          <p className="text-[9px] sm:text-[10px] font-black uppercase text-blue-500 tracking-widest mb-0.5 flex items-center gap-1">
-            <Target className="w-3 h-3 text-blue-500" /> กำไรคาดหวัง (กู้ปกติ)
-          </p>
-          <p className="text-lg sm:text-xl font-black text-blue-600">
-            ฿{customerStats.expectedProfitNormal.toLocaleString()}
-          </p>
-        </div>
       </div>
 
       {activeLoans.length > 0 ? (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 sm:gap-8 mb-4 sm:mb-6">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 sm:gap-8 mb-10 sm:mb-12">
           {activeLoans.map((loan, index) => {
             const isPD = loan.category === "PD";
             return (
@@ -1239,10 +1231,10 @@ export default function CustomerDetailPage({ params }) {
 
       {/* --- ส่วนที่ 3: สรุปผลกำไรและประวัติ (ย้ายมาล่างสุด) --- */}
       <div className="mb-4">
-        <h2 className="text-lg sm:text-xl font-black text-gray-800 mb-4 sm:mb-5">
+        <h2 className="text-xl sm:text-2xl font-black text-gray-800 mb-4 sm:mb-6">
           สรุปผลประกอบการ
         </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-8">
           <div className="bg-[#1F2335] p-5 sm:p-6 rounded-2xl sm:rounded-[2rem] shadow-xl flex flex-col justify-center relative overflow-hidden text-white transition-transform hover:-translate-y-1">
             <div className="absolute top-0 right-0 w-20 h-20 bg-green-500/20 rounded-full blur-xl -mr-6 -mt-6"></div>
             <p className="text-[9px] sm:text-[10px] font-black uppercase text-green-400 tracking-widest mb-1 flex items-center gap-1">
@@ -1310,6 +1302,16 @@ export default function CustomerDetailPage({ params }) {
             <div className="absolute top-4 right-4 bg-gray-50 group-hover:bg-green-100 p-1.5 rounded-full transition-colors">
               <ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-300 group-hover:text-green-500" />
             </div>
+          </div>
+
+          {/* 🌟 การ์ดกำไรคาดหวัง (ย้ายลงมารวมแก๊งตรงนี้) */}
+          <div className="bg-blue-50 p-5 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-blue-100 shadow-sm flex flex-col justify-center relative transition-transform hover:-translate-y-1">
+            <p className="text-[9px] sm:text-[10px] font-black uppercase text-blue-500 tracking-widest mb-1 flex items-center gap-1">
+              <Target className="w-3 h-3 text-blue-500" /> กำไรคาดหวัง (กู้ปกติ)
+            </p>
+            <p className="text-xl sm:text-2xl font-black text-blue-600">
+              ฿{customerStats.expectedProfitNormal.toLocaleString()}
+            </p>
           </div>
         </div>
       </div>
