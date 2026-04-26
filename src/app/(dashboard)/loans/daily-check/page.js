@@ -33,13 +33,12 @@ export default function DailyCheckPage() {
   const [loading, setLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // 🌟 ลอจิกใหม่: บังคับดึงงวดที่เก่าที่สุดที่ยังไม่จ่าย (แก้ปัญหากดข้ามงวด)
+  // 🌟 ลอจิกใหม่: บังคับดึงงวดที่เก่าที่สุด + ดักจับข้อมูลซ้ำซ้อน (Deduplication)
   const fetchDailyJobs = useCallback(async () => {
     if (!selectedDate) return;
 
     setLoading(true);
     try {
-      // 1. ดึงวงกู้ที่กำลังดำเนินการทั้งหมดมาเตรียมไว้
       const loansQ = query(
         collection(db, "loans"),
         where("status", "==", "active"),
@@ -50,56 +49,68 @@ export default function DailyCheckPage() {
         activeLoansMap.set(docSnap.id, docSnap.data()),
       );
 
-      // 2. ดึงตารางค่างวดที่ยัง "pending" (ค้างจ่าย) ทั้งหมด
       const schedulesQ = query(
         collection(db, "schedules"),
         where("status", "==", "pending"),
       );
       const schedulesSnap = await getDocs(schedulesQ);
 
-      // 3. กรองหา "งวดที่เก่าที่สุด" ของแต่ละวงกู้
       const earliestPendingMap = new Map();
 
       schedulesSnap.forEach((docSnap) => {
         const data = docSnap.data();
 
-        // ตรวจสอบว่าวงกู้นี้ยัง Active อยู่
         if (activeLoansMap.has(data.loanId)) {
-          // ดึงเฉพาะงวดที่กำหนดจ่าย "ก่อนหรือตรงกับ" วันที่แอดมินเลือก
           if (data.dueDate <= selectedDate) {
             const currentEarliest = earliestPendingMap.get(data.loanId);
-            // ถ้ายังไม่มีใน Map หรือ งวดนี้เก่ากว่า (เลขน้อยกว่า) ให้บันทึกทับ
-            if (
-              !currentEarliest ||
-              data.installmentNo < currentEarliest.installmentNo
-            ) {
-              earliestPendingMap.set(data.loanId, { id: docSnap.id, ...data });
+
+            // 🌟 แปลงเป็น Number เพื่อป้องกันบั๊กการเปรียบเทียบข้อความ
+            const currentInstNo = Number(data.installmentNo);
+            const earliestInstNo = currentEarliest
+              ? Number(currentEarliest.installmentNo)
+              : null;
+
+            if (!currentEarliest || currentInstNo < earliestInstNo) {
+              earliestPendingMap.set(data.loanId, {
+                id: docSnap.id,
+                ...data,
+                installmentNo: currentInstNo,
+              });
             }
           }
         }
       });
 
-      // 4. ประกอบร่างข้อมูลสำหรับนำไปแสดงผล
       const jobs = [];
+      const seenSet = new Set(); // 🌟 ถังพักไว้จำข้อมูลที่เคยโหลดแล้ว
+
       for (const [loanId, schedule] of earliestPendingMap.entries()) {
         const loanData = activeLoansMap.get(loanId);
-        jobs.push({
-          id: schedule.id,
-          ...schedule,
-          customerId: schedule.customerId || loanData.customerId || null,
-          remainingBefore: loanData.remainingBalance,
-          loanNumber: loanData.loanNumber || "-",
-          loanName: loanData.loanName || loanData.customerName,
-          bankName: loanData.bankName || "ไม่ระบุ",
-          bankOwner: loanData.bankOwner || "ไม่ระบุ",
-          bankColor: loanData.bankColor || "#cbd5e1",
-          isChecked: false,
-          penalty: 0,
-          isOverdue: schedule.dueDate < selectedDate, // เช็คว่าเป็นหนี้ค้างของวันก่อนหน้าหรือไม่
-        });
+
+        // 🌟 กุญแจเช็คข้อมูลซ้ำ (Unique Key): รหัสวงกู้ + ชื่อลูกค้า
+        const uniqueKey = `${loanData.loanNumber}-${loanData.customerName}`;
+
+        if (!seenSet.has(uniqueKey)) {
+          seenSet.add(uniqueKey); // จดจำไว้ว่าคนนี้โชว์ไปแล้ว
+
+          jobs.push({
+            id: schedule.id,
+            loanId: loanId, // แนบไปเผื่อใช้บันทึก
+            ...schedule,
+            customerId: schedule.customerId || loanData.customerId || null,
+            remainingBefore: loanData.remainingBalance,
+            loanNumber: loanData.loanNumber || "-",
+            loanName: loanData.loanName || loanData.customerName,
+            bankName: loanData.bankName || "ไม่ระบุ",
+            bankOwner: loanData.bankOwner || "ไม่ระบุ",
+            bankColor: loanData.bankColor || "#cbd5e1",
+            isChecked: false,
+            penalty: 0,
+            isOverdue: schedule.dueDate < selectedDate,
+          });
+        }
       }
 
-      // 5. เรียงลำดับ: เอาคนที่ "ค้างชำระ" ขึ้นก่อน แล้วตามด้วยเลขวงกู้
       jobs.sort((a, b) => {
         if (a.isOverdue && !b.isOverdue) return -1;
         if (!a.isOverdue && b.isOverdue) return 1;
@@ -166,7 +177,6 @@ export default function DailyCheckPage() {
 
     try {
       for (const item of itemsToPay) {
-        // 1. อัปเดตสถานะค่างวดเป็นจ่ายแล้ว
         const scheduleRef = doc(db, "schedules", item.id);
         batch.update(scheduleRef, {
           status: "paid",
@@ -174,21 +184,18 @@ export default function DailyCheckPage() {
           appliedPenalty: item.penalty,
         });
 
-        // 2. ลดหนี้คงเหลือ และเพิ่มจำนวนงวดที่จ่ายแล้วในวงกู้
         const loanRef = doc(db, "loans", item.loanId);
         batch.update(loanRef, {
           remainingBalance: increment(-item.amount),
           currentInstallment: increment(1),
         });
 
-        // 3. ลดหนี้รวมในหน้าโปรไฟล์ลูกค้า
         if (item.customerId) {
           const customerRef = doc(db, "customers", item.customerId);
           batch.update(customerRef, {
             totalDebt: increment(-item.amount),
           });
         } else {
-          // Fallback เผื่อไม่มี customerId ให้ค้นหาจากชื่อแทน
           const customerQuery = query(
             collection(db, "customers"),
             where("name", "==", item.customerName),
@@ -202,7 +209,6 @@ export default function DailyCheckPage() {
           }
         }
 
-        // 4. บันทึกลงประวัติการทำธุรกรรม (Transactions)
         const transRef = doc(collection(db, "transactions"));
         batch.set(transRef, {
           loanId: item.loanId,
@@ -212,14 +218,14 @@ export default function DailyCheckPage() {
           profitShare: item.profitShare || 0,
           penalty: item.penalty || 0,
           installmentNo: item.installmentNo,
-          paymentDate: selectedDate, // ยึดตามวันที่แอดมินเลือก
+          paymentDate: selectedDate,
           createdAt: serverTimestamp(),
         });
       }
 
       await batch.commit();
       alert("✅ ตัดยอดและบันทึกกำไรเรียบร้อยแล้ว");
-      fetchDailyJobs(); // รีเฟรชจอ ถ้างวดถัดไปถึงกำหนดจ่ายพอดี มันจะเด้งขึ้นมาให้ทันที
+      fetchDailyJobs();
     } catch (error) {
       console.error("Error saving payments:", error);
       alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
@@ -335,7 +341,6 @@ export default function DailyCheckPage() {
                               <span className="text-[8px] md:text-[9px] font-bold text-gray-500 uppercase tracking-widest bg-white border border-gray-100 shadow-sm px-1.5 md:px-2 py-0.5 rounded-md">
                                 งวดที่ {item.installmentNo}
                               </span>
-                              {/* 🌟 ไฮไลท์เตือนชัดๆ ถ้างวดนี้คือยอดที่ค้างมาจากวันก่อนๆ */}
                               {item.isOverdue && (
                                 <span className="text-[8px] md:text-[9px] font-bold text-red-600 uppercase tracking-widest bg-red-50 border border-red-200 px-1.5 md:px-2 py-0.5 rounded-md shadow-sm animate-pulse">
                                   ค้างชำระ

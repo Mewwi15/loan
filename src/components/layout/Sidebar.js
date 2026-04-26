@@ -15,7 +15,8 @@ import {
   CheckSquare,
   HandCoins,
   PlusCircle,
-  ShieldCheck, // 🌟 เพิ่มไอคอนโล่ความปลอดภัย
+  ShieldCheck,
+  Landmark, // 🌟 นำเข้าไอคอนสำหรับหน้าสรุปยอด
 } from "lucide-react";
 
 export default function Sidebar() {
@@ -195,6 +196,20 @@ export default function Sidebar() {
               <span>แผงควบคุมวงแชร์</span>
             </Link>
 
+            {/* 🌟 ลิงก์หน้าใหม่: สรุปยอดสะสม */}
+            <Link
+              href="/shares/summary"
+              onClick={handleLinkClick}
+              className={`flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all duration-200 ${
+                isActive("/shares/summary")
+                  ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20 font-black"
+                  : "text-gray-400 hover:text-white hover:bg-white/5 font-bold"
+              }`}
+            >
+              <Landmark className="w-5 h-5" />
+              <span>สรุปยอดสะสมท้าว</span>
+            </Link>
+
             <Link
               href="/shares/new"
               onClick={handleLinkClick}
@@ -209,23 +224,23 @@ export default function Sidebar() {
             </Link>
           </div>
 
-          {/* 🌟 โซนที่ 4: การตั้งค่าระบบ (เพิ่มใหม่) */}
+          {/* 🌟 โซนที่ 4: การตั้งค่าระบบ */}
           <div className="space-y-2">
             <div className="text-gray-400 text-[10px] font-black uppercase tracking-[0.2em] mb-4 ml-4">
               Settings
             </div>
 
             <Link
-              href="/settings"
+              href="/settings/security"
               onClick={handleLinkClick}
               className={`flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all duration-200 ${
-                isActive("/settings")
+                isActive("/settings/security")
                   ? "bg-gray-700 text-white shadow-lg shadow-gray-900/50 font-black"
                   : "text-gray-400 hover:text-white hover:bg-white/5 font-bold"
               }`}
             >
               <ShieldCheck className="w-5 h-5" />
-              <span>ความปลอดภัย</span>
+              <span>ความปลอดภัย (2FA)</span>
             </Link>
           </div>
         </nav>

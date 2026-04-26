@@ -38,6 +38,7 @@ import {
   Search,
   AlertCircle,
   User,
+  Wrench, // 🌟 ไอคอนสำหรับซ่อมยอด
 } from "lucide-react";
 import { toPng } from "html-to-image";
 
@@ -55,18 +56,13 @@ export default function ShareCommandCenterPage() {
   const [isCapturing, setIsCapturing] = useState(false);
   const printAreaRef = useRef(null);
 
-  // 🌟 State สำหรับสวมสิทธิ์ (Swap)
   const [isSwapModalOpen, setIsSwapModalOpen] = useState(false);
   const [handToSwap, setHandToSwap] = useState(null);
   const [customersList, setCustomersList] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // 🌟 State สำหรับเก็บ "ยอดสุทธิรวมทุกวง" ของลูกค้า
   const [globalNetBalances, setGlobalNetBalances] = useState({});
 
-  // ==========================================
-  // 1. ดึงข้อมูลแบบ Real-time และรายชื่อลูกค้า
-  // ==========================================
   useEffect(() => {
     if (!shareId) return;
 
@@ -90,7 +86,6 @@ export default function ShareCommandCenterPage() {
       setLoading(false);
     });
 
-    // โหลดรายชื่อลูกค้าเตรียมไว้สำหรับสวมสิทธิ์
     const fetchCustomers = async () => {
       const custSnap = await getDocs(collection(db, "customers"));
       setCustomersList(custSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -103,12 +98,8 @@ export default function ShareCommandCenterPage() {
     };
   }, [shareId, router]);
 
-  // ==========================================
-  // 🌟 ฟังก์ชันดึง ยอดสุทธิ (ทุกวง) สำหรับแสดงในตารางที่ 2
-  // ==========================================
   useEffect(() => {
     const fetchGlobalBalances = async () => {
-      // เอาเฉพาะลูกค้าที่เป็นมือเป็น (มีสิทธิ์เปีย)
       const uniqueCids = [
         ...new Set(
           hands.filter((h) => h.status === "alive").map((h) => h.customerId),
@@ -117,7 +108,6 @@ export default function ShareCommandCenterPage() {
       if (uniqueCids.length === 0) return;
 
       try {
-        // 1. ดึงวงแชร์ที่ active ทั้งหมดในระบบ
         const sharesSnap = await getDocs(
           query(collection(db, "shares"), where("status", "==", "active")),
         );
@@ -128,7 +118,6 @@ export default function ShareCommandCenterPage() {
 
         const newBalances = {};
 
-        // 2. คำนวณยอดสุทธิรวมทุกวงของแต่ละคน
         await Promise.all(
           uniqueCids.map(async (cid) => {
             const handsSnap = await getDocs(
@@ -145,7 +134,7 @@ export default function ShareCommandCenterPage() {
               const h = docSnap.data();
               const shareData = activeSharesMap[h.shareId];
 
-              if (!shareData) return; // ข้ามวงปิด
+              if (!shareData) return;
               if (h.status === "closed") return;
 
               const isTao = h.handNumber === 1;
@@ -186,9 +175,6 @@ export default function ShareCommandCenterPage() {
     fetchGlobalBalances();
   }, [hands]);
 
-  // ==========================================
-  // 2. ฟังก์ชันเช็คชื่อ (Check-in)
-  // ==========================================
   const togglePaidStatus = async (hand) => {
     if (share.status === "completed") return;
     setIsProcessing(true);
@@ -341,7 +327,7 @@ export default function ShareCommandCenterPage() {
   };
 
   const handleUndoClose = async (hand) => {
-    const confirmMsg = `ยืนยันการ "ยกเลิกปิดบัญชี" ของ มือที่ ${hand.handNumber} (${hand.customerName}) ใช่หรือไม่?\n\nระบบจะคืนสถานะกลับไปเป็น ${hand.wonAtPeriod || hand.handNumber === 1 ? "มือตาย" : "มือเป็น"} เหมือนเดิม`;
+    const confirmMsg = `ยืนยันการ "ยกเลิกปิดบัญชี" ของ มือที่ ${hand.handNumber} (${hand.customerName}) ใช่หรือไม่?\n\nระบบจะคืนสถานะและปรับยอดให้เท่ากับงวดปัจจุบันอัตโนมัติ`;
     if (!window.confirm(confirmMsg)) return;
 
     setIsProcessing(true);
@@ -349,10 +335,49 @@ export default function ShareCommandCenterPage() {
       const handRef = doc(db, "share_hands", hand.id);
       const prevStatus =
         hand.handNumber === 1 || hand.wonAtPeriod ? "dead" : "alive";
-      await updateDoc(handRef, { status: prevStatus });
+      const currentSharePeriod = share.currentPeriod;
+      let newPaidPeriods = [...(hand.paidPeriods || [])];
+
+      for (let i = 1; i < currentSharePeriod; i++) {
+        if (!newPaidPeriods.includes(i)) {
+          newPaidPeriods.push(i);
+        }
+      }
+      newPaidPeriods.sort((a, b) => a - b);
+      const newTotalPaid = newPaidPeriods.length * share.installmentAmount;
+
+      await updateDoc(handRef, {
+        status: prevStatus,
+        paidPeriods: newPaidPeriods,
+        totalPaid: newTotalPaid,
+        closedAt: null,
+      });
+
+      alert("✅ ยกเลิกโปะ และปรับยอดให้เรียบร้อยแล้วครับ");
     } catch (error) {
       console.error("Error undoing close status:", error);
       alert("เกิดข้อผิดพลาดในการยกเลิกปิดวง");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // 🌟 ฟังก์ชันใหม่: ซ่อมยอดโดยใช้ "Template คนส่วนใหญ่"
+  const handleRepairHandWithMajority = async (hand, correctPeriods) => {
+    const confirmMsg = `ระบบตรวจพบว่ายอดของ "${hand.customerName}" แตกต่างจากคนส่วนใหญ่\n\nต้องการคัดลอกยอดจ่ายของ 'คนส่วนใหญ่' มาใส่แทนเพื่อซ่อมแซมให้ถูกต้องหรือไม่?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsProcessing(true);
+    try {
+      const newTotalPaid = correctPeriods.length * share.installmentAmount;
+      await updateDoc(doc(db, "share_hands", hand.id), {
+        paidPeriods: correctPeriods,
+        totalPaid: newTotalPaid,
+      });
+      alert("✅ ปรับยอดให้เท่ากับเพื่อนส่วนใหญ่เรียบร้อยแล้วครับ!");
+    } catch (e) {
+      console.error(e);
+      alert("เกิดข้อผิดพลาดในการซ่อมยอด");
     } finally {
       setIsProcessing(false);
     }
@@ -459,7 +484,6 @@ export default function ShareCommandCenterPage() {
   const DEDUCT_HANDS_COUNT = 3;
   const standardGuaranteeDeduction =
     share.installmentAmount * DEDUCT_HANDS_COUNT;
-
   const totalObligationPerHand =
     totalCollectedPerPeriod - standardGuaranteeDeduction;
 
@@ -482,6 +506,37 @@ export default function ShareCommandCenterPage() {
   ).length;
   const totalCollectedThisPeriod =
     collectedCount * share.installmentAmount + share.installmentAmount;
+
+  // =================================================================
+  // 🌟 AI SCANNER: วิเคราะห์หา "ยอดส่วนใหญ่" (Majority Pattern) ของวงนี้
+  // =================================================================
+  const lengthCounts = {};
+  let maxFreq = 0;
+  let majorityTemplatePeriods = []; // เก็บประวัติการจ่ายของคนที่ปกติที่สุด
+
+  hands.forEach((h) => {
+    // กรองคนที่มีโอกาสข้อมูลเพี้ยนออกไปก่อน (ท้าว, คนปิดวง, คนสวมสิทธิ์) ให้เหลือแต่คนปกติมาคำนวณโหวต
+    if (h.handNumber === 1 || h.status === "closed" || h.isSwapped) return;
+
+    const len = h.paidPeriods?.length || 0;
+    lengthCounts[len] = (lengthCounts[len] || 0) + 1;
+
+    // หาว่าความยาวไหนซ้ำกันเยอะสุด (โหมด)
+    if (lengthCounts[len] > maxFreq) {
+      maxFreq = lengthCounts[len];
+      majorityTemplatePeriods = h.paidPeriods || []; // ยึด array คนนี้เป็นบรรทัดฐาน
+    }
+  });
+
+  // Fallback กรณีที่มือแชร์ปกติหายากมาก ให้พึ่งพาคนที่จ่ายเยอะสุดแทน
+  if (majorityTemplatePeriods.length === 0) {
+    hands.forEach((h) => {
+      if (h.handNumber === 1 || h.status === "closed") return;
+      if ((h.paidPeriods?.length || 0) > majorityTemplatePeriods.length) {
+        majorityTemplatePeriods = h.paidPeriods || [];
+      }
+    });
+  }
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500 bg-gray-50/30 min-h-screen touch-manipulation">
@@ -538,7 +593,6 @@ export default function ShareCommandCenterPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-4">
-              {/* 🌟 การ์ดแสดงยอดแบบ 1 มือ */}
               <div className="bg-[#f8fafc] border border-blue-100 rounded-[1rem] px-6 py-4 shadow-sm min-w-[220px]">
                 <p className="text-sm font-bold text-[#2563eb] tracking-wide mb-1">
                   เงินออมสะสม (1 มือ)
@@ -647,28 +701,23 @@ export default function ShareCommandCenterPage() {
 
                 const hasPaidThisPeriod =
                   hand.paidPeriods?.includes(currentPeriod);
-
-                // 🌟 แก้ไขชื่อตัวแปรที่นี่ให้ตรงกัน
                 const realTotalPaid =
                   (hand.paidPeriods?.length || 0) * share.installmentAmount;
                 const prevPaid = hasPaidThisPeriod
                   ? realTotalPaid - share.installmentAmount
                   : realTotalPaid;
 
-                // 🌟 ยอดรับจริง
                 const handGuaranteeDeduction = isTao
                   ? 0
                   : standardGuaranteeDeduction;
                 const previousCapitalToDeduct = isSwapped
                   ? hand.previousOwnerCapital || 0
                   : 0;
-
                 const handActualReceived =
                   share.poolAmount -
                   handGuaranteeDeduction -
                   previousCapitalToDeduct;
 
-                // 🌟 หนี้คงเหลือที่แท้จริง
                 const baseDebtForThisHand = isSwapped
                   ? hand.customBaseDebt || 0
                   : totalObligationPerHand;
@@ -681,6 +730,24 @@ export default function ShareCommandCenterPage() {
                 const remainingPeriodsCount = Math.ceil(
                   currentRemainingDebt / share.installmentAmount,
                 );
+
+                // =================================================================
+                // 🌟 เทียบหาความผิดปกติ (Anomaly Detection) จาก Template คนส่วนใหญ่
+                // =================================================================
+                const startPeriod = isSwapped ? hand.swappedAtPeriod || 1 : 1;
+
+                // คัดลอก Template ของคนส่วนใหญ่ แล้วตัดงวดที่เริ่มสวมสิทธิ์ และงวดที่กดสละสิทธิ์ออกไป
+                const expectedPeriods = majorityTemplatePeriods.filter(
+                  (p) =>
+                    p >= startPeriod &&
+                    !(hand.skippedPeriods || []).includes(p),
+                );
+                const expectedLength = expectedPeriods.length;
+                const currentLength = hand.paidPeriods?.length || 0;
+
+                // ถ้าสแกนเจอว่า คนนี้มียอดน้อยกว่าคนส่วนใหญ่ (แปลว่าข้อมูลแหว่ง/เพี้ยนชัวร์ๆ) จะโชว์ปุ่มประแจ
+                const isOutOfSync =
+                  currentLength < expectedLength && !isClosed && !isTao;
 
                 return (
                   <tr
@@ -714,7 +781,6 @@ export default function ShareCommandCenterPage() {
                           )}
                         </div>
 
-                        {/* 🌟 ป้าย Tag รับช่วงต่อ */}
                         {isSwapped && (
                           <span
                             className={`text-[10px] px-2 py-0.5 rounded-md font-bold mt-1 flex items-center gap-1 w-fit ${isClosed ? "bg-emerald-800/40 text-emerald-100" : "bg-amber-100 text-amber-700 border border-amber-200"}`}
@@ -808,6 +874,21 @@ export default function ShareCommandCenterPage() {
                             >
                               ฿{realTotalPaid.toLocaleString()}
                             </span>
+                            {/* 🌟 ปุ่มประแจโผล่ตรงนี้ถ้ายอดไม่เท่าเพื่อน */}
+                            {isOutOfSync && (
+                              <button
+                                onClick={() =>
+                                  handleRepairHandWithMajority(
+                                    hand,
+                                    expectedPeriods,
+                                  )
+                                }
+                                disabled={isProcessing}
+                                className="text-[10px] mt-1.5 bg-amber-100 hover:bg-amber-200 text-amber-700 border border-amber-200 px-2 py-0.5 rounded flex items-center gap-1 font-bold shadow-sm transition-all"
+                              >
+                                <Wrench className="w-3 h-3" /> ซ่อมให้เท่าเพื่อน
+                              </button>
+                            )}
                           </div>
                         ) : (
                           <div className="flex flex-col items-end">
@@ -817,6 +898,21 @@ export default function ShareCommandCenterPage() {
                             <span className="text-[11px] text-orange-500 font-semibold mt-0.5">
                               รอรับยอด
                             </span>
+                            {/* 🌟 ปุ่มประแจโผล่ตรงนี้ถ้ายอดไม่เท่าเพื่อน */}
+                            {isOutOfSync && (
+                              <button
+                                onClick={() =>
+                                  handleRepairHandWithMajority(
+                                    hand,
+                                    expectedPeriods,
+                                  )
+                                }
+                                disabled={isProcessing}
+                                className="text-[10px] mt-1.5 bg-amber-100 hover:bg-amber-200 text-amber-700 border border-amber-200 px-2 py-0.5 rounded flex items-center gap-1 font-bold shadow-sm transition-all"
+                              >
+                                <Wrench className="w-3 h-3" /> ซ่อมให้เท่าเพื่อน
+                              </button>
+                            )}
                           </div>
                         )
                       ) : (
