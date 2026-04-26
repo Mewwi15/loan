@@ -17,13 +17,11 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import {
   Search,
   UserPlus,
-  ArrowUpRight,
   X,
   Filter,
   Trash2,
   AlertTriangle,
   Loader2,
-  FileText,
   MessageCircle,
   UploadCloud,
   CheckCircle2,
@@ -85,10 +83,8 @@ export default function CustomersPage() {
     return () => observer.disconnect();
   }, []);
 
-  // 🌟 ฟังก์ชันฮีโร่: ซิงค์ยอดเป๊ะ 100% (ใช้ Logic กรองวงซ้ำแบบเดียวกับหน้า ID)
   const fixCustomerStats = async (customerList) => {
     try {
-      // 1. ดึงวงกู้ "ทั้งหมด" (ทั้งปิดแล้วและกำลังเดิน) เพื่อเอามารวมและกรองวงเล็บ ()
       const loansSnap = await getDocs(collection(db, "loans"));
       const allLoans = loansSnap.docs.map((doc) => ({
         id: doc.id,
@@ -101,7 +97,6 @@ export default function CustomersPage() {
       for (const customer of customerList) {
         const customerId = customer.id;
 
-        // 2. สร้างเงื่อนไขชื่อรูปแบบต่างๆ เพื่อหาประวัติวงเก่า
         const formattedName =
           customer.nickname && customer.name
             ? `${customer.nickname} (${customer.name})`
@@ -113,13 +108,11 @@ export default function CustomersPage() {
         if (formattedName && !searchNames.includes(formattedName))
           searchNames.push(formattedName);
 
-        // 3. กรองหาวงกู้ของคนนี้ (หาทั้งจาก ID และจากชื่อเก่าๆ)
         const myLoans = allLoans.filter(
           (l) =>
             l.customerId === customerId || searchNames.includes(l.customerName),
         );
 
-        // 4. ลอจิกกรองวงซ้ำ (Deduplicate) ให้ความสำคัญกับวงที่มี () ก่อน และยึดสถานะ Active
         const loanMap = new Map();
         myLoans.forEach((data) => {
           const key = String(data.loanNumber || data.id).trim();
@@ -140,16 +133,14 @@ export default function CustomersPage() {
           }
         });
 
-        // 5. เลือกเฉพาะวงที่ยัง Active จริงๆ หลังจากการกรองซ้ำแล้ว
         const finalActiveLoans = Array.from(loanMap.values()).filter(
           (l) => l.status !== "closed",
         );
 
-        let activeCount = finalActiveLoans.length; // จำนวนวงกู้ล้วนๆ ไม่รวมวงแชร์
+        let activeCount = finalActiveLoans.length;
         let debtNormal = 0;
         let debtPD = 0;
 
-        // คำนวณยอดหนี้แยกประเภท
         finalActiveLoans.forEach((data) => {
           if (data.category === "PD") {
             debtPD += data.remainingBalance || 0;
@@ -158,7 +149,6 @@ export default function CustomersPage() {
           }
         });
 
-        // ตรวจสอบว่ามีข้อมูลเปลี่ยนไหม ถ้าเปลี่ยนให้บันทึกลง Database
         if (
           customer.activeLoans !== activeCount ||
           customer.totalDebt !== debtNormal ||
@@ -213,7 +203,6 @@ export default function CustomersPage() {
     return () => unsubscribe();
   }, []);
 
-  // 🌟 UX: Scroll Restoration (จำตำแหน่งเลื่อน)
   useEffect(() => {
     if (!loading && customers.length > 0) {
       const lastViewedId = sessionStorage.getItem("lastViewedCustomer");
@@ -299,6 +288,7 @@ export default function CustomersPage() {
         activeLoans: 0,
         totalDebt: 0,
         totalDebtPD: 0,
+        creditLimit: 0,
         status: "ปกติ",
         createdAt: serverTimestamp(),
       });
@@ -494,104 +484,192 @@ export default function CustomersPage() {
               : "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6"
           }
         >
-          {filteredCustomers.map((customer) => (
-            <div
-              key={customer.id}
-              id={`customer-${customer.id}`}
-              onClick={() => handleCustomerClick(customer.id)}
-              className={`bg-white rounded-[1.5rem] p-5 border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer relative group ${viewMode === "list" ? "flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4" : "flex flex-col gap-5"}`}
-            >
-              <div className="flex items-center gap-4 min-w-0 flex-1">
-                <div className="min-w-[3.5rem] h-14 bg-orange-50 rounded-xl flex items-center justify-center text-lg font-black text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all duration-300 shadow-inner">
-                  {customer.code ||
-                    (customer.nickname || customer.name).charAt(0)}
+          {filteredCustomers.map((customer) => {
+            // 🌟 คำนวณวงเงินเครดิตสำหรับลูกค้าแต่ละคน
+            const totalDebtNormal = customer.totalDebt || 0;
+            const creditLimit = customer.creditLimit || 0;
+            const availableCredit = creditLimit - totalDebtNormal;
+
+            // คำนวณเปอร์เซ็นต์
+            const creditPercentage =
+              creditLimit > 0
+                ? Math.max(
+                    0,
+                    Math.min(100, (availableCredit / creditLimit) * 100),
+                  )
+                : 0;
+            const strokeDashoffset = 100 - creditPercentage;
+
+            // โทนสี ม่วง(#6b46c1) / แดง(ติดลบ) / เทา(0)
+            const themeColor =
+              availableCredit < 0
+                ? "#ef4444"
+                : creditLimit === 0
+                  ? "#d1d5db"
+                  : "#6b46c1";
+
+            return (
+              <div
+                key={customer.id}
+                id={`customer-${customer.id}`}
+                onClick={() => handleCustomerClick(customer.id)}
+                className={`bg-white rounded-[1.5rem] p-5 sm:p-6 border border-gray-100 shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer relative group flex flex-col ${viewMode === "list" ? "lg:flex-row lg:items-center gap-6" : "gap-5"}`}
+              >
+                {/* --- ส่วนที่ 1: Profile & Credit Circle --- */}
+                <div
+                  className={`flex items-start justify-between w-full ${viewMode === "list" ? "lg:w-[40%] shrink-0" : ""}`}
+                >
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="min-w-[3.5rem] h-14 sm:min-w-[4rem] sm:h-16 bg-orange-50 rounded-2xl flex items-center justify-center text-xl font-black text-orange-500 group-hover:bg-orange-500 group-hover:text-white transition-all duration-300 shadow-inner shrink-0">
+                      {customer.code ||
+                        (customer.nickname || customer.name).charAt(0)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-lg sm:text-xl font-black text-gray-900 truncate tracking-tight">
+                        {getCustomerDisplayName(
+                          customer.nickname,
+                          customer.name,
+                        )}
+                      </h3>
+                      <div className="flex items-center gap-3 mt-1 text-[11px] font-bold text-gray-500">
+                        <span>📞 {customer.phone || "-"}</span>
+                        {customer.facebook && (
+                          <span className="hidden sm:flex items-center gap-1 text-[#1877F2] truncate">
+                            <MessageCircle className="w-3 h-3" />{" "}
+                            {customer.facebook}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 🌟 หลอดวงกลมเครดิต ลอยอยู่ด้านขวาของชื่อ */}
+                  <div className="shrink-0 ml-4 flex flex-col items-center justify-center">
+                    <div className="relative w-16 h-16 sm:w-[72px] sm:h-[72px] drop-shadow-sm">
+                      <svg
+                        className="w-full h-full transform -rotate-90"
+                        viewBox="0 0 36 36"
+                      >
+                        <path
+                          className="text-gray-100"
+                          strokeWidth="3.5"
+                          stroke="currentColor"
+                          fill="none"
+                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                        />
+                        <path
+                          stroke={themeColor}
+                          strokeWidth="3.5"
+                          strokeDasharray="100, 100"
+                          strokeDashoffset={strokeDashoffset}
+                          strokeLinecap="round"
+                          className="transition-all duration-1000 ease-out"
+                          fill="none"
+                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center mt-px px-1 text-center">
+                        <span className="text-[7px] sm:text-[8px] font-black text-gray-400 uppercase tracking-widest leading-none">
+                          คงเหลือ
+                        </span>
+                        {/* 🌟 แสดงจำนวนเต็มครบถ้วน ไม่มีย่อ */}
+                        <span
+                          className="text-[9px] sm:text-[11px] font-black mt-1 leading-none truncate w-full px-1"
+                          style={{ color: themeColor }}
+                        >
+                          {creditLimit === 0
+                            ? "ไม่จำกัด"
+                            : availableCredit.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <h3 className="text-lg font-black text-gray-800 truncate">
-                    {getCustomerDisplayName(customer.nickname, customer.name)}
-                  </h3>
-                  <div className="flex items-center gap-3 mt-1 text-[11px] font-bold text-gray-500">
-                    <span>📞 {customer.phone || "-"}</span>
-                    {customer.facebook && (
-                      <span className="flex items-center gap-1 text-[#1877F2] truncate">
-                        <MessageCircle className="w-3 h-3" />{" "}
-                        {customer.facebook}
-                      </span>
-                    )}
+
+                {/* --- ส่วนที่ 2: สถิติหนี้สิน --- */}
+                <div
+                  className={`grid grid-cols-2 sm:flex items-start sm:items-center gap-y-4 gap-x-6 w-full ${viewMode === "list" ? "lg:flex-1 lg:border-l lg:border-gray-100 lg:pl-6 lg:justify-between" : "border-t border-gray-50 pt-5"}`}
+                >
+                  <div>
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">
+                      วงเงินรวม
+                    </p>
+                    <p className="text-sm sm:text-base font-black text-gray-800">
+                      {creditLimit === 0
+                        ? "-"
+                        : `฿${creditLimit.toLocaleString()}`}
+                    </p>
+                  </div>
+                  <div className="sm:border-l sm:border-gray-100 sm:pl-6">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">
+                      หนี้ (ปกติ)
+                    </p>
+                    <p
+                      className={`text-sm sm:text-base font-black ${customer.totalDebt < 0 ? "text-red-500" : "text-gray-800"}`}
+                    >
+                      ฿{(customer.totalDebt || 0).toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="sm:border-l sm:border-gray-100 sm:pl-6">
+                    <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+                      <Package className="w-3 h-3" /> หนี้ PD
+                    </p>
+                    <p className="text-sm sm:text-base font-black text-rose-500">
+                      ฿{(customer.totalDebtPD || 0).toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="sm:border-l sm:border-gray-100 sm:pl-6">
+                    <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1">
+                      รวมกู้ทั้งหมด
+                    </p>
+                    <p className="text-sm sm:text-base font-black text-blue-600">
+                      {customer.activeLoans || 0} วง
+                    </p>
+                  </div>
+                </div>
+
+                {/* --- ส่วนที่ 3: ปุ่ม Action & Status --- */}
+                <div
+                  className={`flex items-center justify-between gap-4 w-full ${viewMode === "list" ? "lg:w-auto lg:shrink-0 lg:flex-col lg:items-end lg:justify-center border-t border-gray-50 pt-4 lg:pt-0 lg:border-t-0" : "border-t border-gray-50 pt-4 mt-1"}`}
+                >
+                  <span
+                    className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg ${customer.status === "ปกติ" ? "bg-green-50 text-green-600" : "bg-rose-50 text-rose-500"}`}
+                  >
+                    {customer.status}
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        router.push(
+                          `/loans/new?name=${encodeURIComponent(customer.nickname || customer.name)}&id=${customer.id}`,
+                        );
+                      }}
+                      className="p-2.5 text-orange-500 bg-orange-50 hover:bg-orange-500 hover:text-white rounded-xl transition-all shadow-sm"
+                    >
+                      <FileSignature className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                    <button
+                      onClick={(e) => openEditModal(e, customer)}
+                      className="p-2.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-colors"
+                    >
+                      <UserCog className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCustomerToDelete(customer);
+                        setDeleteModalOpen(true);
+                      }}
+                      className="p-2.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
                   </div>
                 </div>
               </div>
-
-              {/* 🌟 แสดงยอดหนี้ ปกติ และ PD */}
-              <div
-                className={`grid grid-cols-2 md:flex items-start md:items-center gap-y-4 gap-x-8 border-t lg:border-t-0 lg:border-l-2 border-orange-100 pt-4 lg:pt-0 lg:pl-6 relative ${viewMode === "grid" ? "border-t border-l-0 pt-4 pl-0" : ""}`}
-              >
-                <div>
-                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
-                    ยอดหนี้ปกติ
-                  </p>
-                  <p
-                    className={`text-base font-black ${customer.totalDebt < 0 ? "text-red-500" : "text-gray-800"}`}
-                  >
-                    ฿{(customer.totalDebt || 0).toLocaleString()}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-0.5 flex items-center gap-1">
-                    <Package className="w-3 h-3" /> ยอดหนี้ PD
-                  </p>
-                  <p className="text-base font-black text-rose-500">
-                    ฿{(customer.totalDebtPD || 0).toLocaleString()}
-                  </p>
-                </div>
-                <div className="col-span-2 md:border-l md:border-gray-100 md:pl-6">
-                  <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-0.5">
-                    รวมวงกู้ทั้งหมด
-                  </p>
-                  <p className="text-base font-black text-blue-600">
-                    {customer.activeLoans || 0} วง
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between gap-4 w-full lg:w-auto">
-                <span
-                  className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg ${customer.status === "ปกติ" ? "bg-green-50 text-green-600" : "bg-rose-50 text-rose-500"}`}
-                >
-                  {customer.status}
-                </span>
-                <div className="flex gap-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      router.push(
-                        `/loans/new?name=${encodeURIComponent(customer.nickname || customer.name)}&id=${customer.id}`,
-                      );
-                    }}
-                    className="p-2 text-orange-500 bg-orange-50 hover:bg-orange-500 hover:text-white rounded-xl transition-all shadow-sm"
-                  >
-                    <FileSignature className="w-5 h-5" />
-                  </button>
-                  <button
-                    onClick={(e) => openEditModal(e, customer)}
-                    className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-colors"
-                  >
-                    <UserCog className="w-5 h-5" />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setCustomerToDelete(customer);
-                      setDeleteModalOpen(true);
-                    }}
-                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
