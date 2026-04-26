@@ -33,7 +33,7 @@ export default function DailyCheckPage() {
   const [loading, setLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // 🌟 ลอจิกใหม่: บังคับดึงงวดที่เก่าที่สุด + ดักจับข้อมูลซ้ำซ้อน (Deduplication)
+  // 🌟 ลอจิกใหม่ขั้นสุด: บังคับดึงงวดเก่าสุด + กรองข้อมูลซ้ำซ้อน (Ultimate Deduplication)
   const fetchDailyJobs = useCallback(async () => {
     if (!selectedDate) return;
 
@@ -64,7 +64,6 @@ export default function DailyCheckPage() {
           if (data.dueDate <= selectedDate) {
             const currentEarliest = earliestPendingMap.get(data.loanId);
 
-            // 🌟 แปลงเป็น Number เพื่อป้องกันบั๊กการเปรียบเทียบข้อความ
             const currentInstNo = Number(data.installmentNo);
             const earliestInstNo = currentEarliest
               ? Number(currentEarliest.installmentNo)
@@ -87,15 +86,29 @@ export default function DailyCheckPage() {
       for (const [loanId, schedule] of earliestPendingMap.entries()) {
         const loanData = activeLoansMap.get(loanId);
 
-        // 🌟 กุญแจเช็คข้อมูลซ้ำ (Unique Key): รหัสวงกู้ + ชื่อลูกค้า
-        const uniqueKey = `${loanData.loanNumber}-${loanData.customerName}`;
+        // 🌟 กุญแจเช็คข้อมูลซ้ำแบบขั้นสุด (ลบช่องว่าง, ลบวงเล็บ, เช็ค 4 ชั้น)
+        // เพื่อป้องกันกรณีชื่อ "แม่น้ำ" กับ "แม่น้ำ " หรือ "แม่น้ำ (Mami)"
+        const cleanName = String(loanData.customerName || "")
+          .split("(")[0] // ตัดข้อความในวงเล็บทิ้ง
+          .replace(/\s+/g, "") // ลบช่องว่างทั้งหมด
+          .toLowerCase();
+
+        const cleanLoanNum = String(loanData.loanNumber || "")
+          .replace(/\s+/g, "")
+          .toLowerCase();
+
+        const instNo = Number(schedule.installmentNo);
+        const amount = Number(schedule.amount);
+
+        // Unique Key = ชื่อ + เลขวง + งวดที่ + ยอดเงิน
+        const uniqueKey = `${cleanName}-${cleanLoanNum}-${instNo}-${amount}`;
 
         if (!seenSet.has(uniqueKey)) {
-          seenSet.add(uniqueKey); // จดจำไว้ว่าคนนี้โชว์ไปแล้ว
+          seenSet.add(uniqueKey); // จดจำไว้ว่าคนนี้/บิลนี้ โชว์ไปแล้วนะ ห้ามเอามาซ้ำอีก!
 
           jobs.push({
             id: schedule.id,
-            loanId: loanId, // แนบไปเผื่อใช้บันทึก
+            loanId: loanId,
             ...schedule,
             customerId: schedule.customerId || loanData.customerId || null,
             remainingBefore: loanData.remainingBalance,
