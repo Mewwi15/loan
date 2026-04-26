@@ -1327,6 +1327,74 @@ export default function CustomerDetailPage({ params }) {
       {/* 🌟🌟 MODALS ทั้งหมด 🌟🌟 */}
       {/* ======================================================== */}
 
+      {/* Modal โปะปิดวง (เพิ่มให้แล้วครับ!) */}
+      {earlyPayoffModalOpen && payoffLoan && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-gray-900/70 backdrop-blur-sm"
+            onClick={() =>
+              !isProcessingPayoff && setEarlyPayoffModalOpen(false)
+            }
+          ></div>
+          <div className="relative bg-white w-full max-w-sm rounded-[2rem] shadow-2xl p-6 sm:p-8 animate-in zoom-in-95 duration-200 text-center">
+            <div className="w-16 h-16 sm:w-20 sm:h-20 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-4 sm:mb-6">
+              <Coins className="w-8 h-8 sm:w-10 sm:h-10 text-emerald-500" />
+            </div>
+            <h2 className="text-xl sm:text-2xl font-black text-gray-800 mb-2">
+              โปะยอดปิดวง
+            </h2>
+            <p className="text-xs sm:text-sm font-bold text-gray-500 mb-6">
+              วง {payoffLoan.loanNumber} • {payoffLoan.loanName}
+            </p>
+
+            <div className="mb-6 text-left">
+              <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 block mb-2">
+                วันที่ชำระเงิน
+              </label>
+              <input
+                type="date"
+                value={payoffDate}
+                onChange={(e) => setPayoffDate(e.target.value)}
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-emerald-500 font-bold text-gray-700 transition-all"
+              />
+            </div>
+
+            <div className="bg-emerald-50 p-4 rounded-xl mb-6">
+              <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600 mb-1">
+                ยอดที่ต้องชำระ (คงเหลือ)
+              </p>
+              <p className="text-2xl sm:text-3xl font-black text-emerald-600">
+                ฿{payoffLoan.remainingBalance.toLocaleString()}
+              </p>
+            </div>
+
+            <div className="flex gap-3 sm:gap-4">
+              <button
+                onClick={() => setEarlyPayoffModalOpen(false)}
+                disabled={isProcessingPayoff}
+                className="w-full py-3 sm:py-4 rounded-xl font-black text-gray-500 bg-gray-100 hover:bg-gray-200 text-xs sm:text-sm transition-all"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={confirmEarlyPayoff}
+                disabled={
+                  isProcessingPayoff || payoffLoan.remainingBalance <= 0
+                }
+                className="w-full bg-emerald-500 hover:bg-emerald-600 text-white py-3 sm:py-4 rounded-xl font-black shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50 text-xs sm:text-sm"
+              >
+                {isProcessingPayoff ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4" />
+                )}
+                ยืนยันการโปะ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal แก้ไขสัญญา */}
       {editContractModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
