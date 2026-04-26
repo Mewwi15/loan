@@ -213,6 +213,9 @@ export default function CustomerDetailPage({ params }) {
   const [isEditingProfit2025, setIsEditingProfit2025] = useState(false);
   const [tempProfit2025, setTempProfit2025] = useState("");
 
+  const [isEditingCredit, setIsEditingCredit] = useState(false);
+  const [tempCreditLimit, setTempCreditLimit] = useState("");
+
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [loanSchedule, setLoanSchedule] = useState([]);
@@ -450,6 +453,20 @@ export default function CustomerDetailPage({ params }) {
     }
   };
 
+  const handleSaveCreditLimit = async () => {
+    try {
+      const val = Number(tempCreditLimit) || 0;
+      await updateDoc(doc(db, "customers", customerId), {
+        creditLimit: val,
+      });
+      setCustomer((prev) => ({ ...prev, creditLimit: val }));
+      setIsEditingCredit(false);
+    } catch (error) {
+      console.error("Error saving credit limit:", error);
+      alert("เกิดข้อผิดพลาดในการบันทึกวงเงิน");
+    }
+  };
+
   const handleToggleCategory = async (loan) => {
     const newCategory = loan.category === "PD" ? "normal" : "PD";
     const confirmMsg = `ยืนยันเปลี่ยนวง ${loan.loanNumber || ""} ให้เป็น "${newCategory === "PD" ? "ผ่อนของ (PD)" : "กู้ปกติ"}" ใช่หรือไม่?`;
@@ -531,7 +548,6 @@ export default function CustomerDetailPage({ params }) {
     setFormData((prev) => ({ ...prev, frequency: val, type: type }));
   };
 
-  // 🌟 ลอจิกใหม่: อัปเดตสัญญาโดยรักษาตำแหน่งงวดที่เคยจ่ายไว้ที่เดิมเป๊ะๆ (ไม่มีการถมฟันหลอ)
   const handleUpdateContract = async () => {
     setIsSavingContract(true);
     const batch = writeBatch(db);
@@ -544,14 +560,13 @@ export default function CustomerDetailPage({ params }) {
       );
       const oldSchedulesSnap = await getDocs(oldSchedulesQ);
 
-      // เก็บประวัติเก่าโดยอิงจาก "เลขงวด" (installmentNo) เป็นหลัก
       const paidHistoryMap = {};
       oldSchedulesSnap.forEach((d) => {
         const data = d.data();
         if (data.status === "paid") {
           paidHistoryMap[data.installmentNo] = data;
         }
-        batch.delete(d.ref); // ลบของเก่าเตรียมสร้างใหม่
+        batch.delete(d.ref);
       });
 
       let newRemainingBalance = actualTotalToCollect;
@@ -568,8 +583,6 @@ export default function CustomerDetailPage({ params }) {
         }
 
         const installmentNo = i + 1;
-
-        // 🌟 เช็คว่าเลขงวดนี้ ในอดีตเคยถูกติ๊กจ่ายไว้หรือไม่
         const oldPaidData = paidHistoryMap[installmentNo];
         const isPaid = !!oldPaidData;
 
@@ -752,11 +765,9 @@ export default function CustomerDetailPage({ params }) {
     }
   };
 
-  // 🌟 ฟีเจอร์ใหม่: บอสสามารถคลิกจิ้มแก้ยอดหน้าตารางค่างวดได้เลย!
   const toggleScheduleStatus = async (scheduleItem) => {
     const isCurrentlyPaid = scheduleItem.status === "paid";
 
-    // ถามย้ำเพื่อความชัวร์
     const confirmMsg = isCurrentlyPaid
       ? `ต้องการยกเลิกการรับเงินงวดที่ ${scheduleItem.installmentNo} ใช่หรือไม่?\n(สถานะจะกลับเป็น "ค้างชำระ" และยอดหนี้จะเพิ่มขึ้น)`
       : `ต้องการเปลี่ยนงวดที่ ${scheduleItem.installmentNo} เป็น "ชำระแล้ว" ใช่หรือไม่?\n(ยอดหนี้จะลดลง)`;
@@ -767,14 +778,12 @@ export default function CustomerDetailPage({ params }) {
     try {
       const batch = writeBatch(db);
 
-      // 1. เปลี่ยนสถานะค่างวด
       const scheduleRef = doc(db, "schedules", scheduleItem.id);
       batch.update(scheduleRef, {
         status: isCurrentlyPaid ? "pending" : "paid",
         paidAt: isCurrentlyPaid ? null : serverTimestamp(),
       });
 
-      // 2. ปรับตัวเลขในตารางวงกู้ (Loans)
       const loanRef = doc(db, "loans", selectedLoan.id);
       const amountChange = isCurrentlyPaid
         ? scheduleItem.amount
@@ -786,9 +795,7 @@ export default function CustomerDetailPage({ params }) {
         currentInstallment: increment(installmentChange),
       });
 
-      // 3. ดึง transaction ที่เคยสร้างไว้มาลบออก (ถ้ายกเลิก) หรือสร้างใหม่ (ถ้าติ๊กเพิ่ม)
       if (isCurrentlyPaid) {
-        // ถ้ายกเลิก ให้หาบิลที่มีเลขงวดตรงกัน แล้วลบทิ้ง (หรือจะไม่ลบก็ได้ แต่นี่คือลบเพื่อความเนียน)
         const transQ = query(
           collection(db, "transactions"),
           where("loanId", "==", selectedLoan.id),
@@ -797,7 +804,6 @@ export default function CustomerDetailPage({ params }) {
         const transSnap = await getDocs(transQ);
         transSnap.forEach((t) => batch.delete(t.ref));
       } else {
-        // ถ้าติ๊กใหม่ ให้สร้างบิล
         const transRef = doc(collection(db, "transactions"));
         batch.set(transRef, {
           loanId: selectedLoan.id,
@@ -807,7 +813,7 @@ export default function CustomerDetailPage({ params }) {
           profitShare: scheduleItem.profitShare || 0,
           penalty: 0,
           installmentNo: scheduleItem.installmentNo,
-          paymentDate: new Date().toISOString().split("T")[0], // วันที่กดแก้
+          paymentDate: new Date().toISOString().split("T")[0],
           createdAt: serverTimestamp(),
           note: "บันทึกจากการแก้ไขตารางค่างวด (Manual)",
           category: selectedLoan.category || "normal",
@@ -815,11 +821,8 @@ export default function CustomerDetailPage({ params }) {
       }
 
       await batch.commit();
-
-      // 4. ซิงค์ยอดรวมหน้าโปรไฟล์ลูกค้าใหม่
       await syncCustomerData();
 
-      // 5. อัปเดต UI หน้าจอทันที
       setLoanSchedule((prev) =>
         prev.map((s) =>
           s.id === scheduleItem.id
@@ -827,7 +830,7 @@ export default function CustomerDetailPage({ params }) {
             : s,
         ),
       );
-      fetchData(); // รีเฟรชหน้าหลักเพื่ออัปเดตยอดคงเหลือในตาราง
+      fetchData();
     } catch (error) {
       console.error("Error toggling status:", error);
       alert("เกิดข้อผิดพลาดในการปรับสถานะ");
@@ -865,37 +868,144 @@ export default function CustomerDetailPage({ params }) {
   const grandTotalAccumulatedProfit =
     customerStats.profit2025 + closedLoansProfit;
 
+  // ==========================================
+  // 🌟 คำนวณวงเงินเครดิต (ลอจิกเฉพาะกู้ปกติ)
+  // ==========================================
+  const totalDebtNormal = customer.totalDebt || 0;
+  const creditLimit = customer.creditLimit || 0;
+  const availableCredit = creditLimit - totalDebtNormal;
+
+  // คำนวณเปอร์เซ็นต์เพื่อไปแสดงในหลอด (ห้ามเกิน 100 และไม่ต่ำกว่า 0)
+  const creditPercentage =
+    creditLimit > 0
+      ? Math.max(0, Math.min(100, (availableCredit / creditLimit) * 100))
+      : 0;
+  const strokeDashoffset = 100 - creditPercentage;
+
+  // สีโทนม่วง/น้ำเงิน แบบในแอปธนาคาร ถ้าติดลบจะเปลี่ยนเป็นสีแดง
+  const themeColor = availableCredit < 0 ? "#ef4444" : "#6b46c1";
+
   return (
     <div className="w-full pb-20 px-3 sm:px-10 font-sans animate-in fade-in duration-500">
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 sm:gap-6 mb-6 pt-6 sm:pt-10">
-        <div className="flex items-start gap-4 sm:gap-6 w-full">
-          <Link
-            href="/customers"
-            className="p-2.5 sm:p-3 bg-white rounded-xl sm:rounded-2xl border border-gray-100 shadow-sm hover:bg-orange-50 transition-all active:scale-95 shrink-0"
-          >
-            <ArrowLeft className="w-5 h-5 text-gray-400" />
-          </Link>
-          <div className="flex-1">
-            <h1 className="text-2xl sm:text-4xl font-black text-gray-900 tracking-tight leading-tight">
+      {/* --- ส่วน Header จัดเลย์เอาต์ใหม่แบบไม่มีกรอบบัตร --- */}
+      <div className="flex items-start gap-3 sm:gap-5 mb-6 pt-6 sm:pt-10 w-full">
+        {/* ปุ่มกลับ */}
+        <Link
+          href="/customers"
+          className="p-2.5 sm:p-3 bg-white rounded-xl sm:rounded-2xl border border-gray-100 shadow-sm hover:bg-orange-50 transition-all active:scale-95 shrink-0 mt-1"
+        >
+          <ArrowLeft className="w-5 h-5 text-gray-400" />
+        </Link>
+
+        {/* จัดเรียงเป็นแนวนอน (row) ให้ชื่อและหลอดอยู่ข้างกัน */}
+        <div className="flex-1 flex flex-row justify-between items-start gap-2 sm:gap-6">
+          {/* ข้อมูลลูกค้า (ฝั่งซ้าย) */}
+          <div className="flex-1 min-w-0">
+            <h1 className="text-xl sm:text-3xl lg:text-4xl font-black text-gray-900 tracking-tight leading-tight line-clamp-2">
               {customer.nickname
                 ? `${customer.nickname} (${customer.name})`
                 : customer.name}
             </h1>
-            <div className="flex flex-wrap items-center gap-3 mt-1.5 sm:mt-2">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-1.5 sm:mt-2">
               <p className="text-[10px] sm:text-xs text-orange-500 font-black uppercase tracking-widest flex items-center gap-1.5">
                 <Phone className="w-3 h-3 sm:w-4 sm:h-4" /> {customer.phone}
               </p>
-              <span className="text-[9px] sm:text-[10px] text-gray-400 font-black uppercase tracking-widest bg-gray-100 px-2 py-0.5 rounded">
+              <span className="text-[9px] sm:text-[10px] text-gray-400 font-black uppercase tracking-widest bg-gray-100 px-2 py-0.5 rounded shrink-0">
                 ID: {customerId.slice(0, 5)}
               </span>
             </div>
             <div className="mt-3 sm:mt-4">
               <Link
                 href={`/customers/${customerId}/share`}
-                className="inline-flex items-center gap-1.5 sm:gap-2 px-4 py-2 sm:px-5 sm:py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 rounded-xl font-bold text-[10px] sm:text-xs uppercase tracking-widest transition-colors shadow-sm"
+                className="inline-flex items-center gap-1.5 sm:gap-2 px-3 py-1.5 sm:px-5 sm:py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 rounded-xl font-bold text-[10px] sm:text-xs uppercase tracking-widest transition-colors shadow-sm"
               >
                 <HandCoins className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> ประวัติแชร์
               </Link>
+            </div>
+          </div>
+
+          {/* 🌟 หลอดวงเงินเครดิต (ฝั่งขวา ลอยๆ ไม่มีกรอบ) */}
+          <div className="shrink-0 flex flex-col items-center justify-center px-1 sm:px-2 pt-1">
+            {/* ตัวหลอด SVG ปรับไซส์ให้ใหญ่ขึ้นตามแบบ */}
+            <div className="relative w-24 h-24 sm:w-28 sm:h-28 drop-shadow-sm mb-2 sm:mb-3">
+              <svg
+                className="w-full h-full transform -rotate-90"
+                viewBox="0 0 36 36"
+              >
+                <path
+                  className="text-gray-100"
+                  strokeWidth="2.5"
+                  stroke="currentColor"
+                  fill="none"
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                />
+                <path
+                  stroke={themeColor}
+                  strokeWidth="2.5"
+                  strokeDasharray="100, 100"
+                  strokeDashoffset={strokeDashoffset}
+                  strokeLinecap="round"
+                  className="transition-all duration-1000 ease-out"
+                  fill="none"
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-[8px] sm:text-[10px] font-bold text-gray-500 uppercase tracking-widest">
+                  วงเงินคงเหลือ
+                </span>
+                <span
+                  className="text-[12px] sm:text-[15px] font-black mt-0.5 sm:mt-1"
+                  style={{ color: themeColor }}
+                >
+                  {availableCredit < 0
+                    ? "เกินวงเงิน"
+                    : availableCredit.toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {/* ส่วนวงเงินรวม (แก้ไขได้) จัดไว้ข้างใต้แบบเนียนๆ */}
+            <div className="flex flex-col items-center text-center">
+              <span className="text-[8px] sm:text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                วงเงินรวม (บาท)
+              </span>
+
+              {isEditingCredit ? (
+                <div className="flex items-center gap-1 mt-1">
+                  <input
+                    type="number"
+                    value={tempCreditLimit}
+                    onChange={(e) => setTempCreditLimit(e.target.value)}
+                    className="w-20 sm:w-24 bg-white border border-gray-300 rounded-lg px-2 py-1 text-xs font-black text-center text-gray-800 outline-none focus:border-purple-400 shadow-sm"
+                    placeholder="0"
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleSaveCreditLimit}
+                    className="bg-gray-800 text-white p-1.5 rounded-lg hover:bg-black shadow-sm"
+                  >
+                    <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  </button>
+                </div>
+              ) : (
+                <div
+                  className="flex items-center gap-1.5 mt-0.5 cursor-pointer group"
+                  onClick={() => {
+                    setIsEditingCredit(true);
+                    setTempCreditLimit(creditLimit);
+                  }}
+                  title="คลิกเพื่อแก้ไขวงเงิน"
+                >
+                  <span
+                    className="text-sm sm:text-base font-black"
+                    style={{ color: themeColor }}
+                  >
+                    {creditLimit.toLocaleString()}
+                  </span>
+                  <Edit className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-gray-300 group-hover:text-gray-500 transition-colors" />
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1640,7 +1750,6 @@ export default function CustomerDetailPage({ params }) {
                       className={`flex items-center justify-between p-3.5 sm:p-5 rounded-xl sm:rounded-[1.5rem] border bg-white transition-all group hover:border-blue-300 ${item.status === "paid" ? "opacity-60 hover:opacity-100" : "border-gray-100 shadow-sm"}`}
                     >
                       <div className="flex items-center gap-3 sm:gap-4">
-                        {/* 🌟 ปุ่มคลิกเปลี่ยนสถานะค่างวดแบบ Manual */}
                         <button
                           onClick={() => toggleScheduleStatus(item)}
                           title={
