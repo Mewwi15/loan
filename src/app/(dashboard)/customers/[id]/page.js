@@ -921,14 +921,21 @@ export default function CustomerDetailPage({ params }) {
               </Link>
             </div>
 
-            {/* 🌟 ยอดหนี้ที่ใช้ไป (ย้ายมาไว้ใต้ปุ่มประวัติแชร์ และขยายให้ใหญ่เบิ้ม) */}
-            <div className="mt-4 sm:mt-5 flex items-baseline gap-2">
-              <p className="text-sm sm:text-base font-bold text-gray-500">
-                ใช้ไป :
-              </p>
-              <span className="text-rose-500 text-2xl sm:text-3xl font-black tracking-tight leading-none">
-                ฿{totalDebtNormal.toLocaleString()}
-              </span>
+            {/* 🌟 ยอดหนี้ที่ใช้ไป (เปลี่ยนเป็นการ์ดตามรีเควส) */}
+            <div className="mt-4 sm:mt-5">
+              <div className="inline-flex items-center gap-3 sm:gap-4 bg-white border border-rose-100 p-3 sm:p-4 rounded-[1.2rem] shadow-sm">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-rose-50 rounded-xl flex items-center justify-center shrink-0">
+                  <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6 text-rose-500" />
+                </div>
+                <div>
+                  <p className="text-[9px] sm:text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">
+                    ใช้ไป (ยอดหนี้)
+                  </p>
+                  <p className="text-xl sm:text-2xl font-black text-rose-500 tracking-tight leading-none">
+                    ฿{totalDebtNormal.toLocaleString()}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 
