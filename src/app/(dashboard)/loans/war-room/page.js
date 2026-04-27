@@ -21,7 +21,7 @@ import {
   TrendingUp,
   AlertOctagon,
   Archive,
-  Users, // ไอคอนสำหรับวงกลุ่ม
+  Users,
   ChevronDown,
 } from "lucide-react";
 
@@ -30,7 +30,6 @@ export default function WarRoomPage() {
   const [data, setData] = useState({ items: [], isLoaded: false });
   const [selectedLoan, setSelectedLoan] = useState(null);
 
-  // 🌟 State สำหรับจำว่าการ์ดกลุ่มไหนถูกกดกางออกอยู่บ้าง
   const [expandedGroups, setExpandedGroups] = useState([]);
 
   useEffect(() => {
@@ -39,25 +38,61 @@ export default function WarRoomPage() {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        // 1. จัดกลุ่มข้อมูลตามรหัสวง (Slot) ก่อน
-        const groupedLoans = {};
+        // 🌟 1. ดักจับและลบข้อมูลที่สร้างซ้ำ (Deduplication) ก่อนเลย!
+        const uniqueLoansMap = new Map();
 
         snapshot.docs.forEach((doc) => {
-          const d = doc.data();
+          const data = doc.data();
+
+          // ทำความสะอาดชื่อลูกค้า (ตัดช่องว่างและวงเล็บทิ้งเพื่อเช็คความซ้ำ)
+          const safeName = String(data.customerName || "")
+            .split("(")[0]
+            .replace(/\s+/g, "")
+            .toLowerCase();
+
+          const loanNumKey = String(data.loanNumber || doc.id).trim();
+
+          // กุญแจเช็คของซ้ำ: รหัสวง + ชื่อคน (ถ้าคนเดิมอยู่รหัสวงเดิม = ข้อมูลเบิ้ลชัวร์ๆ)
+          const uniqueKey = `${loanNumKey}-${safeName}`;
+
+          if (uniqueLoansMap.has(uniqueKey)) {
+            const existing = uniqueLoansMap.get(uniqueKey);
+            // เลือกว่าจะเก็บอันไหนไว้ (เอาอันที่เป็น Active หรือชื่อสมบูรณ์กว่า)
+            if (existing.status === "closed" && data.status === "active") {
+              uniqueLoansMap.set(uniqueKey, { id: doc.id, ...data });
+            } else if (existing.status === data.status) {
+              if (
+                !existing.customerName?.includes("(") &&
+                data.customerName?.includes("(")
+              ) {
+                uniqueLoansMap.set(uniqueKey, { id: doc.id, ...data });
+              }
+            }
+          } else {
+            uniqueLoansMap.set(uniqueKey, { id: doc.id, ...data });
+          }
+        });
+
+        // ได้ข้อมูลที่คลีน 100% (ไม่มีแฝด) แล้ว
+        const cleanLoans = Array.from(uniqueLoansMap.values());
+
+        // 2. นำข้อมูลมาจัดกลุ่มตามรหัสวง (Slot) เผื่อกรณีที่มีคนกู้กลุ่ม (หลายคนคนละชื่อ แต่อยู่รหัสวงเดียวกัน)
+        const groupedLoans = {};
+
+        cleanLoans.forEach((d) => {
           const progress =
             d.totalInstallments > 0
               ? (d.currentInstallment / d.totalInstallments) * 100
               : 0;
 
           const rawNum = String(d.loanNumber || "999999").trim();
-          const loanNum = parseInt(rawNum, 10) || 999999;
+          const loanNumStr = parseInt(rawNum, 10) || 999999;
 
-          if (!groupedLoans[loanNum]) {
-            groupedLoans[loanNum] = [];
+          if (!groupedLoans[loanNumStr]) {
+            groupedLoans[loanNumStr] = [];
           }
-          groupedLoans[loanNum].push({
-            id: doc.id,
-            ...d,
+          groupedLoans[loanNumStr].push({
+            ...d, // d มี id อยู่แล้ว
             progress,
             displayLoanNumber: rawNum,
           });
@@ -65,15 +100,12 @@ export default function WarRoomPage() {
 
         const finalLoanList = [];
 
-        // 2. 🌟 ยุบรวม (Merge) วงที่ซ้ำกันให้เป็นการ์ดกลุ่ม
+        // 3. ยุบรวม (Merge)
         for (const num in groupedLoans) {
           const loansInSlot = groupedLoans[num];
-
-          // หากลุ่มที่กำลัง Active อยู่
           const activeLoans = loansInSlot.filter((l) => l.status !== "closed");
 
           if (activeLoans.length > 0) {
-            // ถลุงข้อมูลรวมกัน
             const totalRemaining = activeLoans.reduce(
               (sum, l) => sum + (Number(l.remainingBalance) || 0),
               0,
@@ -84,10 +116,10 @@ export default function WarRoomPage() {
               .join(", ");
 
             finalLoanList.push({
-              isGroup: activeLoans.length > 1, // เช็คว่าเป็นกู้กลุ่มหรือไม่
-              id: activeLoans.length > 1 ? `group-${num}` : baseLoan.id, // ใช้ ID สมมติถ้าเป็นกลุ่ม
+              isGroup: activeLoans.length > 1,
+              id: activeLoans.length > 1 ? `group-${num}` : baseLoan.id,
               displayLoanNumber: baseLoan.displayLoanNumber,
-              loanName: baseLoan.loanName || "วงกู้รวม", // ใช้ชื่อวง
+              loanName: baseLoan.loanName || "วงกู้รวม",
               customerNamesList: customerNamesList,
               memberCount: activeLoans.length,
               remainingBalance: totalRemaining,
@@ -96,11 +128,10 @@ export default function WarRoomPage() {
               progress: baseLoan.progress,
               bankColor: baseLoan.bankColor,
               status: "active",
-              originalLoans: activeLoans, // 🌟 เก็บข้อมูลลูกวงทุกคนไว้ข้างใน
-              ...(activeLoans.length === 1 ? baseLoan : {}), // ถ้ามีคนเดียว เอาข้อมูลมาใช้ปกติเลย
+              originalLoans: activeLoans,
+              ...(activeLoans.length === 1 ? baseLoan : {}),
             });
           } else {
-            // ถ้าว่าง (ไม่มี Active เลย)
             loansInSlot.sort(
               (a, b) =>
                 (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0),
@@ -116,7 +147,7 @@ export default function WarRoomPage() {
           }
         }
 
-        // 3. เรียงลำดับจาก วงน้อย -> วงมาก
+        // 4. เรียงลำดับจาก วงน้อย -> วงมาก
         finalLoanList.sort((a, b) => {
           const numA = parseInt(a.displayLoanNumber, 10) || 999999;
           const numB = parseInt(b.displayLoanNumber, 10) || 999999;
@@ -148,17 +179,14 @@ export default function WarRoomPage() {
     });
   }, [searchTerm, data.items]);
 
-  // ฟังก์ชันกดการ์ด
   const handleCardClick = (loan) => {
     if (loan.isGroup) {
-      // ถ้าเป็นกลุ่ม ให้กางออก หรือ หุบเข้า
       setExpandedGroups((prev) =>
         prev.includes(loan.id)
           ? prev.filter((id) => id !== loan.id)
           : [...prev, loan.id],
       );
     } else {
-      // ถ้าเป็นคนเดียว ให้เปิด Modal เลย
       setSelectedLoan(loan);
     }
   };
@@ -234,7 +262,6 @@ export default function WarRoomPage() {
                 key={loan.id}
                 className="bg-white rounded-[1.8rem] border border-gray-50 shadow-sm hover:shadow-xl hover:shadow-orange-100/40 hover:border-orange-200 transition-all group overflow-hidden"
               >
-                {/* 🌟 หน้าปัดการ์ดหลัก */}
                 <div
                   onClick={() => handleCardClick(loan)}
                   className="p-6 md:px-8 md:py-7 cursor-pointer"
@@ -311,7 +338,6 @@ export default function WarRoomPage() {
                   </div>
                 </div>
 
-                {/* 🌟 โซนลูกวง (จะโชว์ก็ต่อเมื่อเป็นการ์ดกลุ่ม และถูกกดให้กางออก) */}
                 {loan.isGroup && isExpanded && (
                   <div className="border-t border-gray-100 bg-gray-50/50 p-6 md:px-8 space-y-3 animate-in slide-in-from-top-2 duration-300">
                     <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest flex items-center gap-2 mb-4">
@@ -322,8 +348,8 @@ export default function WarRoomPage() {
                         <div
                           key={member.id}
                           onClick={(e) => {
-                            e.stopPropagation(); // กันไม่ให้กดแล้วการ์ดใหญ่พับ
-                            setSelectedLoan(member); // เปิด Modal เฉพาะของคนนี้
+                            e.stopPropagation();
+                            setSelectedLoan(member);
                           }}
                           className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm hover:border-orange-500 hover:shadow-md cursor-pointer transition-all group/member"
                         >
@@ -376,7 +402,6 @@ export default function WarRoomPage() {
   );
 }
 
-// --- Component Modal สรุปกำไร ---
 function LoanDetailModal({ loan, onClose }) {
   const [schedule, setSchedule] = useState([]);
   const [loading, setLoading] = useState(true);
