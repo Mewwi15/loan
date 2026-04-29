@@ -232,7 +232,6 @@ export default function CustomerDetailPage({ params }) {
   );
   const [isProcessingPayoff, setIsProcessingPayoff] = useState(false);
 
-  // 🌟 State สำหรับเปิด/ปิด Modal "ประวัติวงกู้ที่ปิดแล้ว"
   const [isClosedLoansModalOpen, setIsClosedLoansModalOpen] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -285,7 +284,20 @@ export default function CustomerDetailPage({ params }) {
 
         const loanMap = new Map();
         const processLoan = (docSnap) => {
-          const data = { id: docSnap.id, ...docSnap.data() };
+          let data = { id: docSnap.id, ...docSnap.data() };
+
+          // 🌟 Auto-Heal: ซ่อมแซมข้อมูลที่ค้างอยู่ (ถ้ายอดเหลือ 0 แต่สถานะไม่โดนปิด)
+          if (data.status !== "closed" && (data.remainingBalance || 0) <= 0) {
+            const now = new Date().toISOString();
+            data.status = "closed";
+            data.closedAt = data.closedAt || now;
+            // แอบอัปเดตลงฐานข้อมูลให้เนียนๆ
+            updateDoc(doc(db, "loans", docSnap.id), {
+              status: "closed",
+              closedAt: data.closedAt,
+            }).catch(console.error);
+          }
+
           const key = String(data.loanNumber || data.id).trim();
 
           if (loanMap.has(key)) {
@@ -790,7 +802,6 @@ export default function CustomerDetailPage({ params }) {
         : -scheduleItem.amount;
       const installmentChange = isCurrentlyPaid ? -1 : 1;
 
-      // 🌟 ลอจิก Auto-Close ฉลาดๆ
       const newBalance = selectedLoan.remainingBalance + amountChange;
       const updateData = {
         remainingBalance: increment(amountChange),
@@ -842,7 +853,6 @@ export default function CustomerDetailPage({ params }) {
       await batch.commit();
       await syncCustomerData();
 
-      // ถ้ายอดเหลือ 0 ปิด Modal ไปเลย
       if (!isCurrentlyPaid && newBalance <= 0) {
         setScheduleModalOpen(false);
       } else {
@@ -906,7 +916,6 @@ export default function CustomerDetailPage({ params }) {
 
   return (
     <div className="w-full pb-20 px-3 sm:px-10 font-sans animate-in fade-in duration-500">
-      {/* --- ส่วน Header --- */}
       <div className="flex items-start gap-3 sm:gap-5 mb-6 pt-6 sm:pt-10 w-full">
         <Link
           href="/customers"
@@ -1251,7 +1260,7 @@ export default function CustomerDetailPage({ params }) {
       {/* --- เส้นคั่นแบ่งโซน --- */}
       <div className="w-full h-px bg-gray-200/60 my-8 sm:my-10"></div>
 
-      {/* --- ส่วนที่ 3: สรุปผลกำไรและประวัติ (ย้ายมาล่างสุด) --- */}
+      {/* --- ส่วนที่ 3: สรุปผลกำไรและประวัติ --- */}
       <div className="mb-4">
         <h2 className="text-xl sm:text-2xl font-black text-gray-800 mb-4 sm:mb-6">
           สรุปผลประกอบการ
@@ -1326,7 +1335,6 @@ export default function CustomerDetailPage({ params }) {
             </div>
           </div>
 
-          {/* 🌟 การ์ดกำไรคาดหวัง (ย้ายลงมารวมแก๊งตรงนี้) */}
           <div className="bg-blue-50 p-5 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-blue-100 shadow-sm flex flex-col justify-center relative transition-transform hover:-translate-y-1">
             <p className="text-[9px] sm:text-[10px] font-black uppercase text-blue-500 tracking-widest mb-1 flex items-center gap-1">
               <Target className="w-3 h-3 text-blue-500" /> กำไรคาดหวัง (กู้ปกติ)

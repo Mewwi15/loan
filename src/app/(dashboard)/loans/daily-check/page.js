@@ -190,6 +190,7 @@ export default function DailyCheckPage() {
 
     try {
       for (const item of itemsToPay) {
+        // 1. อัปเดตตารางค่างวด
         const scheduleRef = doc(db, "schedules", item.id);
         batch.update(scheduleRef, {
           status: "paid",
@@ -197,12 +198,24 @@ export default function DailyCheckPage() {
           appliedPenalty: item.penalty,
         });
 
+        // 2. อัปเดตข้อมูลวงกู้หลัก + 🌟 ลอจิก Auto-Close
         const loanRef = doc(db, "loans", item.loanId);
-        batch.update(loanRef, {
+        const newBalance = item.remainingBefore - item.amount; // คำนวณยอดเงินที่จะเหลือหลังจ่าย
+
+        const loanUpdateData = {
           remainingBalance: increment(-item.amount),
           currentInstallment: increment(1),
-        });
+        };
 
+        // ถ้าจ่ายงวดนี้แล้วยอดเหลือ 0 บาท หรือติดลบ ให้เตะเข้าประวัติทันที!
+        if (newBalance <= 0) {
+          loanUpdateData.status = "closed";
+          loanUpdateData.closedAt = new Date().toISOString();
+        }
+
+        batch.update(loanRef, loanUpdateData);
+
+        // 3. หักหนี้ออกจากโปรไฟล์ลูกค้า
         if (item.customerId) {
           const customerRef = doc(db, "customers", item.customerId);
           batch.update(customerRef, {
@@ -222,6 +235,7 @@ export default function DailyCheckPage() {
           }
         }
 
+        // 4. สร้างบิล (Transaction) เก็บไว้เป็นหลักฐาน
         const transRef = doc(collection(db, "transactions"));
         batch.set(transRef, {
           loanId: item.loanId,
@@ -423,6 +437,12 @@ export default function DailyCheckPage() {
                         {item.isChecked && (
                           <p className="text-[8px] md:text-[9px] font-bold text-green-500 uppercase whitespace-nowrap">
                             ตัดหนี้ -฿{item.amount.toLocaleString()}
+                          </p>
+                        )}
+                        {/* 🌟 แสดงป้ายเตือนปิดวงเมื่อติ๊กแล้วยอดเป็น 0 */}
+                        {item.isChecked && remainingAfter <= 0 && (
+                          <p className="text-[8px] md:text-[9px] font-bold text-orange-500 uppercase whitespace-nowrap mt-0.5 animate-pulse">
+                            📦 เตรียมปิดวงอัตโนมัติ
                           </p>
                         )}
                       </td>
