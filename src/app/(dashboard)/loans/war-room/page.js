@@ -169,8 +169,8 @@ const BANK_OPTIONS = [
 export default function WarRoomPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [data, setData] = useState({ items: [], isLoaded: false });
-  const [selectedLoan, setSelectedLoan] = useState(null); // สำหรับดู Detail
-  const [editingLoan, setEditingLoan] = useState(null); // สำหรับเปิดหน้าแก้ไข (Modal)
+  const [selectedLoan, setSelectedLoan] = useState(null);
+  const [editingLoan, setEditingLoan] = useState(null);
 
   const [expandedGroups, setExpandedGroups] = useState([]);
 
@@ -180,7 +180,7 @@ export default function WarRoomPage() {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        // 🌟 1. Deduplication (ลบวงซ้ำ)
+        // 🌟 1. Deduplication (ลบวงซ้ำแบบละเอียดขึ้น)
         const uniqueLoansMap = new Map();
         snapshot.docs.forEach((doc) => {
           const data = doc.data();
@@ -188,8 +188,13 @@ export default function WarRoomPage() {
             .split("(")[0]
             .replace(/\s+/g, "")
             .toLowerCase();
-          const loanNumKey = String(data.loanNumber || doc.id).trim();
-          const uniqueKey = `${loanNumKey}-${safeName}`;
+          const loanNumKey = String(data.loanNumber || doc.id)
+            .trim()
+            .toUpperCase();
+          const principalStr = String(data.principal || 0);
+
+          // ล็อกเป้าหมายให้แน่นขึ้น: เช็คทั้ง เลขวง + ชื่อคน + เงินต้น
+          const uniqueKey = `${loanNumKey}-${safeName}-${data.category || "normal"}-${principalStr}`;
 
           if (uniqueLoansMap.has(uniqueKey)) {
             const existing = uniqueLoansMap.get(uniqueKey);
@@ -211,18 +216,19 @@ export default function WarRoomPage() {
         const cleanLoans = Array.from(uniqueLoansMap.values());
         const groupedLoans = {};
 
+        // 🌟 2. Grouping แบบ Exact Match (เลขวงต้องเหมือนกันเป๊ะๆ)
         cleanLoans.forEach((d) => {
           const progress =
             d.totalInstallments > 0
               ? (d.currentInstallment / d.totalInstallments) * 100
               : 0;
           const rawNum = String(d.loanNumber || "999999").trim();
-          const loanNumStr = parseInt(rawNum, 10) || 999999;
+          const groupKey = rawNum.toUpperCase(); // จัดกลุ่มด้วยอักษรเป๊ะๆ ไม่ใช้ parseInt แล้ว
 
-          if (!groupedLoans[loanNumStr]) {
-            groupedLoans[loanNumStr] = [];
+          if (!groupedLoans[groupKey]) {
+            groupedLoans[groupKey] = [];
           }
-          groupedLoans[loanNumStr].push({
+          groupedLoans[groupKey].push({
             ...d,
             progress,
             displayLoanNumber: rawNum,
@@ -230,8 +236,8 @@ export default function WarRoomPage() {
         });
 
         const finalLoanList = [];
-        for (const num in groupedLoans) {
-          const loansInSlot = groupedLoans[num];
+        for (const key in groupedLoans) {
+          const loansInSlot = groupedLoans[key];
           const activeLoans = loansInSlot.filter((l) => l.status !== "closed");
 
           if (activeLoans.length > 0) {
@@ -246,7 +252,7 @@ export default function WarRoomPage() {
 
             finalLoanList.push({
               isGroup: activeLoans.length > 1,
-              id: activeLoans.length > 1 ? `group-${num}` : baseLoan.id,
+              id: activeLoans.length > 1 ? `group-${key}` : baseLoan.id,
               displayLoanNumber: baseLoan.displayLoanNumber,
               loanName: baseLoan.loanName || "วงกู้รวม",
               customerNamesList: customerNamesList,
@@ -261,7 +267,6 @@ export default function WarRoomPage() {
               ...(activeLoans.length === 1
                 ? baseLoan
                 : {
-                    // แปะค่าจาก baseLoan ลงไปใน Group เล็กน้อยเผื่อกดแก้ไขเต็มวง
                     principal: baseLoan.principal,
                     interestRate: baseLoan.interestRate,
                     startDate: baseLoan.startDate,
@@ -278,7 +283,7 @@ export default function WarRoomPage() {
             );
             finalLoanList.push({
               isGroup: false,
-              id: `closed-${num}`,
+              id: `closed-${key}`,
               displayLoanNumber: loansInSlot[0].displayLoanNumber,
               loanName: loansInSlot[0].loanName || loansInSlot[0].customerName,
               customerName: loansInSlot[0].customerName,
@@ -287,10 +292,17 @@ export default function WarRoomPage() {
           }
         }
 
+        // 3. เรียงลำดับ ตัวเลขขึ้นก่อน แล้วตามด้วยตัวอักษร
         finalLoanList.sort((a, b) => {
-          const numA = parseInt(a.displayLoanNumber, 10) || 999999;
-          const numB = parseInt(b.displayLoanNumber, 10) || 999999;
-          return numA - numB;
+          const strA = String(a.displayLoanNumber);
+          const strB = String(b.displayLoanNumber);
+          const numA = parseFloat(strA);
+          const numB = parseFloat(strB);
+
+          if (!isNaN(numA) && !isNaN(numB)) {
+            if (numA !== numB) return numA - numB;
+          }
+          return strA.localeCompare(strB, "th");
         });
 
         setData({ items: finalLoanList, isLoaded: true });
@@ -313,6 +325,7 @@ export default function WarRoomPage() {
       const matchLoanName = loan.loanName?.toLowerCase().includes(search);
       const matchLoanNumber = loan.displayLoanNumber
         ?.toString()
+        .toLowerCase()
         .includes(search);
       return matchCustomer || matchLoanName || matchLoanNumber;
     });
@@ -463,7 +476,7 @@ export default function WarRoomPage() {
                         </p>
                       </div>
 
-                      {/* 🌟 ปุ่มแก้ไขสัญญา (แสดงตลอด ไม่ว่าจะเป็นวงเดี่ยวหรือวงกลุ่ม) */}
+                      {/* 🌟 ปุ่มแก้ไขสัญญา */}
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -516,7 +529,6 @@ export default function WarRoomPage() {
                             </p>
                           </div>
                           <div className="flex gap-2 shrink-0">
-                            {/* 🌟 ปุ่มแก้ไขสัญญา (แก้ไขเฉพาะบุคคลในกลุ่ม) */}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -609,11 +621,9 @@ function EditLoanModal({ loan, onClose }) {
     setIsSaving(true);
     const batch = writeBatch(db);
     try {
-      // 🌟 หากเป็นการกดแก้ไขจาก "การ์ดกลุ่ม" ให้ลูปอัปเดตลูกวงทุกคนในกลุ่มนั้นๆ เลย
       const loansToUpdate = loan.isGroup ? loan.originalLoans : [loan];
 
       for (const targetLoan of loansToUpdate) {
-        // 1. ดึงประวัติงวดที่เคยจ่ายไปแล้ว ของ targetLoan แต่ละคน
         const oldSchedulesQ = query(
           collection(db, "schedules"),
           where("loanId", "==", targetLoan.id),
@@ -626,13 +636,12 @@ function EditLoanModal({ loan, onClose }) {
           if (data.status === "paid") {
             paidHistoryMap[data.installmentNo] = data;
           }
-          batch.delete(d.ref); // ลบของเก่าเตรียมสร้างตารางใหม่
+          batch.delete(d.ref);
         });
 
         let newRemainingBalance = actualTotal;
         let newCurrentInstallment = 0;
 
-        // 2. สร้างตารางใหม่แต่รักษาประวัติการจ่าย
         for (let i = 0; i < formData.installments; i++) {
           let dueDate = new Date(formData.startDate);
           if (formData.type === "day") {
@@ -666,7 +675,6 @@ function EditLoanModal({ loan, onClose }) {
           });
         }
 
-        // 3. อัปเดตข้อมูลลงฐานข้อมูลวงกู้หลัก
         batch.update(doc(db, "loans", targetLoan.id), {
           loanName: formData.loanName,
           loanNumber: formData.loanNumber,
@@ -745,7 +753,7 @@ function EditLoanModal({ loan, onClose }) {
                 value={formData.loanName}
                 onChange={handleFormChange}
                 placeholder="ระบุชื่อวง..."
-                className="w-full mt-1 px-4 py-3 bg-gray-50 border rounded-xl font-bold placeholder:text-gray-400 text-gray-700"
+                className="w-full mt-1 px-4 py-3 bg-gray-50 border rounded-xl font-bold placeholder:text-gray-400 placeholder:font-bold text-gray-700"
               />
             </div>
             <div>
@@ -757,7 +765,7 @@ function EditLoanModal({ loan, onClose }) {
                 value={formData.loanNumber}
                 onChange={handleFormChange}
                 placeholder="ระบุเลขวง..."
-                className="w-full mt-1 px-4 py-3 bg-gray-50 border rounded-xl font-black placeholder:text-gray-400 text-gray-700"
+                className="w-full mt-1 px-4 py-3 bg-gray-50 border rounded-xl font-black placeholder:text-gray-400 placeholder:font-bold text-gray-700"
               />
             </div>
           </div>
@@ -791,7 +799,7 @@ function EditLoanModal({ loan, onClose }) {
                 value={formData.principal || ""}
                 placeholder="0"
                 onChange={handleFormChange}
-                className="w-full mt-1 px-4 py-3 bg-gray-50 border rounded-xl font-black text-blue-600 placeholder:text-gray-400"
+                className="w-full mt-1 px-4 py-3 bg-gray-50 border rounded-xl font-black text-blue-600 placeholder:text-gray-400 placeholder:font-black"
               />
             </div>
             <div>
@@ -804,7 +812,7 @@ function EditLoanModal({ loan, onClose }) {
                 value={formData.interestPercent || ""}
                 placeholder="0"
                 onChange={handleFormChange}
-                className="w-full mt-1 px-4 py-3 bg-gray-50 border rounded-xl font-black text-green-600 placeholder:text-gray-400"
+                className="w-full mt-1 px-4 py-3 bg-gray-50 border rounded-xl font-black text-green-600 placeholder:text-gray-400 placeholder:font-black"
               />
             </div>
           </div>
@@ -820,7 +828,7 @@ function EditLoanModal({ loan, onClose }) {
                 value={formData.installments || ""}
                 placeholder="0"
                 onChange={handleFormChange}
-                className="w-full mt-1 px-4 py-3 bg-gray-50 border rounded-xl font-black text-gray-700 placeholder:text-gray-400"
+                className="w-full mt-1 px-4 py-3 bg-gray-50 border rounded-xl font-black text-gray-700 placeholder:text-gray-400 placeholder:font-black"
               />
             </div>
             <div>
@@ -833,7 +841,7 @@ function EditLoanModal({ loan, onClose }) {
                 value={formData.frequency || ""}
                 placeholder="0"
                 onChange={handleFormChange}
-                className="w-full mt-1 px-4 py-3 bg-gray-50 border rounded-xl font-black text-gray-700 placeholder:text-gray-400"
+                className="w-full mt-1 px-4 py-3 bg-gray-50 border rounded-xl font-black text-gray-700 placeholder:text-gray-400 placeholder:font-black"
               />
             </div>
             <div>
@@ -891,7 +899,7 @@ function EditLoanModal({ loan, onClose }) {
   );
 }
 
-// --- Detail Modal ตัวเดิม ---
+// --- Detail Modal ---
 function LoanDetailModal({ loan, onClose }) {
   const [schedule, setSchedule] = useState([]);
   const [loading, setLoading] = useState(true);

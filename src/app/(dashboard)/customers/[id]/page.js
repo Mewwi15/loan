@@ -232,6 +232,7 @@ export default function CustomerDetailPage({ params }) {
   );
   const [isProcessingPayoff, setIsProcessingPayoff] = useState(false);
 
+  // 🌟 State สำหรับเปิด/ปิด Modal "ประวัติวงกู้ที่ปิดแล้ว"
   const [isClosedLoansModalOpen, setIsClosedLoansModalOpen] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -647,7 +648,7 @@ export default function CustomerDetailPage({ params }) {
   const handleCloseLoan = async (loanId) => {
     if (
       !window.confirm(
-        "ยืนยันการลบวงกู้นี้? \n(ระบบจะทำการลบตารางค่างวดที่ยังไม่จ่ายทิ้งทั้งหมด และย้ายวงกู้ไปประวัติที่ปิดแล้ว)",
+        "⚠️ คำเตือน: นี่คือปุ่ม 'ลบทิ้ง' สำหรับกรณียกเลิกวงกู้ที่สร้างผิดพลาด\n\nระบบจะลบตารางค่างวดที่ยังไม่จ่ายทิ้งทั้งหมด และย้ายวงกู้ไปที่ 'ประวัติที่ปิดแล้ว'\n\nยืนยันการยกเลิก/ลบวงกู้นี้?",
       )
     )
       return;
@@ -670,7 +671,7 @@ export default function CustomerDetailPage({ params }) {
       await batch.commit();
 
       await syncCustomerData();
-      alert("ลบวงกู้เรียบร้อย!");
+      alert("✅ ยกเลิก/ลบวงกู้เรียบร้อย!");
       fetchData();
     } catch (error) {
       console.error("Error closing loan:", error);
@@ -789,10 +790,29 @@ export default function CustomerDetailPage({ params }) {
         : -scheduleItem.amount;
       const installmentChange = isCurrentlyPaid ? -1 : 1;
 
-      batch.update(loanRef, {
+      // 🌟 ลอจิก Auto-Close ฉลาดๆ
+      const newBalance = selectedLoan.remainingBalance + amountChange;
+      const updateData = {
         remainingBalance: increment(amountChange),
         currentInstallment: increment(installmentChange),
-      });
+      };
+
+      if (!isCurrentlyPaid && newBalance <= 0) {
+        updateData.status = "closed";
+        updateData.closedAt = new Date().toISOString();
+        alert(
+          "🎉 ลูกค้าชำระครบแล้ว! ระบบได้ทำการย้ายเข้าประวัติวงปิดแล้วให้อัตโนมัติครับ",
+        );
+      } else if (
+        isCurrentlyPaid &&
+        newBalance > 0 &&
+        selectedLoan.status === "closed"
+      ) {
+        updateData.status = "active";
+        updateData.closedAt = null;
+      }
+
+      batch.update(loanRef, updateData);
 
       if (isCurrentlyPaid) {
         const transQ = query(
@@ -822,13 +842,19 @@ export default function CustomerDetailPage({ params }) {
       await batch.commit();
       await syncCustomerData();
 
-      setLoanSchedule((prev) =>
-        prev.map((s) =>
-          s.id === scheduleItem.id
-            ? { ...s, status: isCurrentlyPaid ? "pending" : "paid" }
-            : s,
-        ),
-      );
+      // ถ้ายอดเหลือ 0 ปิด Modal ไปเลย
+      if (!isCurrentlyPaid && newBalance <= 0) {
+        setScheduleModalOpen(false);
+      } else {
+        setLoanSchedule((prev) =>
+          prev.map((s) =>
+            s.id === scheduleItem.id
+              ? { ...s, status: isCurrentlyPaid ? "pending" : "paid" }
+              : s,
+          ),
+        );
+      }
+
       fetchData();
     } catch (error) {
       console.error("Error toggling status:", error);
@@ -867,9 +893,6 @@ export default function CustomerDetailPage({ params }) {
   const grandTotalAccumulatedProfit =
     customerStats.profit2025 + closedLoansProfit;
 
-  // ==========================================
-  // 🌟 คำนวณวงเงินเครดิต (ลอจิกเฉพาะกู้ปกติ)
-  // ==========================================
   const totalDebtNormal = customer.totalDebt || 0;
   const creditLimit = customer.creditLimit || 0;
   const availableCredit = creditLimit - totalDebtNormal;
@@ -879,14 +902,12 @@ export default function CustomerDetailPage({ params }) {
       ? Math.max(0, Math.min(100, (availableCredit / creditLimit) * 100))
       : 0;
   const strokeDashoffset = 100 - creditPercentage;
-
   const themeColor = availableCredit < 0 ? "#ef4444" : "#6b46c1";
 
   return (
     <div className="w-full pb-20 px-3 sm:px-10 font-sans animate-in fade-in duration-500">
-      {/* --- ส่วน Header จัดเลย์เอาต์ใหม่แบบไม่มีกรอบบัตร --- */}
+      {/* --- ส่วน Header --- */}
       <div className="flex items-start gap-3 sm:gap-5 mb-6 pt-6 sm:pt-10 w-full">
-        {/* ปุ่มกลับ */}
         <Link
           href="/customers"
           className="p-2.5 sm:p-3 bg-white rounded-xl sm:rounded-2xl border border-gray-100 shadow-sm hover:bg-orange-50 transition-all active:scale-95 shrink-0 mt-1"
@@ -894,9 +915,7 @@ export default function CustomerDetailPage({ params }) {
           <ArrowLeft className="w-5 h-5 text-gray-400" />
         </Link>
 
-        {/* จัดเรียงเป็นแนวนอน (row) ให้ชื่อและหลอดอยู่ข้างกัน */}
         <div className="flex-1 flex flex-row justify-between items-start gap-2 sm:gap-6">
-          {/* ข้อมูลลูกค้า (ฝั่งซ้าย) */}
           <div className="flex-1 min-w-0">
             <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black text-gray-900 tracking-tight leading-tight line-clamp-2">
               {customer.nickname
@@ -921,7 +940,6 @@ export default function CustomerDetailPage({ params }) {
               </Link>
             </div>
 
-            {/* 🌟 ยอดหนี้ที่ใช้ไป (เปลี่ยนเป็นการ์ดตามรีเควส) */}
             <div className="mt-4 sm:mt-5">
               <div className="inline-flex items-center gap-3 sm:gap-4 bg-white border border-rose-100 p-3 sm:p-4 rounded-[1.2rem] shadow-sm">
                 <div className="w-10 h-10 sm:w-12 sm:h-12 bg-rose-50 rounded-xl flex items-center justify-center shrink-0">
@@ -939,9 +957,7 @@ export default function CustomerDetailPage({ params }) {
             </div>
           </div>
 
-          {/* 🌟 หลอดวงเงินเครดิต (ฝั่งขวา ลอยๆ ขยายไซส์ให้ใหญ่ขึ้นอีก) */}
           <div className="shrink-0 flex flex-col items-center justify-center px-1 sm:px-2 pt-1">
-            {/* ตัวหลอด SVG ปรับไซส์ให้ใหญ่ขึ้นอีกระดับ */}
             <div className="relative w-32 h-32 sm:w-40 sm:h-40 drop-shadow-sm mb-2 sm:mb-3">
               <svg
                 className="w-full h-full transform -rotate-90"
@@ -980,7 +996,6 @@ export default function CustomerDetailPage({ params }) {
               </div>
             </div>
 
-            {/* ส่วนวงเงินรวม (แก้ไขได้) */}
             <div className="flex flex-col items-center text-center">
               <span className="text-[8px] sm:text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                 วงเงินรวม (บาท)
@@ -1188,10 +1203,10 @@ export default function CustomerDetailPage({ params }) {
                       onClick={() => handleCloseLoan(loan.id)}
                       disabled={isProcessingAction}
                       className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-red-500 hover:text-red-600 bg-red-50 hover:bg-red-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1 disabled:opacity-50 cursor-pointer"
-                      title="ลบวงกู้"
+                      title="ลบทิ้งเฉพาะกรณีสร้างผิด"
                     >
                       <PowerOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                      <span className="hidden min-[400px]:inline">ลบ</span>
+                      <span className="hidden min-[400px]:inline">ลบทิ้ง</span>
                     </button>
                     <button
                       onClick={() => openEditContract(loan)}
@@ -1327,7 +1342,92 @@ export default function CustomerDetailPage({ params }) {
       {/* 🌟🌟 MODALS ทั้งหมด 🌟🌟 */}
       {/* ======================================================== */}
 
-      {/* Modal โปะปิดวง (เพิ่มให้แล้วครับ!) */}
+      {/* Modal ประวัติวงที่ปิดแล้ว */}
+      {isClosedLoansModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-gray-900/70 backdrop-blur-sm"
+            onClick={() => setIsClosedLoansModalOpen(false)}
+          ></div>
+          <div className="relative bg-white w-full max-w-3xl rounded-[2rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]">
+            <div className="p-6 sm:p-8 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <div className="flex items-center gap-3 sm:gap-4">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gray-900 rounded-xl sm:rounded-2xl flex items-center justify-center shadow-lg">
+                  <Archive className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-lg sm:text-2xl font-black text-gray-800">
+                    ประวัติวงกู้ที่ปิดแล้ว
+                  </h2>
+                  <p className="text-[9px] sm:text-[11px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">
+                    ลูกค้ารายนี้ปิดวงไปแล้วทั้งหมด {closedLoans.length} วง
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsClosedLoansModalOpen(false)}
+                className="p-2 sm:p-2.5 bg-white border border-gray-200 hover:bg-gray-100 text-gray-400 rounded-lg sm:rounded-xl transition-all shadow-sm"
+              >
+                <X className="w-5 h-5 sm:w-6 sm:h-6" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-4 sm:p-8 flex-1 bg-gray-50/30">
+              {closedLoans.length > 0 ? (
+                <div className="space-y-4">
+                  {closedLoans.map((loan) => (
+                    <div
+                      key={loan.id}
+                      className="bg-white border border-gray-100 rounded-[1.5rem] p-5 sm:p-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-gray-300 transition-colors"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-gray-100 flex items-center justify-center text-lg font-black text-gray-400">
+                          {loan.loanNumber || "-"}
+                        </div>
+                        <div>
+                          <h3 className="text-base font-black text-gray-800">
+                            วง {loan.loanNumber} • {loan.loanName}
+                          </h3>
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
+                            ปิดวงเมื่อ:{" "}
+                            {loan.closedAt
+                              ? new Date(loan.closedAt).toLocaleDateString(
+                                  "th-TH",
+                                  {
+                                    year: "numeric",
+                                    month: "short",
+                                    day: "numeric",
+                                  },
+                                )
+                              : "-"}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right w-full sm:w-auto flex flex-row sm:flex-col justify-between sm:justify-center items-center sm:items-end border-t sm:border-t-0 border-gray-50 pt-3 sm:pt-0 mt-2 sm:mt-0">
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
+                          กำไรที่ได้
+                        </p>
+                        <p className="text-lg font-black text-green-500">
+                          +฿{(loan.totalProfit || 0).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-20 text-center">
+                  <Archive className="w-12 h-12 mx-auto text-gray-200 mb-4" />
+                  <p className="text-gray-400 font-black text-sm uppercase tracking-widest">
+                    ไม่มีประวัติการปิดวง
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal โปะปิดวง */}
       {earlyPayoffModalOpen && payoffLoan && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div

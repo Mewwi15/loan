@@ -32,7 +32,7 @@ export default function DashboardHome() {
     activeLoans: [],
     disbursedLoans: [],
     dailyTargets: [],
-    monthlyProfits: [],
+    monthlyProfits: [], // 🌟 อัปเกรด: เก็บเป็นลิสต์บิลกำไรรายบุคคลเลย
   });
 
   const [stats, setStats] = useState({
@@ -110,12 +110,14 @@ export default function DashboardHome() {
       const activeLoansMap = new Map();
       const disbursedLoansList = [];
 
+      // 🌟 สแกนวงกู้ทั้งหมดในระบบ
       loansSnap.forEach((d) => {
         const data = d.data();
         if (!data.customerId) return;
 
         loanMap.set(d.id, data);
 
+        // คำนวณเงินคงเหลือในตลาด (เอาเฉพาะวงที่ยังไม่ปิด)
         if (data.status === "active") {
           const key = `${data.customerId}_${data.loanNumber}`;
           const existing = activeLoansMap.get(key);
@@ -131,34 +133,38 @@ export default function DashboardHome() {
             }
           }
         }
-      });
 
-      const activeLoansList = Array.from(activeLoansMap.values());
-      activeLoansList.forEach((loan) => {
-        totalMarket += loan.remainingBalance || 0;
-
+        // 🌟 แก้ไขลอจิก "ยอดปล่อย": ไม่เช็คสถานะ active/closed อีกต่อไป
+        // ขอแค่วันที่ปล่อยกู้อยู่ในเดือนที่เลือก ให้นับเป็นผลงานทั้งหมด!
         const rawDisbDate = getRawDisbursementDate(
-          loan.startDate,
-          loan.frequency,
-          loan.frequencyType,
+          data.startDate,
+          data.frequency,
+          data.frequencyType,
         );
+
         if (rawDisbDate >= firstDayOfMonth && rawDisbDate <= lastDayOfMonth) {
-          const principal = loan.principal || 0;
-          const totalAmount = loan.totalAmount || 0;
+          const principal = data.principal || 0;
+          const totalAmount = data.totalAmount || 0;
           const profit =
-            loan.totalProfit || Math.max(0, totalAmount - principal);
+            data.totalProfit || Math.max(0, totalAmount - principal);
 
           totalDisbursed += principal;
           expectedTotalDisbursed += totalAmount;
           expectedProfitDisbursed += profit;
 
           disbursedLoansList.push({
-            ...loan,
+            id: d.id,
+            ...data,
             rawDisbDate,
             calculatedExpectedTotal: totalAmount,
             calculatedExpectedProfit: profit,
           });
         }
+      });
+
+      const activeLoansList = Array.from(activeLoansMap.values());
+      activeLoansList.forEach((loan) => {
+        totalMarket += loan.remainingBalance || 0;
       });
 
       const scheduleQ = query(
@@ -238,61 +244,7 @@ export default function DashboardHome() {
       let penaltyToday = 0;
       transDayMap.forEach((data) => (penaltyToday += data.penalty || 0));
 
-      const monthSchedulesQ = query(
-        collection(db, "schedules"),
-        where("dueDate", ">=", firstDayOfMonth),
-        where("dueDate", "<=", lastDayOfMonth),
-      );
-      const monthSchedulesSnap = await getDocs(monthSchedulesQ);
-
-      const monthSchedulesMap = new Map();
-
-      monthSchedulesSnap.forEach((doc) => {
-        const data = doc.data();
-        const parentLoan = loanMap.get(data.loanId);
-
-        if (!data.customerId || !parentLoan) return;
-
-        const lNum = data.loanNumber || parentLoan.loanNumber || "-";
-        const key = `${data.customerId}_${lNum}_${data.installmentNo}`;
-
-        const existing = monthSchedulesMap.get(key);
-        if (!existing) {
-          monthSchedulesMap.set(key, data);
-        } else {
-          if (existing.status !== "paid" && data.status === "paid") {
-            monthSchedulesMap.set(key, data);
-          } else if (existing.status === data.status) {
-            if (
-              !hasParen(existing.customerName) &&
-              hasParen(data.customerName)
-            ) {
-              monthSchedulesMap.set(key, data);
-            }
-          }
-        }
-      });
-
-      let monthlyProfit = 0;
-      const dailyProfitMap = new Map();
-      for (let i = 1; i <= lastDay; i++) {
-        const dateStr = `${year}-${month}-${String(i).padStart(2, "0")}`;
-        dailyProfitMap.set(dateStr, 0);
-      }
-
-      monthSchedulesMap.forEach((data) => {
-        if (data.status === "paid") {
-          const profit = data.profitShare || 0;
-          monthlyProfit += profit;
-          if (dailyProfitMap.has(data.dueDate)) {
-            dailyProfitMap.set(
-              data.dueDate,
-              dailyProfitMap.get(data.dueDate) + profit,
-            );
-          }
-        }
-      });
-
+      // 🌟 ดึงข้อมูลบิล (Transactions) ของทั้งเดือน เพื่อแสดงไส้ในกำไร
       const transMonthQ = query(
         collection(db, "transactions"),
         where("paymentDate", ">=", firstDayOfMonth),
@@ -300,28 +252,43 @@ export default function DashboardHome() {
       );
       const transMonthSnap = await getDocs(transMonthQ);
 
-      const transMonthMap = new Map();
+      let monthlyProfit = 0;
+      const detailedMonthlyProfitsList = []; // 🌟 เก็บข้อมูลบิลแต่ละใบเลย
+
       transMonthSnap.forEach((doc) => {
         const data = doc.data();
         if (!data.customerId || !loanMap.has(data.loanId)) return;
-        const key = `${data.customerId}_${data.loanId}_${data.installmentNo}`;
-        transMonthMap.set(key, data);
-      });
 
-      transMonthMap.forEach((data) => {
-        const penalty = data.penalty || 0;
-        if (penalty > 0) {
-          monthlyProfit += penalty;
-          const pDate = data.paymentDate;
-          if (pDate && dailyProfitMap.has(pDate)) {
-            dailyProfitMap.set(pDate, dailyProfitMap.get(pDate) + penalty);
-          }
+        const parentLoan = loanMap.get(data.loanId);
+        const lNum = data.loanNumber || parentLoan.loanNumber || "-";
+
+        const profitFromInst = data.profitShare || 0;
+        const profitFromPenalty = data.penalty || 0;
+        const totalProfitPerBill = profitFromInst + profitFromPenalty;
+
+        if (totalProfitPerBill > 0) {
+          monthlyProfit += totalProfitPerBill;
+
+          detailedMonthlyProfitsList.push({
+            id: doc.id,
+            paymentDate: data.paymentDate,
+            customerName: data.customerName,
+            loanNumber: lNum,
+            profitShare: profitFromInst,
+            penalty: profitFromPenalty,
+            totalProfit: totalProfitPerBill,
+            customerId: data.customerId,
+          });
         }
       });
 
-      const monthlyProfitsList = Array.from(dailyProfitMap.entries())
-        .map(([date, profitValue]) => ({ date, profitValue }))
-        .sort((a, b) => new Date(a.date) - new Date(b.date));
+      // เรียงลำดับบิลกำไรจากใหม่ไปเก่า (วันที่ล่าสุดอยู่บนสุด)
+      detailedMonthlyProfitsList.sort((a, b) => {
+        if (a.paymentDate !== b.paymentDate) {
+          return new Date(b.paymentDate) - new Date(a.paymentDate);
+        }
+        return (a.customerName || "").localeCompare(b.customerName || "");
+      });
 
       setStats({
         totalPrincipalInMarket: totalMarket,
@@ -347,7 +314,7 @@ export default function DashboardHome() {
           (a, b) => new Date(a.rawDisbDate) - new Date(b.rawDisbDate),
         ),
         dailyTargets: sortLoansAsc(dailyTargetsList),
-        monthlyProfits: monthlyProfitsList,
+        monthlyProfits: detailedMonthlyProfitsList, // 🌟 ส่งบิลไส้ในไปแสดง
       });
     } catch (error) {
       console.error("Firebase Dashboard Error:", error);
@@ -361,9 +328,10 @@ export default function DashboardHome() {
   }, [fetchDashboardData]);
 
   const formatDateThai = (dateString) => {
+    if (!dateString) return "-";
     return new Date(dateString).toLocaleDateString("th-TH", {
       year: "numeric",
-      month: "long",
+      month: "short",
       day: "numeric",
     });
   };
@@ -490,7 +458,7 @@ export default function DashboardHome() {
             ฿{stats.profitMonth.toLocaleString()}
           </p>
           <span className="text-[9px] font-bold text-orange-300 opacity-0 group-hover:opacity-100 transition-opacity mt-2 uppercase tracking-widest bg-orange-500/20 px-2 py-0.5 rounded-full">
-            คลิกดูยอดแต่ละวัน
+            คลิกดูไส้ในของกำไร
           </span>
         </div>
       </div>
@@ -639,7 +607,7 @@ export default function DashboardHome() {
                   {activeModal === "profitMonth" && (
                     <>
                       <TrendingUp className="w-6 h-6 text-orange-500" />{" "}
-                      กำไรแต่ละวัน
+                      ไส้ในกำไรรายเดือน
                     </>
                   )}
                 </h2>
@@ -649,7 +617,7 @@ export default function DashboardHome() {
                     : activeModal === "principal"
                       ? "แสดงวงกู้ที่กำลังดำเนินการ และยอดหนี้ที่ยังเหลืออยู่ทั้งหมด"
                       : activeModal === "profitMonth"
-                        ? `สรุปยอดกำไรรายวัน ประจำเดือน ${new Date(selectedDate).toLocaleDateString("th-TH", { month: "long", year: "numeric" })}`
+                        ? `กางบิลกำไรทุกใบ ประจำเดือน ${new Date(selectedDate).toLocaleDateString("th-TH", { month: "long", year: "numeric" })}`
                         : `ดึงจากตารางดิว ประจำวันที่ ${formatDateThai(selectedDate)} (กรองยอดซ้ำแล้ว)`}
                 </p>
               </div>
@@ -665,11 +633,18 @@ export default function DashboardHome() {
               <table className="w-full text-left whitespace-nowrap">
                 <thead className="sticky top-0 bg-white shadow-sm z-10">
                   <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                    {/* 🌟 อัปเกรดหัวตารางของ "กำไรรายเดือน" */}
                     {activeModal === "profitMonth" ? (
                       <>
-                        <th className="px-6 py-4">#</th>
-                        <th className="px-6 py-4 text-center">วันที่</th>
-                        <th className="px-6 py-4 text-right">กำไรที่เก็บได้</th>
+                        <th className="px-6 py-4 text-center w-16">#</th>
+                        <th className="px-6 py-4 text-center">วันที่รับเงิน</th>
+                        <th className="px-6 py-4">ชื่อลูกค้า</th>
+                        <th className="px-6 py-4 text-center">วงที่</th>
+                        <th className="px-6 py-4 text-right">กำไรจากค่างวด</th>
+                        <th className="px-6 py-4 text-right">กำไรจากค่าปรับ</th>
+                        <th className="px-6 py-4 text-right text-orange-500">
+                          รวมกำไรที่ได้
+                        </th>
                       </>
                     ) : activeModal === "disbursed" ||
                       activeModal === "principal" ? (
@@ -683,7 +658,6 @@ export default function DashboardHome() {
                         <th className="px-6 py-4 text-right">
                           {activeModal === "disbursed" ? "เงินต้น" : "คงเหลือ"}
                         </th>
-                        {/* 🌟 เพิ่มหัวตาราง "รับจริง" และ "กำไร" สำหรับหน้ายอดปล่อย */}
                         {activeModal === "disbursed" && (
                           <>
                             <th className="px-6 py-4 text-right text-gray-500">
@@ -711,7 +685,7 @@ export default function DashboardHome() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {/* --- 🌟 ตาราง: ยอดปล่อย (ดึงเฉพาะที่ปล่อยในเดือนนี้) --- */}
+                  {/* --- ตาราง: ยอดปล่อย --- */}
                   {activeModal === "disbursed" &&
                     modalData.disbursedLoans.map((item, idx) => (
                       <tr
@@ -737,7 +711,6 @@ export default function DashboardHome() {
                         <td className="px-6 py-4 font-black text-purple-600 text-right">
                           ฿{(item.principal || 0).toLocaleString()}
                         </td>
-                        {/* 🌟 เพิ่มข้อมูล รับจริง และ กำไรสุทธิ ในแต่ละแถว */}
                         <td className="px-6 py-4 font-black text-gray-600 text-right">
                           ฿
                           {(item.calculatedExpectedTotal || 0).toLocaleString()}
@@ -860,27 +833,42 @@ export default function DashboardHome() {
                       </tr>
                     ))}
 
-                  {/* --- ตาราง: กำไรรายเดือน --- */}
+                  {/* --- 🌟 ตารางใหม่: ดีเทลไส้ในของกำไรรายเดือน --- */}
                   {activeModal === "profitMonth" &&
                     modalData.monthlyProfits.map((item, idx) => (
                       <tr
-                        key={item.date}
-                        className={`transition-colors ${item.profitValue > 0 ? "hover:bg-orange-50/50" : "opacity-60 bg-gray-50/30"}`}
+                        key={item.id}
+                        className="hover:bg-orange-50/50 transition-colors"
                       >
-                        <td className="px-6 py-4 text-xs font-bold text-gray-300">
+                        <td className="px-6 py-4 text-xs font-bold text-gray-300 text-center">
                           {idx + 1}
                         </td>
-                        <td
-                          className={`px-6 py-4 text-sm font-black text-center ${item.profitValue > 0 ? "text-gray-700" : "text-gray-400"}`}
-                        >
-                          {formatDateThai(item.date)}
+                        <td className="px-6 py-4 text-xs font-bold text-gray-500 text-center whitespace-nowrap">
+                          {formatDateThai(item.paymentDate)}
                         </td>
-                        <td
-                          className={`px-6 py-4 font-black text-right ${item.profitValue > 0 ? "text-orange-500" : "text-gray-400"}`}
-                        >
-                          {item.profitValue > 0
-                            ? `+฿${item.profitValue.toLocaleString()}`
-                            : "฿0"}
+                        <td className="px-6 py-4 font-black text-gray-700">
+                          <Link
+                            href={`/customers/${item.customerId}`}
+                            className="hover:text-orange-500 transition-colors"
+                          >
+                            {item.customerName || "-"}
+                          </Link>
+                        </td>
+                        <td className="px-6 py-4 text-sm font-black text-gray-500 text-center">
+                          {item.loanNumber || "-"}
+                        </td>
+                        <td className="px-6 py-4 font-bold text-green-500 text-right">
+                          {item.profitShare > 0
+                            ? `+฿${item.profitShare.toLocaleString()}`
+                            : "-"}
+                        </td>
+                        <td className="px-6 py-4 font-bold text-rose-500 text-right">
+                          {item.penalty > 0
+                            ? `+฿${item.penalty.toLocaleString()}`
+                            : "-"}
+                        </td>
+                        <td className="px-6 py-4 font-black text-orange-600 text-right bg-orange-50/30">
+                          +฿{item.totalProfit.toLocaleString()}
                         </td>
                       </tr>
                     ))}
@@ -893,7 +881,9 @@ export default function DashboardHome() {
                     (activeModal === "target" &&
                       modalData.dailyTargets.length === 0) ||
                     (activeModal === "profit" &&
-                      modalData.dailyTargets.length === 0)) && (
+                      modalData.dailyTargets.length === 0) ||
+                    (activeModal === "profitMonth" &&
+                      modalData.monthlyProfits.length === 0)) && (
                     <tr>
                       <td
                         colSpan="8"
@@ -930,13 +920,12 @@ export default function DashboardHome() {
                 )}
                 {activeModal === "profitMonth" && (
                   <p className="text-[10px] font-bold text-gray-400">
-                    รวมข้อมูลจาก:{" "}
+                    รวมบิลกำไรของเดือนนี้:{" "}
                     <span className="text-orange-400 font-black">
-                      {modalData.monthlyProfits.length} วัน
+                      {modalData.monthlyProfits.length} ใบ
                     </span>
                   </p>
                 )}
-                {/* 🌟 อัปเดตแถบสรุปฝั่งซ้ายของ Modal ยอดปล่อย */}
                 {activeModal === "disbursed" && (
                   <>
                     <p className="text-[10px] font-bold text-gray-400 mb-1">
@@ -956,7 +945,6 @@ export default function DashboardHome() {
               </div>
 
               <div className="text-left md:text-right w-full md:w-auto">
-                {/* 🌟 อัปเดตการแสดงตัวเลขใหญ่ๆ สำหรับ Modal ยอดปล่อย ให้โฟกัสที่กำไรสุทธิ */}
                 {activeModal === "disbursed" ? (
                   <div className="flex flex-col md:items-end">
                     <p className="text-[10px] font-bold text-green-300 uppercase tracking-widest mb-1">
