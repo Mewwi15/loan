@@ -37,6 +37,8 @@ export default function DashboardHome() {
 
   const [stats, setStats] = useState({
     totalPrincipalInMarket: 0,
+    remainingPrincipalInMarket: 0,
+    remainingProfitInMarket: 0,
     totalActivePrincipal: 0,
     totalActiveProfit: 0,
     totalActiveAmount: 0,
@@ -104,7 +106,11 @@ export default function DashboardHome() {
       const lastDayOfMonth = `${year}-${month}-${String(lastDay).padStart(2, "0")}`;
 
       const loansSnap = await getDocs(collection(db, "loans"));
+
       let totalMarket = 0;
+      let remainingPrincipalInMarket = 0;
+      let remainingProfitInMarket = 0;
+
       let totalActivePrincipal = 0;
       let totalActiveProfit = 0;
       let totalActiveAmount = 0;
@@ -170,8 +176,25 @@ export default function DashboardHome() {
         const principal = loan.principal || 0;
         const totalAmount = loan.totalAmount || 0;
         const profit = loan.totalProfit || Math.max(0, totalAmount - principal);
+        const remainingBalance = loan.remainingBalance || 0;
 
-        totalMarket += loan.remainingBalance || 0;
+        // แยกต้นทุน-ดอกเบี้ยจากยอดคงเหลือ
+        let remPrincipal = 0;
+        let remProfit = 0;
+
+        if (totalAmount > 0) {
+          remPrincipal = Math.round(
+            (principal / totalAmount) * remainingBalance,
+          );
+          remProfit = remainingBalance - remPrincipal;
+        } else {
+          remPrincipal = remainingBalance;
+        }
+
+        remainingPrincipalInMarket += remPrincipal;
+        remainingProfitInMarket += remProfit;
+
+        totalMarket += remainingBalance;
         totalActivePrincipal += principal;
         totalActiveAmount += totalAmount;
         totalActiveProfit += profit;
@@ -300,6 +323,8 @@ export default function DashboardHome() {
 
       setStats({
         totalPrincipalInMarket: totalMarket,
+        remainingPrincipalInMarket: remainingPrincipalInMarket,
+        remainingProfitInMarket: remainingProfitInMarket,
         totalActivePrincipal: totalActivePrincipal,
         totalActiveProfit: totalActiveProfit,
         totalActiveAmount: totalActiveAmount,
@@ -414,7 +439,7 @@ export default function DashboardHome() {
             ฿{stats.totalPrincipalInMarket.toLocaleString()}
           </p>
           <span className="text-[9px] font-bold text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity mt-2 uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded-full">
-            คลิกดูรายวง
+            คลิกดูแยกต้น+ดอก
           </span>
         </div>
 
@@ -644,7 +669,6 @@ export default function DashboardHome() {
               <table className="w-full text-left whitespace-nowrap">
                 <thead className="sticky top-0 bg-white shadow-sm z-10">
                   <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                    {/* 🌟 หัวตารางสำหรับ "กำไรรายเดือน" */}
                     {activeModal === "profitMonth" ? (
                       <>
                         <th className="px-6 py-4 text-center w-16">#</th>
@@ -657,8 +681,7 @@ export default function DashboardHome() {
                           รวมกำไรที่ได้
                         </th>
                       </>
-                    ) : /* 🌟 หัวตารางสำหรับ "ยอดเงินคงเหลือในตลาด (Active Loans)" */
-                    activeModal === "principal" ? (
+                    ) : activeModal === "principal" ? (
                       <>
                         <th className="px-6 py-4">#</th>
                         <th className="px-6 py-4">ชื่อลูกค้า</th>
@@ -680,8 +703,7 @@ export default function DashboardHome() {
                         </th>
                         <th className="px-6 py-4 text-center">จัดการ</th>
                       </>
-                    ) : /* 🌟 หัวตารางสำหรับ "ยอดปล่อยกู้ (Disbursed)" */
-                    activeModal === "disbursed" ? (
+                    ) : activeModal === "disbursed" ? (
                       <>
                         <th className="px-6 py-4">#</th>
                         <th className="px-6 py-4">ชื่อลูกค้า</th>
@@ -987,27 +1009,6 @@ export default function DashboardHome() {
                     </p>
                   </>
                 )}
-                {/* 🌟 ข้อมูลสรุปใหม่สำหรับ ยอดคงเหลือในตลาด (ฝั่งซ้าย: ต้นทุนรวม) */}
-                {activeModal === "principal" && (
-                  <div className="mt-3">
-                    <p className="text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-widest">
-                      รวมต้นทุนที่ปล่อยไป (เงินต้น)
-                    </p>
-                    <p className="text-3xl font-black text-white">
-                      ฿{stats.totalActivePrincipal.toLocaleString()}
-                    </p>
-                    <p className="text-[10px] font-bold text-gray-400 mt-1 flex items-center gap-2">
-                      จากทั้งหมด{" "}
-                      <span className="text-blue-400 font-black">
-                        {modalData.activeLoans.length} วง
-                      </span>{" "}
-                      • ดอกเบี้ย{" "}
-                      <span className="text-green-400 font-black">
-                        +฿{stats.totalActiveProfit.toLocaleString()}
-                      </span>
-                    </p>
-                  </div>
-                )}
               </div>
 
               <div className="text-left md:text-right w-full md:w-auto">
@@ -1025,18 +1026,36 @@ export default function DashboardHome() {
                     </p>
                   </div>
                 ) : activeModal === "principal" ? (
-                  // 🌟 ข้อมูลสรุปใหม่สำหรับ ยอดคงเหลือในตลาด (ฝั่งขวา: ยอดคงเหลือ)
+                  // 🌟 หน้าต่างยอดคงเหลือ: แยกยอดคงเหลือเป็น "ทุนเพียวๆ" กับ "กำไร" ตัวใหญ่เห็นชัด!
                   <div className="flex flex-col md:items-end border-t border-white/10 md:border-0 pt-4 md:pt-0 mt-2 md:mt-0">
                     <p className="text-[10px] font-bold text-blue-300 uppercase tracking-widest mb-1">
                       ยอดคงเหลือที่ต้องตามเก็บ
                     </p>
-                    <p className="text-4xl font-black text-blue-400">
+                    <p className="text-4xl sm:text-5xl font-black text-blue-400 tracking-tighter">
                       ฿{stats.totalPrincipalInMarket.toLocaleString()}
                     </p>
-                    <p className="text-[10px] font-bold text-gray-400 mt-2">
-                      จากยอดรวมทั้งวง (ต้น+ดอก) ฿
-                      {stats.totalActiveAmount.toLocaleString()}
-                    </p>
+
+                    <div className="flex flex-wrap items-center gap-3 mt-3 bg-blue-500/10 px-4 py-3 sm:px-5 sm:py-4 rounded-2xl border border-blue-500/20 shadow-inner">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-[11px] sm:text-xs font-bold text-gray-300 uppercase tracking-widest">
+                          เป็นต้นทุน
+                        </span>
+                        <span className="text-xl sm:text-2xl font-black text-white">
+                          ฿{stats.remainingPrincipalInMarket.toLocaleString()}
+                        </span>
+                      </div>
+                      <span className="text-gray-600 text-lg font-light mx-1 hidden sm:inline-block">
+                        |
+                      </span>
+                      <div className="flex items-baseline gap-2 mt-1 sm:mt-0">
+                        <span className="text-[11px] sm:text-xs font-bold text-gray-300 uppercase tracking-widest">
+                          ดอกรอเก็บ
+                        </span>
+                        <span className="text-xl sm:text-2xl font-black text-green-400">
+                          +฿{stats.remainingProfitInMarket.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <p
