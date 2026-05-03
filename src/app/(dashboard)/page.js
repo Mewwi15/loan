@@ -178,18 +178,18 @@ export default function DashboardHome() {
         const profit = loan.totalProfit || Math.max(0, totalAmount - principal);
         const remainingBalance = loan.remainingBalance || 0;
 
-        // แยกต้นทุน-ดอกเบี้ยจากยอดคงเหลือ
-        let remPrincipal = 0;
-        let remProfit = 0;
+        const totalInst = loan.totalInstallments || 0;
+        const currentInst = loan.currentInstallment || 0;
+        const profitPerInst = loan.profitPerInstallment || 0;
 
-        if (totalAmount > 0) {
-          remPrincipal = Math.round(
-            (principal / totalAmount) * remainingBalance,
-          );
-          remProfit = remainingBalance - remPrincipal;
-        } else {
-          remPrincipal = remainingBalance;
+        const remainingInst = Math.max(0, totalInst - currentInst);
+        let remProfit = remainingInst * profitPerInst;
+
+        if (remProfit > remainingBalance) {
+          remProfit = remainingBalance;
         }
+
+        let remPrincipal = remainingBalance - remProfit;
 
         remainingPrincipalInMarket += remPrincipal;
         remainingProfitInMarket += remProfit;
@@ -690,13 +690,10 @@ export default function DashboardHome() {
                           วันที่ปล่อยยอด
                         </th>
                         <th className="px-6 py-4 text-right text-gray-500">
-                          เงินต้น (ต้นทุน)
+                          ทุนที่เหลือ
                         </th>
                         <th className="px-6 py-4 text-right text-green-500">
-                          ดอกเบี้ย (กำไร)
-                        </th>
-                        <th className="px-6 py-4 text-right text-orange-500">
-                          รวมยอดทั้งวง
+                          ดอกรอเก็บ
                         </th>
                         <th className="px-6 py-4 text-right text-blue-500">
                           คงเหลือที่ต้องเก็บ
@@ -783,14 +780,26 @@ export default function DashboardHome() {
                       </tr>
                     ))}
 
-                  {/* --- ตาราง: เงินคงเหลือในตลาด --- */}
+                  {/* --- 🌟 ตาราง: เงินคงเหลือในตลาด (เอาช่องรวมยอดทั้งวงออก) --- */}
                   {activeModal === "principal" &&
                     modalData.activeLoans.map((item, idx) => {
-                      const itemPrincipal = item.principal || 0;
-                      const itemTotalAmount = item.totalAmount || 0;
-                      const itemProfit =
-                        item.totalProfit ||
-                        Math.max(0, itemTotalAmount - itemPrincipal);
+                      const remainingBalance = item.remainingBalance || 0;
+
+                      const totalInst = item.totalInstallments || 0;
+                      const currentInst = item.currentInstallment || 0;
+                      const profitPerInst = item.profitPerInstallment || 0;
+
+                      const remainingInst = Math.max(
+                        0,
+                        totalInst - currentInst,
+                      );
+                      let remProfit = remainingInst * profitPerInst;
+
+                      if (remProfit > remainingBalance) {
+                        remProfit = remainingBalance;
+                      }
+
+                      let remPrincipal = remainingBalance - remProfit;
 
                       return (
                         <tr
@@ -814,16 +823,13 @@ export default function DashboardHome() {
                             )}
                           </td>
                           <td className="px-6 py-4 font-black text-gray-500 text-right">
-                            ฿{itemPrincipal.toLocaleString()}
+                            ฿{remPrincipal.toLocaleString()}
                           </td>
                           <td className="px-6 py-4 font-black text-green-500 text-right">
-                            +฿{itemProfit.toLocaleString()}
-                          </td>
-                          <td className="px-6 py-4 font-black text-orange-500 text-right">
-                            ฿{itemTotalAmount.toLocaleString()}
+                            +฿{remProfit.toLocaleString()}
                           </td>
                           <td className="px-6 py-4 font-black text-blue-600 text-right bg-blue-50/30">
-                            ฿{(item.remainingBalance || 0).toLocaleString()}
+                            ฿{remainingBalance.toLocaleString()}
                           </td>
                           <td className="px-6 py-4 text-center">
                             <Link
@@ -953,7 +959,7 @@ export default function DashboardHome() {
                       modalData.monthlyProfits.length === 0)) && (
                     <tr>
                       <td
-                        colSpan="9"
+                        colSpan="8"
                         className="px-6 py-10 text-center text-sm font-bold text-gray-400"
                       >
                         ไม่มีข้อมูลในระบบ
@@ -966,35 +972,50 @@ export default function DashboardHome() {
 
             <div className="p-6 md:p-8 bg-[#1F2335] text-white flex flex-col md:flex-row md:justify-between items-start md:items-center rounded-b-[2.5rem] gap-4">
               <div>
-                <p className="text-[12px] font-black uppercase tracking-widest text-gray-400 mb-1">
-                  สรุปผลบวกจากตารางด้านบน
-                </p>
                 {activeModal === "target" && (
-                  <p className="text-[10px] font-bold text-gray-400">
-                    เก็บได้จริงแล้ววันนี้:{" "}
-                    <span className="text-green-400 font-black">
-                      ฿{stats.collectedAmount.toLocaleString()}
-                    </span>
-                  </p>
+                  <>
+                    <p className="text-[12px] font-black uppercase tracking-widest text-gray-400 mb-1">
+                      สรุปผลบวกจากตารางด้านบน
+                    </p>
+                    <p className="text-[10px] font-bold text-gray-400">
+                      เก็บได้จริงแล้ววันนี้:{" "}
+                      <span className="text-green-400 font-black">
+                        ฿{stats.collectedAmount.toLocaleString()}
+                      </span>
+                    </p>
+                  </>
                 )}
                 {activeModal === "profit" && (
-                  <p className="text-[10px] font-bold text-gray-400">
-                    กำไรที่เก็บได้จริงวันนี้:{" "}
-                    <span className="text-green-400 font-black">
-                      ฿{stats.profitToday.toLocaleString()}
-                    </span>
-                  </p>
+                  <>
+                    <p className="text-[12px] font-black uppercase tracking-widest text-gray-400 mb-1">
+                      สรุปผลบวกจากตารางด้านบน
+                    </p>
+                    <p className="text-[10px] font-bold text-gray-400">
+                      กำไรที่เก็บได้จริงวันนี้:{" "}
+                      <span className="text-green-400 font-black">
+                        ฿{stats.profitToday.toLocaleString()}
+                      </span>
+                    </p>
+                  </>
                 )}
                 {activeModal === "profitMonth" && (
-                  <p className="text-[10px] font-bold text-gray-400">
-                    รวมบิลกำไรของเดือนนี้:{" "}
-                    <span className="text-orange-400 font-black">
-                      {modalData.monthlyProfits.length} ใบ
-                    </span>
-                  </p>
+                  <>
+                    <p className="text-[12px] font-black uppercase tracking-widest text-gray-400 mb-1">
+                      สรุปผลบวกจากตารางด้านบน
+                    </p>
+                    <p className="text-[10px] font-bold text-gray-400">
+                      รวมบิลกำไรของเดือนนี้:{" "}
+                      <span className="text-orange-400 font-black">
+                        {modalData.monthlyProfits.length} ใบ
+                      </span>
+                    </p>
+                  </>
                 )}
                 {activeModal === "disbursed" && (
                   <>
+                    <p className="text-[12px] font-black uppercase tracking-widest text-gray-400 mb-1">
+                      สรุปผลบวกจากตารางด้านบน
+                    </p>
                     <p className="text-[10px] font-bold text-gray-400 mb-1">
                       รวมรายการที่ปล่อยในเดือนนี้:{" "}
                       <span className="text-purple-400 font-black">
@@ -1026,32 +1047,31 @@ export default function DashboardHome() {
                     </p>
                   </div>
                 ) : activeModal === "principal" ? (
-                  // 🌟 หน้าต่างยอดคงเหลือ: แยกยอดคงเหลือเป็น "ทุนเพียวๆ" กับ "กำไร" ตัวใหญ่เห็นชัด!
-                  <div className="flex flex-col md:items-end border-t border-white/10 md:border-0 pt-4 md:pt-0 mt-2 md:mt-0">
-                    <p className="text-[10px] font-bold text-blue-300 uppercase tracking-widest mb-1">
+                  <div className="flex flex-col md:items-end w-full">
+                    <p className="text-[10px] sm:text-xs font-bold text-blue-300 uppercase tracking-widest mb-1">
                       ยอดคงเหลือที่ต้องตามเก็บ
                     </p>
-                    <p className="text-4xl sm:text-5xl font-black text-blue-400 tracking-tighter">
+                    <p className="text-4xl sm:text-6xl font-black text-blue-400 tracking-tighter">
                       ฿{stats.totalPrincipalInMarket.toLocaleString()}
                     </p>
 
-                    <div className="flex flex-wrap items-center gap-3 mt-3 bg-blue-500/10 px-4 py-3 sm:px-5 sm:py-4 rounded-2xl border border-blue-500/20 shadow-inner">
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-[11px] sm:text-xs font-bold text-gray-300 uppercase tracking-widest">
-                          เป็นต้นทุน
+                    <div className="flex items-center justify-center md:justify-end gap-3 sm:gap-4 mt-3 sm:mt-4 bg-blue-500/10 px-5 sm:px-6 py-3 sm:py-4 rounded-xl sm:rounded-2xl border border-blue-500/20 shadow-inner w-full md:w-auto">
+                      <div className="flex items-baseline gap-2 sm:gap-3">
+                        <span className="text-[10px] sm:text-sm font-bold text-gray-300 uppercase tracking-widest">
+                          เป็นต้นทุนจม
                         </span>
-                        <span className="text-xl sm:text-2xl font-black text-white">
+                        <span className="text-xl sm:text-3xl font-black text-white">
                           ฿{stats.remainingPrincipalInMarket.toLocaleString()}
                         </span>
                       </div>
-                      <span className="text-gray-600 text-lg font-light mx-1 hidden sm:inline-block">
+                      <span className="text-gray-600 text-lg sm:text-2xl font-light mx-1 sm:mx-2">
                         |
                       </span>
-                      <div className="flex items-baseline gap-2 mt-1 sm:mt-0">
-                        <span className="text-[11px] sm:text-xs font-bold text-gray-300 uppercase tracking-widest">
+                      <div className="flex items-baseline gap-2 sm:gap-3 mt-1 sm:mt-0">
+                        <span className="text-[10px] sm:text-sm font-bold text-gray-300 uppercase tracking-widest">
                           ดอกรอเก็บ
                         </span>
-                        <span className="text-xl sm:text-2xl font-black text-green-400">
+                        <span className="text-xl sm:text-3xl font-black text-green-400">
                           +฿{stats.remainingProfitInMarket.toLocaleString()}
                         </span>
                       </div>

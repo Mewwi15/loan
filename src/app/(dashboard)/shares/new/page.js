@@ -28,6 +28,7 @@ import {
   Calculator,
   ArrowLeft,
   AlertCircle,
+  RefreshCcw,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -182,6 +183,9 @@ export default function NewSharePage() {
   const [loading, setLoading] = useState(false);
   const [customersList, setCustomersList] = useState([]);
 
+  // 🌟 กัน Error Hydration
+  const [isHydrated, setIsHydrated] = useState(false);
+
   // ==========================================
   // STATE: กติกาของวงแชร์
   // ==========================================
@@ -189,8 +193,8 @@ export default function NewSharePage() {
   const [shareConfig, setShareConfig] = useState({
     groupName: "",
     totalHands: 21,
-    installmentAmount: "", // ให้ผู้ใช้กรอกเอง
-    poolAmount: "", // ให้ผู้ใช้กรอกเอง
+    installmentAmount: "",
+    poolAmount: "",
     startDate: new Date().toISOString().split("T")[0],
     frequency: 7,
     frequencyType: "day",
@@ -210,6 +214,64 @@ export default function NewSharePage() {
   const [selectingHandIndex, setSelectingHandIndex] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
 
+  // ==========================================
+  // 💾 ฟีเจอร์: AUTO SAVE DRAFT (localStorage)
+  // ==========================================
+
+  // 1. ดึงข้อมูลที่เคยพิมพ์ค้างไว้ (ตอนเปิดหน้า)
+  useEffect(() => {
+    const savedDraft = localStorage.getItem("new_share_draft");
+    if (savedDraft) {
+      try {
+        const parsedDraft = JSON.parse(savedDraft);
+        if (parsedDraft.shareConfig) setShareConfig(parsedDraft.shareConfig);
+        if (parsedDraft.hands) setHands(parsedDraft.hands);
+
+        // เช็คเปิดปุ่มระบุความถี่เอง
+        if (
+          ![1, 5, 7].includes(Number(parsedDraft.shareConfig?.frequency)) ||
+          parsedDraft.shareConfig?.frequencyType !== "day"
+        ) {
+          setIsCustomFreq(true);
+        }
+      } catch (error) {
+        console.error("Failed to parse draft:", error);
+      }
+    }
+    setIsHydrated(true);
+  }, []);
+
+  // 2. แอบเซฟเมื่อมีการขยับ State
+  useEffect(() => {
+    if (isHydrated) {
+      const draftToSave = {
+        shareConfig,
+        hands,
+      };
+      localStorage.setItem("new_share_draft", JSON.stringify(draftToSave));
+    }
+  }, [shareConfig, hands, isHydrated]);
+
+  // ฟังก์ชันล้างข้อมูลฟอร์ม
+  const clearDraft = () => {
+    localStorage.removeItem("new_share_draft");
+    setShareConfig({
+      groupName: "",
+      totalHands: 21,
+      installmentAmount: "",
+      poolAmount: "",
+      startDate: new Date().toISOString().split("T")[0],
+      frequency: 7,
+      frequencyType: "day",
+      bankAccountId: "",
+      bankAccountName: "",
+      bankName: "",
+      bankAccountNo: "",
+    });
+    setHands([]);
+    setIsCustomFreq(false);
+  };
+
   useEffect(() => {
     const fetchCustomers = async () => {
       const querySnapshot = await getDocs(collection(db, "customers"));
@@ -224,8 +286,10 @@ export default function NewSharePage() {
 
   // ปรับจำนวนมืออัตโนมัติตามที่กรอก
   useEffect(() => {
-    const numHands = Number(shareConfig.totalHands) || 0;
+    // 🌟 ดักไว้ว่าถ้ากำลังดึงข้อมูล Draft อยู่ ไม่ต้องรันให้มันรีเซ็ต
+    if (!isHydrated) return;
 
+    const numHands = Number(shareConfig.totalHands) || 0;
     setHands((prev) => {
       const newHands = [...prev];
       if (newHands.length < numHands) {
@@ -241,7 +305,7 @@ export default function NewSharePage() {
       }
       return newHands;
     });
-  }, [shareConfig.totalHands]);
+  }, [shareConfig.totalHands, isHydrated]);
 
   const handleConfigChange = (e) => {
     const { name, value, type } = e.target;
@@ -383,6 +447,10 @@ export default function NewSharePage() {
       });
 
       await batch.commit();
+
+      // 🌟 เคลียร์ค่าที่พิมพ์ค้างไว้เมื่อเซฟสำเร็จ
+      clearDraft();
+
       alert("สร้างวงแชร์และจัดสรรมือสำเร็จ!");
       router.push("/shares");
     } catch (error) {
@@ -397,8 +465,11 @@ export default function NewSharePage() {
     (b) => b.id === shareConfig.bankAccountId,
   );
 
+  // ป้องกัน UI กระตุกตอนโหลดหน้า
+  if (!isHydrated) return null;
+
   return (
-    <div className="max-w-7xl mx-auto space-y-8 pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500 bg-gray-50/30 min-h-screen">
+    <div className="max-w-7xl mx-auto space-y-8 pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500 bg-gray-50/30 min-h-screen relative">
       {/* --- Header --- */}
       <div className="pt-8 pb-6 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
         <div>
@@ -880,6 +951,26 @@ export default function NewSharePage() {
           </div>
         </div>
       )}
+
+      {/* 🌟 ปุ่มล้างฟอร์ม (Clear Draft) */}
+      <button
+        onClick={() => {
+          if (
+            window.confirm(
+              "คุณต้องการล้างข้อมูลวงแชร์ที่สร้างค้างไว้ทั้งหมด ใช่หรือไม่?",
+            )
+          ) {
+            clearDraft();
+          }
+        }}
+        className="fixed bottom-6 right-6 bg-white border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 hover:bg-red-50 p-4 rounded-full shadow-lg transition-all flex items-center gap-2 group z-40"
+        title="ล้างข้อมูลที่พิมพ์ค้างไว้"
+      >
+        <RefreshCcw className="w-5 h-5" />
+        <span className="text-xs font-bold hidden group-hover:inline-block pr-2">
+          ล้างข้อมูลฟอร์ม
+        </span>
+      </button>
     </div>
   );
 }

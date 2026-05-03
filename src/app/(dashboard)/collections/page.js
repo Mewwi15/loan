@@ -19,8 +19,6 @@ import {
   Clock,
   Check,
   Loader2,
-  Landmark,
-  TrendingUp,
   AlertCircle,
 } from "lucide-react";
 
@@ -49,7 +47,7 @@ export default function CollectionsPage() {
         const loanRef = doc(db, "loans", scheduleData.loanId);
         const loanSnap = await getDoc(loanRef);
 
-        // 🌟 ไฮไลท์การแก้ปัญหา: เช็คด้วยว่าวงกู้หลักต้องไม่ถูก "ปิด" (status !== "closed")
+        // เช็คด้วยว่าวงกู้หลักต้องไม่ถูก "ปิด" (status !== "closed")
         if (loanSnap.exists() && loanSnap.data().status !== "closed") {
           const loanData = loanSnap.data();
           list.push({
@@ -58,8 +56,6 @@ export default function CollectionsPage() {
             phone: loanData.customerPhone || "ไม่มีเบอร์โทร",
             loanNumber: loanData.loanNumber || "-",
             loanName: loanData.loanName || loanData.customerName,
-            bankName: loanData.bankName || "ไม่ระบุ",
-            bankOwner: loanData.bankOwner || "ไม่ระบุ",
             bankColor: loanData.bankColor || "#cbd5e1",
             callStatus: scheduleData.callStatus || "pending",
           });
@@ -131,6 +127,7 @@ export default function CollectionsPage() {
 
   return (
     <div className="w-full pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500">
+      {/* Header Section */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6 mb-8 pt-10">
         <div>
           <h1 className="text-2xl md:text-3xl font-black text-gray-800 tracking-tight flex items-center gap-3">
@@ -141,17 +138,18 @@ export default function CollectionsPage() {
           </p>
         </div>
 
-        <div className="bg-white p-1.5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-3 px-4 font-black text-gray-700">
-          <CalendarIcon className="w-4 h-4 text-orange-500" />
+        <div className="bg-white p-1.5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-3 px-4 font-black text-gray-700 w-full lg:w-auto">
+          <CalendarIcon className="w-5 h-5 text-orange-500 shrink-0" />
           <input
             type="date"
             value={selectedDate}
             onChange={(e) => setSelectedDate(e.target.value)}
-            className="bg-transparent outline-none cursor-pointer uppercase tracking-widest text-sm"
+            className="bg-transparent outline-none cursor-pointer uppercase tracking-widest text-sm w-full"
           />
         </div>
       </div>
 
+      {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
         <div className="bg-[#1F2335] p-6 rounded-[1.5rem] shadow-lg flex items-center justify-between text-white relative overflow-hidden">
           <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/10 rounded-full -mr-12 -mt-12 blur-xl"></div>
@@ -185,6 +183,7 @@ export default function CollectionsPage() {
         </div>
       </div>
 
+      {/* Search Bar */}
       <div className="bg-white p-2 rounded-[1.2rem] shadow-sm border border-gray-100 mb-6">
         <div className="relative group">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 group-focus-within:text-orange-500 transition-colors" />
@@ -198,6 +197,7 @@ export default function CollectionsPage() {
         </div>
       </div>
 
+      {/* Collections List */}
       <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden min-h-[400px]">
         {loading ? (
           <div className="py-32 flex flex-col items-center gap-4 text-gray-400 font-black text-[10px] uppercase tracking-widest">
@@ -205,101 +205,76 @@ export default function CollectionsPage() {
             กำลังโหลดข้อมูลคิวงาน...
           </div>
         ) : filteredCollections.length > 0 ? (
-          <div className="divide-y divide-gray-50">
+          <div className="divide-y divide-gray-50 flex flex-col gap-4 p-4 md:p-0 md:gap-0">
             {filteredCollections.map((item) => (
               <div
                 key={item.id}
-                className={`flex flex-col xl:flex-row items-start xl:items-center justify-between p-6 gap-6 transition-all duration-300 ${
+                className={`flex flex-col xl:flex-row items-start xl:items-center justify-between p-5 md:p-6 gap-5 md:gap-6 transition-all duration-300 rounded-[1.5rem] border border-gray-100 md:border-0 md:rounded-none ${
                   item.callStatus === "contacted"
-                    ? "opacity-50 bg-gray-50/50 grayscale-[30%]"
-                    : "hover:bg-orange-50/5"
+                    ? "opacity-60 bg-gray-50/50 grayscale-[20%]"
+                    : "bg-white hover:bg-orange-50/10 shadow-sm md:shadow-none"
                 }`}
               >
-                <div className="flex items-center gap-4 w-full xl:w-auto xl:min-w-[250px]">
-                  <div
-                    className="w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg transition-all shrink-0 shadow-sm"
-                    style={{
-                      backgroundColor:
-                        item.callStatus === "contacted"
-                          ? "#f3f4f6"
-                          : `${item.bankColor}15`,
-                      color:
-                        item.callStatus === "contacted"
-                          ? "#9ca3af"
-                          : item.bankColor,
-                      border: `1px solid ${item.callStatus === "contacted" ? "transparent" : `${item.bankColor}30`}`,
-                    }}
-                  >
-                    {item.loanNumber}
-                  </div>
-                  <div>
-                    <h3 className="text-base font-black text-gray-800">
-                      วง {item.loanNumber} • {item.customerName}
-                    </h3>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] font-bold text-gray-400 tracking-widest">
-                        {item.phone}
-                      </span>
+                {/* 1. Profile Info & Amount */}
+                <div className="flex flex-col md:flex-row justify-between w-full xl:w-auto xl:flex-1 gap-4">
+                  {/* Profile */}
+                  <div className="flex items-center gap-4 w-full md:w-auto">
+                    <div
+                      className="w-14 h-14 rounded-2xl flex items-center justify-center font-black text-xl transition-all shrink-0 shadow-sm"
+                      style={{
+                        backgroundColor:
+                          item.callStatus === "contacted"
+                            ? "#f3f4f6"
+                            : `${item.bankColor}15`,
+                        color:
+                          item.callStatus === "contacted"
+                            ? "#9ca3af"
+                            : item.bankColor,
+                        border: `1px solid ${item.callStatus === "contacted" ? "transparent" : `${item.bankColor}30`}`,
+                      }}
+                    >
+                      {item.loanNumber}
                     </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6 sm:gap-10 w-full xl:w-auto xl:flex-1 xl:justify-end">
-                  <div className="min-w-[100px]">
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">
-                      กำไร
-                    </p>
-                    <p className="text-sm font-black text-green-500 flex items-center gap-1.5">
-                      <TrendingUp className="w-4 h-4" /> +฿
-                      {(item.profitShare || 0).toLocaleString()}
-                    </p>
-                  </div>
-
-                  <div className="min-w-[180px]">
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">
-                      บัญชีรับโอน
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="w-6 h-6 rounded-md flex items-center justify-center shadow-sm"
-                        style={{ backgroundColor: `${item.bankColor}15` }}
-                      >
-                        <Landmark
-                          className="w-3.5 h-3.5"
-                          style={{ color: item.bankColor }}
-                        />
-                      </div>
-                      <p className="text-base font-black text-gray-700">
-                        {item.bankName}{" "}
-                        <span className="text-[14px] text-gray-400 font-bold ml-1">
-                          ({item.bankOwner})
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-lg md:text-xl font-black text-gray-800 truncate">
+                        <span className="text-gray-400 text-sm mr-1">วง</span>
+                        {item.loanNumber} • {item.customerName}
+                      </h3>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-xs font-bold text-gray-500 tracking-widest bg-gray-100 px-2.5 py-1 rounded-md">
+                          {item.phone}
                         </span>
-                      </p>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="text-left sm:text-right min-w-[120px]">
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">
+                  {/* Amount to Collect (Mobile: Box, Desktop: Right aligned) */}
+                  <div className="w-full md:w-auto bg-gray-50/80 md:bg-transparent p-4 md:p-0 rounded-2xl md:rounded-none border border-gray-100 md:border-0 flex justify-between md:flex-col items-center md:items-end shrink-0">
+                    <p className="text-[11px] md:text-xs font-black text-gray-400 uppercase tracking-widest md:mb-1">
                       ยอดเก็บงวดนี้
                     </p>
-                    <p className="text-xl font-black text-gray-800 tracking-tight">
+                    <p className="text-2xl md:text-3xl font-black text-gray-800 tracking-tight">
                       ฿{item.amount.toLocaleString()}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-4 w-full xl:w-auto justify-between xl:justify-end border-t xl:border-t-0 border-gray-100 pt-4 xl:pt-0 xl:pl-6 xl:border-l">
+                {/* 2. Actions (Full width on mobile) */}
+                <div className="flex items-center gap-3 w-full xl:w-auto justify-between xl:justify-end border-t xl:border-t-0 border-gray-100 pt-4 xl:pt-0 xl:pl-6 xl:border-l">
                   <a
                     href={`tel:${item.phone}`}
-                    className="p-3 bg-white shadow-sm border border-gray-100 hover:shadow-md text-gray-400 hover:text-orange-500 rounded-2xl transition-all"
+                    className="flex-1 xl:flex-none flex justify-center items-center p-3.5 bg-white shadow-sm border border-gray-200 hover:shadow-md hover:border-orange-200 text-gray-500 hover:text-orange-500 rounded-[1.2rem] transition-all"
                     title="โทรหาลูกค้า"
                   >
                     <PhoneCall className="w-5 h-5" />
+                    <span className="ml-2 font-bold text-sm xl:hidden">
+                      โทรหาลูกค้า
+                    </span>
                   </a>
 
                   <button
                     onClick={() => toggleCallStatus(item.id, item.callStatus)}
-                    className={`relative w-[120px] h-[48px] rounded-[1.5rem] p-1.5 transition-colors duration-300 ease-in-out focus:outline-none shadow-inner flex items-center ${
+                    className={`relative w-[130px] h-[52px] rounded-[1.5rem] p-1.5 transition-colors duration-300 ease-in-out focus:outline-none shadow-inner flex items-center shrink-0 ${
                       item.callStatus === "contacted"
                         ? "bg-green-100"
                         : "bg-rose-50"
@@ -307,21 +282,20 @@ export default function CollectionsPage() {
                   >
                     <div className="absolute inset-0 flex items-center justify-between px-4">
                       <span
-                        className={`text-[10px] font-black uppercase tracking-widest transition-opacity ${item.callStatus === "contacted" ? "opacity-100 text-green-900" : "opacity-0"}`}
+                        className={`text-[11px] font-black uppercase tracking-widest transition-opacity ${item.callStatus === "contacted" ? "opacity-100 text-green-800" : "opacity-0"}`}
                       >
                         ทวงแล้ว
                       </span>
                       <span
-                        className={`text-[10px] font-black uppercase tracking-widest transition-opacity ${item.callStatus === "pending" ? "opacity-100 text-rose-900" : "opacity-0"}`}
+                        className={`text-[11px] font-black uppercase tracking-widest transition-opacity ${item.callStatus === "pending" ? "opacity-100 text-rose-800" : "opacity-0"}`}
                       >
                         รอทวง
                       </span>
                     </div>
-
                     <div
-                      className={`w-9 h-9 bg-white rounded-xl shadow-md transform transition-transform duration-300 ease-in-out flex items-center justify-center z-10 ${
+                      className={`w-10 h-10 bg-white rounded-xl shadow-md transform transition-transform duration-300 ease-in-out flex items-center justify-center z-10 ${
                         item.callStatus === "contacted"
-                          ? "translate-x-[72px]"
+                          ? "translate-x-[78px]"
                           : "translate-x-0"
                       }`}
                     >

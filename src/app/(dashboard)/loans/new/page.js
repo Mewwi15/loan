@@ -29,6 +29,7 @@ import {
   Search,
   CheckSquare,
   Square,
+  RefreshCcw,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -172,6 +173,7 @@ export default function NewLoanPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [isBankModalOpen, setIsBankModalOpen] = useState(false);
+  const [isHydrated, setIsHydrated] = useState(false); // กัน Error Hydration
 
   const [loanMode, setLoanMode] = useState("single");
 
@@ -189,7 +191,7 @@ export default function NewLoanPage() {
     loanName: "",
     loanNumber: "1",
     bankIndex: 0,
-    principal: "", // 🌟 แก้ค่าเรื่มต้นให้ปล่อยว่างได้
+    principal: "",
     interestPercent: 10,
     installments: 20,
     startDate: new Date().toISOString().split("T")[0],
@@ -205,7 +207,7 @@ export default function NewLoanPage() {
     groupName: "",
     loanNumber: "1",
     bankIndex: 0,
-    principal: "", // 🌟 แก้ค่าเรื่มต้นให้ปล่อยว่างได้
+    principal: "",
     interestPercent: 10,
     installments: 20,
     startDate: new Date().toISOString().split("T")[0],
@@ -213,10 +215,92 @@ export default function NewLoanPage() {
     type: "day",
   });
 
-  const [selectedMembers, setSelectedMembers] = useState([]); // [{ customerId, customerName, customPrincipal: "" }]
+  const [selectedMembers, setSelectedMembers] = useState([]);
   const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
   const [memberSearchQuery, setMemberSearchQuery] = useState("");
   const [tempSelectedIds, setTempSelectedIds] = useState([]);
+
+  // ==========================================
+  // 💾 ฟีเจอร์: AUTO SAVE DRAFT (localStorage)
+  // ==========================================
+
+  // 1. ตอนโหลดหน้าเว็บครั้งแรก ให้ดึงของเก่ากลับมา (ถ้ามี)
+  useEffect(() => {
+    const savedDraft = localStorage.getItem("new_loan_draft");
+    if (savedDraft) {
+      try {
+        const parsedDraft = JSON.parse(savedDraft);
+        if (parsedDraft.loanMode) setLoanMode(parsedDraft.loanMode);
+        if (parsedDraft.formData) setFormData(parsedDraft.formData);
+        if (parsedDraft.groupConfig) setGroupConfig(parsedDraft.groupConfig);
+        if (parsedDraft.selectedMembers)
+          setSelectedMembers(parsedDraft.selectedMembers);
+
+        // เช็คว่าหน้าต่าง custom frequency เปิดค้างไว้มั้ย
+        if (
+          ![1, 5, 7].includes(Number(parsedDraft.formData?.frequency)) ||
+          parsedDraft.formData?.type !== "day"
+        ) {
+          setIsCustomFrequency(true);
+        }
+        if (
+          ![1, 5, 7].includes(Number(parsedDraft.groupConfig?.frequency)) ||
+          parsedDraft.groupConfig?.type !== "day"
+        ) {
+          setIsGroupCustomFreq(true);
+        }
+      } catch (error) {
+        console.error("Failed to parse draft:", error);
+      }
+    }
+    setIsHydrated(true);
+  }, []);
+
+  // 2. แอบเซฟข้อมูลอัตโนมัติ ทุกครั้งที่มีการเปลี่ยนแปลง State ใดๆ
+  useEffect(() => {
+    if (isHydrated) {
+      // เซฟเฉพาะตอนที่โหลดหน้าเสร็จแล้วเท่านั้น
+      const draftToSave = {
+        loanMode,
+        formData,
+        groupConfig,
+        selectedMembers,
+      };
+      localStorage.setItem("new_loan_draft", JSON.stringify(draftToSave));
+    }
+  }, [loanMode, formData, groupConfig, selectedMembers, isHydrated]);
+
+  // ฟังก์ชันล้างข้อมูล (เมื่อทำรายการเสร็จ หรือกดล้าง)
+  const clearDraft = () => {
+    localStorage.removeItem("new_loan_draft");
+    setFormData({
+      customerId: "",
+      customerName: "",
+      loanName: "",
+      loanNumber: "1",
+      bankIndex: 0,
+      principal: "",
+      interestPercent: 10,
+      installments: 20,
+      startDate: new Date().toISOString().split("T")[0],
+      frequency: 1,
+      type: "day",
+    });
+    setGroupConfig({
+      groupName: "",
+      loanNumber: "1",
+      bankIndex: 0,
+      principal: "",
+      interestPercent: 10,
+      installments: 20,
+      startDate: new Date().toISOString().split("T")[0],
+      frequency: 1,
+      type: "day",
+    });
+    setSelectedMembers([]);
+    setIsCustomFrequency(false);
+    setIsGroupCustomFreq(false);
+  };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -260,9 +344,6 @@ export default function NewLoanPage() {
     return c.nickname || c.name || "";
   };
 
-  // ==========================================
-  // 🟢 คำนวณ & ฟังก์ชัน: วงเดี่ยว
-  // ==========================================
   const principal = Number(formData.principal) || 0;
   const percent = Number(formData.interestPercent) || 0;
   const count = Math.max(Number(formData.installments) || 1, 1);
@@ -276,7 +357,6 @@ export default function NewLoanPage() {
   const handleChange = (e) => {
     const { name, value, type } = e.target;
     let finalValue = value;
-    // 🌟 แก้ให้รับค่าว่างได้ เพื่อให้พิมพ์ 0 ได้อิสระ ไม่ดึงกลับไปเป็นค่าว่าง
     if (type === "number") finalValue = value === "" ? "" : Number(value);
 
     setFormData((prev) => {
@@ -413,6 +493,10 @@ export default function NewLoanPage() {
       }
 
       await batch.commit();
+
+      // 🌟 เคลียร์ค่าที่พิมพ์ค้างไว้เมื่อเซฟสำเร็จ
+      clearDraft();
+
       alert("✅ บันทึกสัญญาเรียบร้อยแล้ว!");
       window.history.replaceState(null, "", window.location.pathname);
       router.push("/");
@@ -424,13 +508,9 @@ export default function NewLoanPage() {
     }
   };
 
-  // ==========================================
-  // 🟠 คำนวณ & ฟังก์ชัน: วงกลุ่ม (Group Loan)
-  // ==========================================
   const handleGroupConfigChange = (e) => {
     const { name, value, type } = e.target;
     let finalValue = value;
-    // 🌟 แก้ให้รับค่าว่างได้
     if (type === "number") finalValue = value === "" ? "" : Number(value);
     setGroupConfig((prev) => ({ ...prev, [name]: finalValue }));
   };
@@ -652,6 +732,9 @@ export default function NewLoanPage() {
         await batch.commit();
       }
 
+      // 🌟 เคลียร์ค่าที่พิมพ์ค้างไว้เมื่อเซฟสำเร็จ
+      clearDraft();
+
       alert("✅ สร้างวงกู้กลุ่มและกระจายข้อมูลสำเร็จเรียบร้อยแล้ว!");
       router.push("/");
     } catch (error) {
@@ -673,8 +756,11 @@ export default function NewLoanPage() {
       ? BANK_OPTIONS[formData.bankIndex] || BANK_OPTIONS[0]
       : BANK_OPTIONS[groupConfig.bankIndex] || BANK_OPTIONS[0];
 
+  // ถ้ายังไม่อ่าน localStorage ไม่ต้องเรนเดอร์ UI กัน Error กระตุก
+  if (!isHydrated) return null;
+
   return (
-    <div className="max-w-7xl mx-auto space-y-6 pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500">
+    <div className="max-w-7xl mx-auto space-y-6 pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500 relative">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-6 pt-10 gap-4">
         <div>
           <h1 className="text-3xl font-black text-gray-800 tracking-tight flex items-center gap-3">
@@ -886,7 +972,7 @@ export default function NewLoanPage() {
                     <input
                       name="principal"
                       type="number"
-                      value={formData.principal} // 🌟 นำเงื่อนไขการล้างช่องทิ้งไป
+                      value={formData.principal}
                       onChange={handleChange}
                       className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-800 text-xl md:text-2xl focus:bg-white focus:border-orange-500 transition-all text-gray-700"
                     />
@@ -899,7 +985,7 @@ export default function NewLoanPage() {
                       name="interestPercent"
                       type="number"
                       step="0.01"
-                      value={formData.interestPercent} // 🌟 นำเงื่อนไขการล้างช่องทิ้งไป ให้พิมพ์ 0 ได้
+                      value={formData.interestPercent}
                       onChange={handleChange}
                       className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none text-green-600 font-black text-xl md:text-2xl focus:bg-white focus:border-green-500 transition-all"
                     />
@@ -957,7 +1043,7 @@ export default function NewLoanPage() {
                       <input
                         type="number"
                         name="frequency"
-                        value={formData.frequency} // 🌟
+                        value={formData.frequency}
                         onChange={handleChange}
                         className="w-24 px-4 py-2 text-center bg-white border border-gray-200 rounded-xl outline-none font-black text-orange-500 focus:border-orange-500 transition-all shadow-inner"
                         placeholder="เช่น 3"
@@ -978,7 +1064,7 @@ export default function NewLoanPage() {
                     <input
                       name="installments"
                       type="number"
-                      value={formData.installments} // 🌟
+                      value={formData.installments}
                       onChange={handleChange}
                       className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-700 focus:bg-white focus:border-orange-500 transition-all"
                     />
@@ -1150,7 +1236,7 @@ export default function NewLoanPage() {
                   <input
                     name="principal"
                     type="number"
-                    value={groupConfig.principal} // 🌟
+                    value={groupConfig.principal}
                     onChange={handleGroupConfigChange}
                     className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-800 text-xl focus:bg-white focus:border-orange-500 transition-all"
                     placeholder="ใส่ยอดเริ่มต้นให้ทุกคน"
@@ -1165,7 +1251,7 @@ export default function NewLoanPage() {
                     name="interestPercent"
                     type="number"
                     step="0.01"
-                    value={groupConfig.interestPercent} // 🌟 อนุญาตให้เป็น 0
+                    value={groupConfig.interestPercent}
                     onChange={handleGroupConfigChange}
                     className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none text-green-600 font-black text-xl focus:bg-white focus:border-green-500 transition-all"
                   />
@@ -1261,7 +1347,7 @@ export default function NewLoanPage() {
                     <input
                       type="number"
                       name="frequency"
-                      value={groupConfig.frequency} // 🌟
+                      value={groupConfig.frequency}
                       onChange={handleGroupConfigChange}
                       className="w-24 px-4 py-2 text-center bg-white border border-gray-200 rounded-xl outline-none font-black text-orange-500 focus:border-orange-500 transition-all"
                     />
@@ -1280,7 +1366,7 @@ export default function NewLoanPage() {
                   <input
                     name="installments"
                     type="number"
-                    value={groupConfig.installments} // 🌟
+                    value={groupConfig.installments}
                     onChange={handleGroupConfigChange}
                     className="w-full mt-1 px-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none font-black text-gray-700 focus:bg-white focus:border-orange-500 transition-all"
                   />
@@ -1355,7 +1441,6 @@ export default function NewLoanPage() {
                         </button>
                       </div>
 
-                      {/* 🌟 ช่องให้กรอกเงินต้นแยกรายบุคคล */}
                       <div className="flex items-center gap-3 mt-1">
                         <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
                           เงินต้น:
@@ -1374,7 +1459,6 @@ export default function NewLoanPage() {
                         />
                       </div>
 
-                      {/* 🌟 แสดงยอดส่งของคนๆ นั้นให้เห็นทันทีที่แก้ตัวเลข */}
                       <div className="flex justify-between items-center border-t border-gray-200 pt-3 mt-1">
                         <span className="text-[10px] font-bold text-gray-400">
                           ส่งงวดละ:{" "}
@@ -1449,7 +1533,6 @@ export default function NewLoanPage() {
           </div>
 
           <div className="lg:col-span-5 xl:col-span-4 z-0">
-            {/* 🌟 ปรับตารางให้พอดีไม่ยืด */}
             <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-50 overflow-hidden flex flex-col h-fit max-h-[70vh]">
               <div className="p-6 md:p-8 border-b border-gray-50 bg-gray-50/30 flex justify-between items-center">
                 <h3 className="font-black text-gray-800 flex items-center gap-3 text-sm uppercase tracking-widest">
@@ -1508,7 +1591,7 @@ export default function NewLoanPage() {
       )}
 
       {/* ========================================== */}
-      {/* 🌟 MODAL: เลือกสมาชิกแบบ Checkbox (Idea 2)  */}
+      {/* 🌟 MODAL: เลือกสมาชิกแบบ Checkbox */}
       {/* ========================================== */}
       {isMemberModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -1517,7 +1600,6 @@ export default function NewLoanPage() {
             onClick={() => setIsMemberModalOpen(false)}
           ></div>
           <div className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl flex flex-col h-[85vh] md:h-[80vh] animate-in zoom-in-95 duration-200">
-            {/* Header Modal */}
             <div className="flex justify-between items-center px-6 md:px-8 py-6 border-b border-gray-100 bg-gray-50/50 rounded-t-[2.5rem]">
               <div>
                 <h2 className="text-xl md:text-2xl font-black text-gray-800 flex items-center gap-3">
@@ -1535,7 +1617,6 @@ export default function NewLoanPage() {
               </button>
             </div>
 
-            {/* ค้นหาใน Modal */}
             <div className="px-6 md:px-8 py-4 border-b border-gray-100">
               <div className="relative">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-300" />
@@ -1549,7 +1630,6 @@ export default function NewLoanPage() {
               </div>
             </div>
 
-            {/* รายชื่อลูกค้า */}
             <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-2 bg-gray-50/30">
               {filteredModalCustomers.length === 0 ? (
                 <div className="text-center py-10">
@@ -1609,7 +1689,6 @@ export default function NewLoanPage() {
               )}
             </div>
 
-            {/* Footer Modal */}
             <div className="p-6 md:p-8 bg-white border-t border-gray-100 rounded-b-[2.5rem] flex items-center justify-between">
               <p className="text-sm font-black text-gray-500">
                 เลือกแล้ว{" "}
@@ -1750,6 +1829,26 @@ export default function NewLoanPage() {
           </div>
         </div>
       )}
+
+      {/* 🌟 ปุ่มล้างฟอร์ม (Clear Draft) แปะไว้ลอยๆ มุมขวาล่าง */}
+      <button
+        onClick={() => {
+          if (
+            window.confirm(
+              "คุณต้องการล้างข้อมูลที่กรอกค้างไว้ทั้งหมด ใช่หรือไม่?",
+            )
+          ) {
+            clearDraft();
+          }
+        }}
+        className="fixed bottom-6 right-6 bg-white border border-gray-200 text-gray-400 hover:text-rose-500 hover:border-rose-200 hover:bg-rose-50 p-4 rounded-full shadow-lg transition-all flex items-center gap-2 group z-40"
+        title="ล้างข้อมูลที่พิมพ์ค้างไว้"
+      >
+        <RefreshCcw className="w-5 h-5" />
+        <span className="text-[10px] font-black uppercase tracking-widest hidden group-hover:inline-block pr-2">
+          ล้างข้อมูลฟอร์ม
+        </span>
+      </button>
     </div>
   );
 }
