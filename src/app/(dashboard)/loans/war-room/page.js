@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/immutability */
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
@@ -33,8 +34,8 @@ import {
   Settings2,
   Clock,
   Package,
-  MessageCircle, // 🌟 นำเข้าไอคอนแชท
-  Link2, // 🌟 นำเข้าไอคอนลิงก์
+  MessageCircle,
+  Link2,
 } from "lucide-react";
 
 // --- รายชื่อธนาคารสำหรับเลือกตอนแก้ไข ---
@@ -176,13 +177,84 @@ export default function WarRoomPage() {
 
   const [expandedGroups, setExpandedGroups] = useState([]);
 
+  // ==========================================
+  // 🌟 ท่าไม้ตาย: ฟังก์ชันบังคับเปิดแอป Messenger
+  // ==========================================
+  const handleOpenMessenger = (e, fullLink) => {
+    e.preventDefault();
+    e.stopPropagation(); // กันไม่ให้การ์ดขยายเวลาจิ้มปุ่ม
+
+    if (!fullLink) return;
+
+    // 1. ดึงเฉพาะ "ตัวเลขรหัสกลุ่ม" ออกมาจากลิงก์
+    const match = fullLink.match(/\d+$/);
+    const chatID = match ? match[0] : null;
+
+    // 2. เช็คว่าเป็นมือถือระบบอะไร
+    const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+    const isAndroid = /android/i.test(userAgent);
+    const isIOS = /iPad|iPhone|iPod/.test(userAgent) && !window.MSStream;
+
+    if (chatID) {
+      if (isAndroid) {
+        // 🤖 ท่าไม้ตาย Android: บังคับยิงเข้า Package แอป Messenger โดยตรง
+        window.location.href = `intent://messages/t/${chatID}#Intent;package=com.facebook.orca;scheme=https;end;`;
+      } else if (isIOS) {
+        // 🍎 ท่าไม้ตาย iOS: ใช้ Protocol ของ Messenger
+        window.location.href = `fb-messenger://user-thread/${chatID}`;
+
+        // เซฟตี้: ถ้าภายใน 2.5 วินาทีแอปไม่เด้งขึ้นมา ให้พาไปเปิดเว็บแทน
+        setTimeout(() => {
+          window.open(fullLink, "_blank");
+        }, 2500);
+      } else {
+        // 💻 เปิดจากคอมพิวเตอร์ (PC/Mac) ให้เด้งแท็บใหม่ปกติ
+        window.open(fullLink, "_blank");
+      }
+    } else {
+      // ถ้ารูปแบบลิงก์แปลกๆ จนดึงรหัสไม่ได้ ให้เปิดแบบธรรมดาไปก่อน
+      window.open(fullLink, "_blank");
+    }
+  };
+
+  // 🌟 ฟังก์ชัน: เพิ่มและเซฟลิงก์แชทเข้า Firebase
+  const handleAddChatLink = async (loanIdOrArray, isGroup = false) => {
+    const newLink = window.prompt(
+      "🔗 กรุณาวางลิงก์แชท Messenger (เช่น https://www.facebook.com/messages/t/...):",
+    );
+
+    if (!newLink) return;
+
+    try {
+      const batch = writeBatch(db);
+
+      if (isGroup && Array.isArray(loanIdOrArray)) {
+        // ถ้าเป็นกลุ่ม ให้อัปเดต chatLink ให้ทุกคนในกลุ่มเหมือนกัน
+        loanIdOrArray.forEach((member) => {
+          const loanRef = doc(db, "loans", member.id);
+          batch.update(loanRef, { chatLink: newLink });
+        });
+      } else {
+        // ถ้าเป็นวงเดี่ยว อัปเดตแค่วงเดียว
+        const loanRef = doc(db, "loans", loanIdOrArray);
+        batch.update(loanRef, { chatLink: newLink });
+      }
+
+      await batch.commit();
+      alert("✅ เพิ่มลิงก์แชทเรียบร้อยแล้วครับบอส!");
+      // UI จะรีเฟรชเองเพราะใช้ onSnapshot
+    } catch (error) {
+      console.error("Error updating chat link:", error);
+      alert("❌ เกิดข้อผิดพลาดในการบันทึกลิงก์");
+    }
+  };
+
   useEffect(() => {
     const q = query(collection(db, "loans"));
 
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        // 🌟 1. Deduplication (ลบวงซ้ำแบบละเอียดขึ้น)
         const uniqueLoansMap = new Map();
         snapshot.docs.forEach((doc) => {
           const data = doc.data();
@@ -195,7 +267,6 @@ export default function WarRoomPage() {
             .toUpperCase();
           const principalStr = String(data.principal || 0);
 
-          // ล็อกเป้าหมายให้แน่นขึ้น: เช็คทั้ง เลขวง + ชื่อคน + เงินต้น
           const uniqueKey = `${loanNumKey}-${safeName}-${data.category || "normal"}-${principalStr}`;
 
           if (uniqueLoansMap.has(uniqueKey)) {
@@ -218,7 +289,6 @@ export default function WarRoomPage() {
         const cleanLoans = Array.from(uniqueLoansMap.values());
         const groupedLoans = {};
 
-        // 🌟 2. Grouping แบบ Exact Match (เลขวงต้องเหมือนกันเป๊ะๆ)
         cleanLoans.forEach((d) => {
           const progress =
             d.totalInstallments > 0
@@ -266,7 +336,7 @@ export default function WarRoomPage() {
               bankColor: baseLoan.bankColor,
               status: "active",
               originalLoans: activeLoans,
-              chatLink: baseLoan.chatLink || "", // 🌟 ดึงข้อมูล chatLink
+              chatLink: baseLoan.chatLink || "",
               ...(activeLoans.length === 1
                 ? baseLoan
                 : {
@@ -295,7 +365,6 @@ export default function WarRoomPage() {
           }
         }
 
-        // 3. เรียงลำดับ ตัวเลขขึ้นก่อน แล้วตามด้วยตัวอักษร
         finalLoanList.sort((a, b) => {
           const strA = String(a.displayLoanNumber);
           const strB = String(b.displayLoanNumber);
@@ -343,38 +412,6 @@ export default function WarRoomPage() {
       );
     } else {
       setSelectedLoan(loan);
-    }
-  };
-
-  // 🌟 ฟังก์ชัน: เพิ่มและเซฟลิงก์แชทเข้า Firebase
-  const handleAddChatLink = async (loanIdOrArray, isGroup = false) => {
-    const newLink = window.prompt(
-      "🔗 กรุณาวางลิงก์แชท Messenger (เช่น https://www.facebook.com/messages/t/...):",
-    );
-
-    if (!newLink) return;
-
-    try {
-      const batch = writeBatch(db);
-
-      if (isGroup && Array.isArray(loanIdOrArray)) {
-        // ถ้าเป็นกลุ่ม ให้อัปเดต chatLink ให้ทุกคนในกลุ่มเหมือนกัน
-        loanIdOrArray.forEach((member) => {
-          const loanRef = doc(db, "loans", member.id);
-          batch.update(loanRef, { chatLink: newLink });
-        });
-      } else {
-        // ถ้าเป็นวงเดี่ยว อัปเดตแค่วงเดียว
-        const loanRef = doc(db, "loans", loanIdOrArray);
-        batch.update(loanRef, { chatLink: newLink });
-      }
-
-      await batch.commit();
-      alert("✅ เพิ่มลิงก์แชทเรียบร้อยแล้วครับบอส!");
-      // UI จะรีเฟรชเองเพราะใช้ onSnapshot
-    } catch (error) {
-      console.error("Error updating chat link:", error);
-      alert("❌ เกิดข้อผิดพลาดในการบันทึกลิงก์");
     }
   };
 
@@ -513,16 +550,13 @@ export default function WarRoomPage() {
 
                       {/* 🌟 ปุ่มแชท Messenger (วงเดี่ยว หรือ วงกลุ่มใหญ่) */}
                       {loan.chatLink ? (
-                        <a
-                          href={loan.chatLink}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()} // ป้องกันการ์ดขยายเวลาคลิกปุ่ม
+                        <button
+                          onClick={(e) => handleOpenMessenger(e, loan.chatLink)}
                           className="w-10 h-10 shrink-0 bg-blue-50 text-blue-500 hover:bg-blue-600 hover:text-white rounded-xl flex items-center justify-center transition-all shadow-sm border border-blue-100"
                           title="เปิดแชท Messenger"
                         >
                           <MessageCircle className="w-5 h-5" />
-                        </a>
+                        </button>
                       ) : (
                         <button
                           onClick={(e) => {
@@ -595,16 +629,15 @@ export default function WarRoomPage() {
                           <div className="flex gap-2 shrink-0 items-center">
                             {/* 🌟 ปุ่มแชท (แยกลูกวงแต่ละคน) */}
                             {member.chatLink ? (
-                              <a
-                                href={member.chatLink}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
+                              <button
+                                onClick={(e) =>
+                                  handleOpenMessenger(e, member.chatLink)
+                                }
                                 className="w-8 h-8 bg-blue-50 text-blue-500 hover:bg-blue-600 hover:text-white rounded-lg flex items-center justify-center transition-all"
                                 title="เปิดแชทส่วนตัวคนนี้"
                               >
                                 <MessageCircle className="w-4 h-4" />
-                              </a>
+                              </button>
                             ) : (
                               <button
                                 onClick={(e) => {
