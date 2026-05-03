@@ -30,6 +30,8 @@ import {
   CheckSquare,
   Square,
   RefreshCcw,
+  MessageCircle, // 🌟 เพิ่มไอคอน
+  Link2, // 🌟 เพิ่มไอคอน
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -173,7 +175,7 @@ export default function NewLoanPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [isBankModalOpen, setIsBankModalOpen] = useState(false);
-  const [isHydrated, setIsHydrated] = useState(false); // กัน Error Hydration
+  const [isHydrated, setIsHydrated] = useState(false);
 
   const [loanMode, setLoanMode] = useState("single");
 
@@ -197,6 +199,7 @@ export default function NewLoanPage() {
     startDate: new Date().toISOString().split("T")[0],
     frequency: 1,
     type: "day",
+    chatLink: "", // 🌟 เก็บลิงก์แชท
   });
 
   // ==========================================
@@ -213,6 +216,7 @@ export default function NewLoanPage() {
     startDate: new Date().toISOString().split("T")[0],
     frequency: 1,
     type: "day",
+    chatLink: "", // 🌟 เก็บลิงก์แชท
   });
 
   const [selectedMembers, setSelectedMembers] = useState([]);
@@ -223,8 +227,6 @@ export default function NewLoanPage() {
   // ==========================================
   // 💾 ฟีเจอร์: AUTO SAVE DRAFT (localStorage)
   // ==========================================
-
-  // 1. ตอนโหลดหน้าเว็บครั้งแรก ให้ดึงของเก่ากลับมา (ถ้ามี)
   useEffect(() => {
     const savedDraft = localStorage.getItem("new_loan_draft");
     if (savedDraft) {
@@ -236,7 +238,6 @@ export default function NewLoanPage() {
         if (parsedDraft.selectedMembers)
           setSelectedMembers(parsedDraft.selectedMembers);
 
-        // เช็คว่าหน้าต่าง custom frequency เปิดค้างไว้มั้ย
         if (
           ![1, 5, 7].includes(Number(parsedDraft.formData?.frequency)) ||
           parsedDraft.formData?.type !== "day"
@@ -256,10 +257,8 @@ export default function NewLoanPage() {
     setIsHydrated(true);
   }, []);
 
-  // 2. แอบเซฟข้อมูลอัตโนมัติ ทุกครั้งที่มีการเปลี่ยนแปลง State ใดๆ
   useEffect(() => {
     if (isHydrated) {
-      // เซฟเฉพาะตอนที่โหลดหน้าเสร็จแล้วเท่านั้น
       const draftToSave = {
         loanMode,
         formData,
@@ -270,7 +269,6 @@ export default function NewLoanPage() {
     }
   }, [loanMode, formData, groupConfig, selectedMembers, isHydrated]);
 
-  // ฟังก์ชันล้างข้อมูล (เมื่อทำรายการเสร็จ หรือกดล้าง)
   const clearDraft = () => {
     localStorage.removeItem("new_loan_draft");
     setFormData({
@@ -285,6 +283,7 @@ export default function NewLoanPage() {
       startDate: new Date().toISOString().split("T")[0],
       frequency: 1,
       type: "day",
+      chatLink: "", // 🌟 ล้างค่า
     });
     setGroupConfig({
       groupName: "",
@@ -296,6 +295,7 @@ export default function NewLoanPage() {
       startDate: new Date().toISOString().split("T")[0],
       frequency: 1,
       type: "day",
+      chatLink: "", // 🌟 ล้างค่า
     });
     setSelectedMembers([]);
     setIsCustomFrequency(false);
@@ -459,6 +459,7 @@ export default function NewLoanPage() {
         frequency: Number(formData.frequency) || 1,
         frequencyType: formData.type,
         status: "active",
+        chatLink: formData.chatLink || "", // 🌟 บันทึกลิงก์แชท
         createdAt: serverTimestamp(),
       });
 
@@ -494,7 +495,6 @@ export default function NewLoanPage() {
 
       await batch.commit();
 
-      // 🌟 เคลียร์ค่าที่พิมพ์ค้างไว้เมื่อเซฟสำเร็จ
       clearDraft();
 
       alert("✅ บันทึกสัญญาเรียบร้อยแล้ว!");
@@ -697,6 +697,7 @@ export default function NewLoanPage() {
           frequencyType: groupConfig.type,
           status: "active",
           isGroupLoan: true,
+          chatLink: groupConfig.chatLink || "", // 🌟 บันทึกลิงก์แชท (แชร์ลิงก์เดียวกันทั้งกลุ่ม)
           createdAt: serverTimestamp(),
         });
 
@@ -732,7 +733,6 @@ export default function NewLoanPage() {
         await batch.commit();
       }
 
-      // 🌟 เคลียร์ค่าที่พิมพ์ค้างไว้เมื่อเซฟสำเร็จ
       clearDraft();
 
       alert("✅ สร้างวงกู้กลุ่มและกระจายข้อมูลสำเร็จเรียบร้อยแล้ว!");
@@ -756,7 +756,6 @@ export default function NewLoanPage() {
       ? BANK_OPTIONS[formData.bankIndex] || BANK_OPTIONS[0]
       : BANK_OPTIONS[groupConfig.bankIndex] || BANK_OPTIONS[0];
 
-  // ถ้ายังไม่อ่าน localStorage ไม่ต้องเรนเดอร์ UI กัน Error กระตุก
   if (!isHydrated) return null;
 
   return (
@@ -920,6 +919,25 @@ export default function NewLoanPage() {
                         onChange={handleChange}
                         className="w-full pl-10 pr-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-orange-500 font-black text-orange-500 transition-all text-center"
                         placeholder="เช่น 1, 2"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 🌟 ช่องกรอกลิงก์แชท (วงเดี่ยว) */}
+                  <div className="md:col-span-12">
+                    <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-blue-500 flex items-center gap-2">
+                      <MessageCircle className="w-4 h-4" /> ลิงก์แชทแอป
+                      Messenger (ไม่บังคับ)
+                    </label>
+                    <div className="relative mt-1">
+                      <Link2 className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-300" />
+                      <input
+                        name="chatLink"
+                        type="url"
+                        value={formData.chatLink}
+                        onChange={handleChange}
+                        className="w-full pl-12 pr-5 py-4 bg-blue-50/30 border border-blue-100 rounded-2xl outline-none focus:bg-white focus:border-blue-500 font-bold transition-all text-gray-700 text-sm"
+                        placeholder="วางลิงก์ เช่น https://www.facebook.com/messages/t/..."
                       />
                     </div>
                   </div>
@@ -1225,6 +1243,25 @@ export default function NewLoanPage() {
                       onChange={handleGroupConfigChange}
                       className="w-full pl-10 pr-5 py-4 bg-gray-50 border border-transparent rounded-2xl outline-none focus:bg-white focus:border-orange-500 font-black text-orange-500 transition-all text-center"
                       placeholder="เช่น 1"
+                    />
+                  </div>
+                </div>
+
+                {/* 🌟 ช่องกรอกลิงก์แชท (วงแชร์) */}
+                <div className="md:col-span-12">
+                  <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-blue-500 flex items-center gap-2">
+                    <MessageCircle className="w-4 h-4" /> ลิงก์แชทกลุ่ม
+                    Messenger (ไม่บังคับ)
+                  </label>
+                  <div className="relative mt-1">
+                    <Link2 className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-300" />
+                    <input
+                      name="chatLink"
+                      type="url"
+                      value={groupConfig.chatLink}
+                      onChange={handleGroupConfigChange}
+                      className="w-full pl-12 pr-5 py-4 bg-blue-50/30 border border-blue-100 rounded-2xl outline-none focus:bg-white focus:border-blue-500 font-bold transition-all text-gray-700 text-sm"
+                      placeholder="วางลิงก์แชทกลุ่ม เช่น https://www.facebook.com/messages/t/..."
                     />
                   </div>
                 </div>

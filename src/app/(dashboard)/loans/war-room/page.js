@@ -33,6 +33,8 @@ import {
   Settings2,
   Clock,
   Package,
+  MessageCircle, // 🌟 นำเข้าไอคอนแชท
+  Link2, // 🌟 นำเข้าไอคอนลิงก์
 } from "lucide-react";
 
 // --- รายชื่อธนาคารสำหรับเลือกตอนแก้ไข ---
@@ -223,7 +225,7 @@ export default function WarRoomPage() {
               ? (d.currentInstallment / d.totalInstallments) * 100
               : 0;
           const rawNum = String(d.loanNumber || "999999").trim();
-          const groupKey = rawNum.toUpperCase(); // จัดกลุ่มด้วยอักษรเป๊ะๆ ไม่ใช้ parseInt แล้ว
+          const groupKey = rawNum.toUpperCase();
 
           if (!groupedLoans[groupKey]) {
             groupedLoans[groupKey] = [];
@@ -264,6 +266,7 @@ export default function WarRoomPage() {
               bankColor: baseLoan.bankColor,
               status: "active",
               originalLoans: activeLoans,
+              chatLink: baseLoan.chatLink || "", // 🌟 ดึงข้อมูล chatLink
               ...(activeLoans.length === 1
                 ? baseLoan
                 : {
@@ -340,6 +343,38 @@ export default function WarRoomPage() {
       );
     } else {
       setSelectedLoan(loan);
+    }
+  };
+
+  // 🌟 ฟังก์ชัน: เพิ่มและเซฟลิงก์แชทเข้า Firebase
+  const handleAddChatLink = async (loanIdOrArray, isGroup = false) => {
+    const newLink = window.prompt(
+      "🔗 กรุณาวางลิงก์แชท Messenger (เช่น https://www.facebook.com/messages/t/...):",
+    );
+
+    if (!newLink) return;
+
+    try {
+      const batch = writeBatch(db);
+
+      if (isGroup && Array.isArray(loanIdOrArray)) {
+        // ถ้าเป็นกลุ่ม ให้อัปเดต chatLink ให้ทุกคนในกลุ่มเหมือนกัน
+        loanIdOrArray.forEach((member) => {
+          const loanRef = doc(db, "loans", member.id);
+          batch.update(loanRef, { chatLink: newLink });
+        });
+      } else {
+        // ถ้าเป็นวงเดี่ยว อัปเดตแค่วงเดียว
+        const loanRef = doc(db, "loans", loanIdOrArray);
+        batch.update(loanRef, { chatLink: newLink });
+      }
+
+      await batch.commit();
+      alert("✅ เพิ่มลิงก์แชทเรียบร้อยแล้วครับบอส!");
+      // UI จะรีเฟรชเองเพราะใช้ onSnapshot
+    } catch (error) {
+      console.error("Error updating chat link:", error);
+      alert("❌ เกิดข้อผิดพลาดในการบันทึกลิงก์");
     }
   };
 
@@ -464,17 +499,45 @@ export default function WarRoomPage() {
                       </div>
                     </div>
 
-                    <div className="md:col-span-5 flex items-center justify-between md:justify-end gap-5">
-                      <div className="text-right">
+                    <div className="md:col-span-5 flex items-center justify-between md:justify-end gap-3 md:gap-4">
+                      <div className="text-right mr-2 md:mr-4">
                         <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest mb-0.5">
                           {loan.isGroup
                             ? "ยอดคงเหลือรวม"
                             : "คงเหลือที่ต้องเก็บ"}
                         </p>
-                        <p className="text-2xl font-black text-gray-800 tracking-tighter">
+                        <p className="text-xl md:text-2xl font-black text-gray-800 tracking-tighter">
                           ฿{(loan.remainingBalance || 0).toLocaleString()}
                         </p>
                       </div>
+
+                      {/* 🌟 ปุ่มแชท Messenger (วงเดี่ยว หรือ วงกลุ่มใหญ่) */}
+                      {loan.chatLink ? (
+                        <a
+                          href={loan.chatLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()} // ป้องกันการ์ดขยายเวลาคลิกปุ่ม
+                          className="w-10 h-10 shrink-0 bg-blue-50 text-blue-500 hover:bg-blue-600 hover:text-white rounded-xl flex items-center justify-center transition-all shadow-sm border border-blue-100"
+                          title="เปิดแชท Messenger"
+                        >
+                          <MessageCircle className="w-5 h-5" />
+                        </a>
+                      ) : (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAddChatLink(
+                              loan.isGroup ? loan.originalLoans : loan.id,
+                              loan.isGroup,
+                            );
+                          }}
+                          className="w-10 h-10 shrink-0 bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl flex items-center justify-center transition-all shadow-sm border border-rose-100"
+                          title="ยังไม่มีลิงก์แชท (คลิกเพื่อเพิ่ม)"
+                        >
+                          <Link2 className="w-5 h-5" />
+                        </button>
+                      )}
 
                       {/* 🌟 ปุ่มแก้ไขสัญญา */}
                       <button
@@ -482,7 +545,7 @@ export default function WarRoomPage() {
                           e.stopPropagation();
                           setEditingLoan(loan);
                         }}
-                        className="w-10 h-10 shrink-0 bg-blue-50 text-blue-500 hover:bg-blue-500 hover:text-white rounded-xl flex items-center justify-center transition-all shadow-sm border border-blue-100"
+                        className="w-10 h-10 shrink-0 bg-gray-50 text-gray-500 hover:bg-gray-800 hover:text-white rounded-xl flex items-center justify-center transition-all shadow-sm border border-gray-200"
                         title={
                           loan.isGroup
                             ? "แก้ไขรายละเอียดทั้งกลุ่ม (ทุกคน)"
@@ -528,18 +591,44 @@ export default function WarRoomPage() {
                               ฿{(member.remainingBalance || 0).toLocaleString()}
                             </p>
                           </div>
-                          <div className="flex gap-2 shrink-0">
+
+                          <div className="flex gap-2 shrink-0 items-center">
+                            {/* 🌟 ปุ่มแชท (แยกลูกวงแต่ละคน) */}
+                            {member.chatLink ? (
+                              <a
+                                href={member.chatLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="w-8 h-8 bg-blue-50 text-blue-500 hover:bg-blue-600 hover:text-white rounded-lg flex items-center justify-center transition-all"
+                                title="เปิดแชทส่วนตัวคนนี้"
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                              </a>
+                            ) : (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleAddChatLink(member.id, false);
+                                }}
+                                className="w-8 h-8 bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white rounded-lg flex items-center justify-center transition-all"
+                                title="เพิ่มลิงก์แชท"
+                              >
+                                <Link2 className="w-4 h-4" />
+                              </button>
+                            )}
+
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setEditingLoan(member);
                               }}
-                              className="w-8 h-8 bg-blue-50 text-blue-500 hover:bg-blue-500 hover:text-white rounded-lg flex items-center justify-center transition-all"
+                              className="w-8 h-8 bg-gray-50 text-gray-500 hover:bg-gray-800 hover:text-white rounded-lg flex items-center justify-center transition-all border border-gray-200"
                               title="แก้ไขรายละเอียดเฉพาะคนนี้"
                             >
                               <Edit3 className="w-4 h-4" />
                             </button>
-                            <div className="w-8 h-8 flex items-center justify-center text-gray-300 group-hover/member:text-orange-400">
+                            <div className="w-6 h-6 flex items-center justify-center text-gray-300 group-hover/member:text-orange-400">
                               <ChevronRight className="w-4 h-4" />
                             </div>
                           </div>
@@ -598,6 +687,7 @@ function EditLoanModal({ loan, onClose }) {
     frequency: loan.frequency || 1,
     type: loan.frequencyType || "day",
     category: loan.category || "normal",
+    chatLink: loan.chatLink || "", // 🌟 เพิ่มมารับค่า
   });
 
   const handleFormChange = (e) => {
@@ -695,6 +785,7 @@ function EditLoanModal({ loan, onClose }) {
           frequency: formData.frequency,
           frequencyType: formData.type,
           category: formData.category,
+          chatLink: formData.chatLink, // 🌟 เซฟทับไปด้วยตอนแก้ไข
         });
       }
 
@@ -768,6 +859,21 @@ function EditLoanModal({ loan, onClose }) {
                 className="w-full mt-1 px-4 py-3 bg-gray-50 border rounded-xl font-black placeholder:text-gray-400 placeholder:font-bold text-gray-700"
               />
             </div>
+          </div>
+
+          {/* 🌟 ช่องแก้ไขลิงก์แชทใน Modal */}
+          <div>
+            <label className="text-[10px] font-black uppercase text-blue-400 ml-1 flex items-center gap-1">
+              <MessageCircle className="w-3 h-3" /> ลิงก์แชท Messenger
+            </label>
+            <input
+              name="chatLink"
+              type="url"
+              value={formData.chatLink}
+              onChange={handleFormChange}
+              placeholder="https://www.facebook.com/messages/t/..."
+              className="w-full mt-1 px-4 py-3 bg-blue-50/30 border border-blue-100 rounded-xl font-bold placeholder:text-gray-400 text-gray-700 text-sm"
+            />
           </div>
 
           <div>
