@@ -36,9 +36,11 @@ import {
   Calculator,
   Check,
   Coins,
-  Search, // 🌟 นำเข้า Icon Search
-  Archive, // 🌟 นำเข้า Icon Archive สำหรับปิดวง
+  Search,
+  Archive,
   ChevronRight,
+  UserCheck,
+  RefreshCcw,
 } from "lucide-react";
 
 // ==========================================
@@ -190,13 +192,22 @@ const ADMIN_BANK_ACCOUNTS = RAW_BANK_ACCOUNTS.map((b, idx) => ({
 
 export default function SharesDashboardPage() {
   const [shares, setShares] = useState([]);
-  const [searchTerm, setSearchTerm] = useState(""); // 🌟 State สำหรับการค้นหา
+  const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
+
+  const [customersList, setCustomersList] = useState([]); // เก็บรายชื่อลูกค้าทั้งหมด
 
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [editingShare, setEditingShare] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isBankDropdownOpen, setIsBankDropdownOpen] = useState(false);
+
+  // 🌟 State สำหรับการเปลี่ยนตัวลูกแชร์แบบใหม่
+  const [editingShareHands, setEditingShareHands] = useState([]);
+  const [originalShareHands, setOriginalShareHands] = useState([]);
+  const [isFetchingHandsEdit, setIsFetchingHandsEdit] = useState(false);
+  const [swapHandId, setSwapHandId] = useState(null);
+  const [customerSearch, setCustomerSearch] = useState("");
 
   // State สำหรับระบบโปะปิดวง
   const [payoffModalOpen, setPayoffModalOpen] = useState(false);
@@ -214,6 +225,15 @@ export default function SharesDashboardPage() {
   const [isFetchingHands, setIsFetchingHands] = useState(false);
 
   const menuRef = useRef();
+
+  // โหลดรายชื่อลูกค้าทั้งหมดมาเก็บไว้ก่อน
+  useEffect(() => {
+    const fetchCustomers = async () => {
+      const snap = await getDocs(collection(db, "customers"));
+      setCustomersList(snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+    };
+    fetchCustomers();
+  }, []);
 
   useEffect(() => {
     const q = query(collection(db, "shares"), orderBy("createdAt", "desc"));
@@ -246,10 +266,10 @@ export default function SharesDashboardPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // 🌟 ฟังก์ชัน ปิดวงแชร์ (ย้ายไปประวัติ + เคลียร์ยอดค้างให้เขียวหมด)
-  const handleCloseShare = async (shareId, shareName) => {
+  // ฟังก์ชัน ปิดวงแชร์ (ย้ายไปประวัติ + เคลียร์ยอดค้างให้เขียวหมด)
+  const handleCloseShare = async (share) => {
     setActiveMenuId(null);
-    const confirmMsg = `ยืนยันการปิดวงแชร์ "${shareName}" ใช่หรือไม่?\n\n*วงแชร์จะถูกย้ายไปที่ "ประวัติ" และระบบจะทำการปรับสถานะลูกแชร์และยอดค้างชำระทั้งหมดในวงนี้ให้เป็น "จ่ายแล้ว (สีเขียว)" อัตโนมัติ`;
+    const confirmMsg = `ยืนยันการปิดวงแชร์ "${share.name}" ใช่หรือไม่?\n\n*วงแชร์จะถูกย้ายไปที่ "ประวัติ" และระบบจะดันตัวเลขงวดให้เต็ม พร้อมเคลียร์ยอดค้างทั้งหมดเป็นสีเขียวอัตโนมัติ`;
     if (!window.confirm(confirmMsg)) return;
 
     setIsProcessing(true);
@@ -257,30 +277,34 @@ export default function SharesDashboardPage() {
       const batch = writeBatch(db);
       const now = new Date().toISOString();
 
-      // 1. อัปเดตตารางวงแชร์แม่ (shares) เป็น completed
-      const shareRef = doc(db, "shares", shareId);
+      const shareRef = doc(db, "shares", share.id);
       batch.update(shareRef, {
         status: "completed",
         closedAt: now,
+        currentPeriod: share.totalHands,
       });
 
-      // 2. ดึงลูกแชร์ (share_hands) ทั้งหมดในวงนี้ มาปรับสถานะเป็น closed
       const handsQuery = query(
         collection(db, "share_hands"),
-        where("shareId", "==", shareId),
+        where("shareId", "==", share.id),
       );
       const handsSnap = await getDocs(handsQuery);
+
+      const fullAmountToPay = share.totalHands * share.installmentAmount;
+
       handsSnap.forEach((handDoc) => {
         batch.update(handDoc.ref, {
           status: "closed",
           closedAt: now,
+          totalPaid: fullAmountToPay,
           updatedAt: serverTimestamp(),
         });
       });
+
       const schedulesQuery = query(
         collection(db, "schedules"),
-        where("shareId", "==", shareId),
-        where("status", "==", "pending"), // เอาเฉพาะที่ยังไม่จ่าย
+        where("shareId", "==", share.id),
+        where("status", "==", "pending"),
       );
       const schedulesSnap = await getDocs(schedulesQuery);
       schedulesSnap.forEach((scheduleDoc) => {
@@ -291,9 +315,8 @@ export default function SharesDashboardPage() {
         });
       });
 
-      // สั่งทำงานพร้อมกันทีเดียว!
       await batch.commit();
-      alert("✅ ปิดวงแชร์และเคลียร์ยอดทั้งหมดเป็นสีเขียวเรียบร้อยแล้วครับ!");
+      alert("✅ ปิดวงแชร์ ดันงวด และเคลียร์ยอดทั้งหมดสมบูรณ์เรียบร้อยครับ!");
     } catch (error) {
       console.error("Error closing share:", error);
       alert("❌ เกิดข้อผิดพลาดในการปิดวงแชร์");
@@ -341,8 +364,10 @@ export default function SharesDashboardPage() {
 
     setIsProcessing(true);
     try {
+      const batch = writeBatch(db);
+
       const shareRef = doc(db, "shares", editingShare.id);
-      await updateDoc(shareRef, {
+      batch.update(shareRef, {
         name: editingShare.name.trim(),
         installmentAmount: Number(editingShare.installmentAmount),
         poolAmount: Number(editingShare.poolAmount),
@@ -356,7 +381,6 @@ export default function SharesDashboardPage() {
       });
 
       if (editingShare.originalName !== editingShare.name.trim()) {
-        const batch = writeBatch(db);
         const handsQuery = query(
           collection(db, "share_hands"),
           where("shareId", "==", editingShare.id),
@@ -365,9 +389,38 @@ export default function SharesDashboardPage() {
         handsSnap.forEach((handDoc) => {
           batch.update(handDoc.ref, { shareName: editingShare.name.trim() });
         });
-        await batch.commit();
       }
 
+      // 🌟 อัปเดตกรณีมีการสลับตัวผู้เล่น (เปลี่ยนลูกแชร์)
+      for (const hand of editingShareHands) {
+        const orig = originalShareHands.find((h) => h.id === hand.id);
+        if (orig && orig.customerId !== hand.customerId) {
+          const handRef = doc(db, "share_hands", hand.id);
+          batch.update(handRef, {
+            customerId: hand.customerId,
+            customerName: hand.customerName,
+            updatedAt: serverTimestamp(),
+          });
+
+          // ตามไปอัปเดตชื่อลูกค้าในตารางค่างวด (schedules)
+          const schQuery = query(
+            collection(db, "schedules"),
+            where("shareId", "==", editingShare.id),
+            where("handId", "==", hand.id),
+          );
+          const schSnap = await getDocs(schQuery);
+          schSnap.forEach((schDoc) => {
+            batch.update(schDoc.ref, {
+              customerId: hand.customerId,
+              customerName: hand.customerName,
+              updatedAt: serverTimestamp(),
+            });
+          });
+        }
+      }
+
+      await batch.commit();
+      alert("✅ บันทึกการแก้ไข (และอัปเดตข้อมูลลูกค้า) สำเร็จ!");
       setEditingShare(null);
     } catch (error) {
       console.error("Error updating share:", error);
@@ -377,9 +430,11 @@ export default function SharesDashboardPage() {
     }
   };
 
-  const openEditModal = (share) => {
+  const openEditModal = async (share) => {
     setActiveMenuId(null);
     setIsBankDropdownOpen(false);
+    setSwapHandId(null);
+    setCustomerSearch("");
     setEditingShare({
       id: share.id,
       name: share.name,
@@ -395,6 +450,25 @@ export default function SharesDashboardPage() {
       bankName: share.bankName || "",
       bankAccountNo: share.bankAccountNo || "",
     });
+
+    setIsFetchingHandsEdit(true);
+    try {
+      const handsQ = query(
+        collection(db, "share_hands"),
+        where("shareId", "==", share.id),
+      );
+      const handsSnap = await getDocs(handsQ);
+      const handsData = handsSnap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => a.handNumber - b.handNumber);
+
+      setEditingShareHands(handsData);
+      setOriginalShareHands(JSON.parse(JSON.stringify(handsData)));
+    } catch (error) {
+      console.error("Error fetching hands for edit:", error);
+    } finally {
+      setIsFetchingHandsEdit(false);
+    }
   };
 
   const handleSelectBank = (bank) => {
@@ -490,7 +564,6 @@ export default function SharesDashboardPage() {
     );
   }
 
-  // 🌟 จัดการค้นหา
   const filteredShares = shares.filter((share) =>
     share.name.toLowerCase().includes(searchTerm.toLowerCase()),
   );
@@ -595,7 +668,6 @@ export default function SharesDashboardPage() {
         </div>
       </div>
 
-      {/* 🌟 SEARCH BAR --- */}
       <div className="bg-white p-2 rounded-[1.2rem] shadow-sm border border-gray-200 flex items-center">
         <div className="relative w-full text-gray-400 focus-within:text-blue-600 transition-colors">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5" />
@@ -644,7 +716,6 @@ export default function SharesDashboardPage() {
                     <MoreVertical className="w-5 h-5" />
                   </button>
 
-                  {/* 🌟 เมนู Dropdown */}
                   {activeMenuId === share.id && (
                     <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-100 shadow-2xl rounded-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
                       <button
@@ -661,9 +732,8 @@ export default function SharesDashboardPage() {
                         <Edit2 className="w-4 h-4" /> แก้ไขข้อมูลวง
                       </button>
 
-                      {/* 🌟 ปุ่มปิดวงแชร์ */}
                       <button
-                        onClick={() => handleCloseShare(share.id, share.name)}
+                        onClick={() => handleCloseShare(share)}
                         className="w-full text-left px-5 py-4 text-sm font-bold text-amber-600 hover:bg-amber-50 flex items-center gap-3 border-b border-gray-50 transition-colors"
                       >
                         <Archive className="w-4 h-4" /> ปิดวงแชร์
@@ -809,7 +879,6 @@ export default function SharesDashboardPage() {
             </div>
 
             <div className="p-5 sm:p-6 space-y-6">
-              {/* 1. ปุ่มเรียกหน้าต่างเลือกมือแชร์ (Nested Modal Trigger) */}
               <div>
                 <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest block mb-2">
                   เลือกมือแชร์ที่ต้องการโปะปิดวง
@@ -867,7 +936,6 @@ export default function SharesDashboardPage() {
                 )}
               </div>
 
-              {/* 2. พรีวิวยอดที่ต้องจ่าย (รวมทุกมือที่เลือก) */}
               {selectedHandIds.length > 0 && (
                 <div className="bg-orange-50 p-5 rounded-2xl border border-orange-100 animate-in fade-in duration-300">
                   <div className="flex justify-between items-center mb-1">
@@ -884,7 +952,6 @@ export default function SharesDashboardPage() {
                 </div>
               )}
 
-              {/* 3. เลือกวันที่รับเงิน */}
               <div>
                 <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest block mb-2">
                   ระบุวันที่รับเงิน (เพื่อบันทึกประวัติ)
@@ -986,8 +1053,6 @@ export default function SharesDashboardPage() {
                             : "มือตาย (เปียแล้ว)"}
                         </p>
                       </div>
-
-                      {/* Checkbox Icon */}
                       <div
                         className={`w-6 h-6 rounded-full flex items-center justify-center border-2 transition-all ${isSelected ? "border-emerald-500 bg-emerald-500 text-white" : "border-gray-300 bg-transparent"}`}
                       >
@@ -1034,7 +1099,6 @@ export default function SharesDashboardPage() {
               </button>
             </div>
 
-            {/* 🌟 เนื้อหาภายใน Modal (เลื่อนลงได้) */}
             <div className="p-6 overflow-y-auto custom-scrollbar space-y-6">
               {/* ชื่อวง & จำนวนมือ */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1124,7 +1188,6 @@ export default function SharesDashboardPage() {
                   />
                 </div>
 
-                {/* พรีวิวกำไรอัตโนมัติ */}
                 <div className="md:col-span-2 pt-3 border-t border-blue-100 flex justify-between items-center">
                   <span className="text-xs font-bold text-gray-500 flex items-center gap-1">
                     <Calculator className="w-3.5 h-3.5" /> สรุปกำไรท้าวแชร์:
@@ -1272,6 +1335,143 @@ export default function SharesDashboardPage() {
                   )}
                 </div>
               </div>
+
+              {/* 🌟 อัปเกรด: ส่วนสำหรับแก้รายชื่อลูกแชร์ (UI แบบการ์ดสลับตัว) */}
+              <div className="pt-6 border-t border-gray-100">
+                <div className="flex justify-between items-center mb-4">
+                  <h4 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                    <UserCheck className="w-5 h-5 text-blue-500" />{" "}
+                    จัดการสลับตัวลูกแชร์
+                  </h4>
+                  <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-md">
+                    ทั้งหมด {editingShareHands.length} มือ
+                  </span>
+                </div>
+
+                {isFetchingHandsEdit ? (
+                  <div className="flex items-center gap-2 text-sm font-bold text-gray-400 p-4 bg-gray-50 rounded-xl">
+                    <Loader2 className="w-4 h-4 animate-spin" />{" "}
+                    กำลังดึงรายชื่อลูกแชร์...
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {editingShareHands.map((hand, idx) => {
+                      const isSwapping = swapHandId === hand.id;
+
+                      return (
+                        <div
+                          key={hand.id}
+                          className={`flex flex-col bg-white border ${isSwapping ? "border-orange-500 ring-2 ring-orange-50" : "border-gray-200 hover:border-blue-200"} p-3.5 rounded-xl shadow-sm transition-all`}
+                        >
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-3">
+                              <div
+                                className={`w-10 h-10 rounded-lg flex items-center justify-center font-black text-sm shrink-0 ${hand.handNumber === 1 ? "bg-amber-100 text-amber-600" : "bg-blue-50 text-blue-600"}`}
+                              >
+                                {hand.handNumber}
+                              </div>
+                              <div>
+                                <p className="text-[9px] font-black uppercase text-gray-400 tracking-widest mb-0.5">
+                                  {hand.handNumber === 1
+                                    ? "ท้าวแชร์ (มือแรก)"
+                                    : "ชื่อลูกแชร์"}
+                                </p>
+                                <p className="font-bold text-sm text-gray-800 line-clamp-1">
+                                  {hand.customerName || (
+                                    <span className="text-red-400">
+                                      ยังไม่ระบุ
+                                    </span>
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+
+                            <button
+                              onClick={() => {
+                                if (isSwapping) {
+                                  setSwapHandId(null);
+                                  setCustomerSearch("");
+                                } else {
+                                  setSwapHandId(hand.id);
+                                  setCustomerSearch("");
+                                }
+                              }}
+                              className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1 ${isSwapping ? "bg-gray-100 text-gray-500" : "bg-orange-50 text-orange-600 hover:bg-orange-500 hover:text-white"}`}
+                            >
+                              <RefreshCcw className="w-3 h-3" />{" "}
+                              {isSwapping ? "ยกเลิก" : "สลับตัว"}
+                            </button>
+                          </div>
+
+                          {/* 🌟 หน้าต่างค้นหาลูกค้า (จะโชว์เมื่อกดปุ่มสลับตัว) */}
+                          {isSwapping && (
+                            <div className="mt-3 pt-3 border-t border-gray-100 animate-in fade-in zoom-in-95 duration-200">
+                              <div className="relative mb-2">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                                <input
+                                  type="text"
+                                  autoFocus
+                                  placeholder="พิมพ์ค้นหาชื่อเล่น หรือ ชื่อจริง..."
+                                  value={customerSearch}
+                                  onChange={(e) =>
+                                    setCustomerSearch(e.target.value)
+                                  }
+                                  className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold text-gray-700 outline-none focus:border-orange-500 focus:bg-white transition-colors"
+                                />
+                              </div>
+                              <div className="max-h-36 overflow-y-auto custom-scrollbar border border-gray-100 rounded-lg bg-white">
+                                {customersList
+                                  .filter((c) =>
+                                    (c.name + c.nickname)
+                                      .toLowerCase()
+                                      .includes(customerSearch.toLowerCase()),
+                                  )
+                                  .map((c) => (
+                                    <div
+                                      key={c.id}
+                                      onClick={() => {
+                                        const newHands = [...editingShareHands];
+                                        newHands[idx] = {
+                                          ...newHands[idx],
+                                          customerId: c.id,
+                                          customerName: c.nickname
+                                            ? `${c.nickname} (${c.name})`
+                                            : c.name,
+                                        };
+                                        setEditingShareHands(newHands);
+                                        setSwapHandId(null);
+                                        setCustomerSearch("");
+                                      }}
+                                      className="px-3 py-2.5 hover:bg-orange-50 border-b border-gray-50 last:border-0 cursor-pointer text-xs font-bold text-gray-600 hover:text-orange-700 transition-colors flex items-center justify-between group"
+                                    >
+                                      <span>
+                                        {c.nickname
+                                          ? `${c.nickname} (${c.name})`
+                                          : c.name}
+                                      </span>
+                                      <span className="text-[9px] text-orange-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        เลือกคนนี้
+                                      </span>
+                                    </div>
+                                  ))}
+                                {customersList.filter((c) =>
+                                  (c.name + c.nickname)
+                                    .toLowerCase()
+                                    .includes(customerSearch.toLowerCase()),
+                                ).length === 0 && (
+                                  <div className="p-3 text-center text-xs text-gray-400 font-bold">
+                                    ไม่พบรายชื่อลูกค้านี้
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="p-4 bg-gray-50 border-t border-gray-100 flex gap-3 rounded-b-[2rem] shrink-0">
@@ -1283,9 +1483,15 @@ export default function SharesDashboardPage() {
               </button>
               <button
                 onClick={handleSaveEdit}
-                className="flex-1 bg-blue-600 text-white px-4 py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-blue-700 shadow-md transition-colors"
+                disabled={isProcessing}
+                className="flex-[2] bg-blue-600 text-white px-4 py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-blue-700 shadow-md transition-colors disabled:opacity-50"
               >
-                <Save className="w-5 h-5" /> บันทึกการแก้ไข
+                {isProcessing ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Save className="w-5 h-5" />
+                )}{" "}
+                บันทึกการแก้ไข
               </button>
             </div>
           </div>
