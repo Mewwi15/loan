@@ -246,22 +246,57 @@ export default function SharesDashboardPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // 🌟 ฟังก์ชัน ปิดวงแชร์ (ย้ายไปประวัติ)
+  // 🌟 ฟังก์ชัน ปิดวงแชร์ (ย้ายไปประวัติ + เคลียร์ยอดค้างให้เขียวหมด)
   const handleCloseShare = async (shareId, shareName) => {
     setActiveMenuId(null);
-    const confirmMsg = `ยืนยันการปิดวงแชร์ "${shareName}" ใช่หรือไม่?\n\n*วงแชร์จะถูกย้ายไปที่ "ประวัติวงแชร์ที่จบแล้ว" และไม่สามารถทำรายการค่างวดต่อได้`;
+    const confirmMsg = `ยืนยันการปิดวงแชร์ "${shareName}" ใช่หรือไม่?\n\n*วงแชร์จะถูกย้ายไปที่ "ประวัติ" และระบบจะทำการปรับสถานะลูกแชร์และยอดค้างชำระทั้งหมดในวงนี้ให้เป็น "จ่ายแล้ว (สีเขียว)" อัตโนมัติ`;
     if (!window.confirm(confirmMsg)) return;
 
     setIsProcessing(true);
     try {
-      await updateDoc(doc(db, "shares", shareId), {
+      const batch = writeBatch(db);
+      const now = new Date().toISOString();
+
+      // 1. อัปเดตตารางวงแชร์แม่ (shares) เป็น completed
+      const shareRef = doc(db, "shares", shareId);
+      batch.update(shareRef, {
         status: "completed",
-        closedAt: new Date().toISOString(),
+        closedAt: now,
       });
-      alert("✅ ปิดวงแชร์และย้ายไปประวัติเรียบร้อยแล้ว");
+
+      // 2. ดึงลูกแชร์ (share_hands) ทั้งหมดในวงนี้ มาปรับสถานะเป็น closed
+      const handsQuery = query(
+        collection(db, "share_hands"),
+        where("shareId", "==", shareId),
+      );
+      const handsSnap = await getDocs(handsQuery);
+      handsSnap.forEach((handDoc) => {
+        batch.update(handDoc.ref, {
+          status: "closed",
+          closedAt: now,
+          updatedAt: serverTimestamp(),
+        });
+      });
+      const schedulesQuery = query(
+        collection(db, "schedules"),
+        where("shareId", "==", shareId),
+        where("status", "==", "pending"), // เอาเฉพาะที่ยังไม่จ่าย
+      );
+      const schedulesSnap = await getDocs(schedulesQuery);
+      schedulesSnap.forEach((scheduleDoc) => {
+        batch.update(scheduleDoc.ref, {
+          status: "paid",
+          paidAt: now,
+          updatedAt: serverTimestamp(),
+        });
+      });
+
+      // สั่งทำงานพร้อมกันทีเดียว!
+      await batch.commit();
+      alert("✅ ปิดวงแชร์และเคลียร์ยอดทั้งหมดเป็นสีเขียวเรียบร้อยแล้วครับ!");
     } catch (error) {
       console.error("Error closing share:", error);
-      alert("เกิดข้อผิดพลาดในการปิดวงแชร์");
+      alert("❌ เกิดข้อผิดพลาดในการปิดวงแชร์");
     } finally {
       setIsProcessing(false);
     }
