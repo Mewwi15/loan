@@ -4,12 +4,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc, arrayUnion } from "firebase/firestore";
-// 🌟 นำเข้า Firebase Authentication
+// 🌟 นำเข้า onAuthStateChanged เพิ่มเติมเพื่อตรวจสอบสถานะล็อกอินตัวจริง
 import {
   getAuth,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
+  onAuthStateChanged,
 } from "firebase/auth";
 import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
@@ -22,7 +23,7 @@ import {
   CheckCircle2,
   QrCode,
   MonitorCheck,
-  Mail, // 🌟 นำเข้าไอคอน Mail
+  Mail,
 } from "lucide-react";
 
 export default function AuthGuard({ children }) {
@@ -32,7 +33,7 @@ export default function AuthGuard({ children }) {
   const [error, setError] = useState("");
 
   const [step, setStep] = useState("password");
-  const [email, setEmail] = useState(""); // 🌟 เพิ่ม State สำหรับเก็บอีเมล
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [rememberDevice, setRememberDevice] = useState(true);
@@ -52,7 +53,6 @@ export default function AuthGuard({ children }) {
     setPassword("");
     setOtp("");
 
-    // 🌟 สั่ง Logout ออกจาก Firebase Auth ด้วย
     const auth = getAuth();
     signOut(auth).then(() => {
       if (typeof window !== "undefined") {
@@ -71,7 +71,7 @@ export default function AuthGuard({ children }) {
       if (now - parseInt(loginTime) > SESSION_TIMEOUT) {
         handleLogout();
       } else {
-        setIsAuth(true);
+        setIsAuth(true); // อนุญาตให้เข้าแผงควบคุม
         if (deviceToken) {
           try {
             const docRef = doc(db, "settings", "auth");
@@ -94,12 +94,30 @@ export default function AuthGuard({ children }) {
         }
       }
     }
+    // 🌟 พระเอกอยู่ตรงนี้ครับ! ผมเอา else { handleLogout() } ออกไป
+    // เพื่อให้ระบบ "รอ" บอสกรอก OTP ก่อน ไม่ใจร้อนเตะออกแล้วครับ!
     setLoading(false);
   }, [handleLogout, SESSION_TIMEOUT]);
 
+  // 🌟 จุดสำคัญที่แก้ไข! บังคับให้คุยกับ Firebase ก่อนปล่อยผ่าน
   useEffect(() => {
-    checkSession();
-  }, [checkSession]);
+    const auth = getAuth();
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        // ถ้า Firebase คอนเฟิร์มว่าล็อกอินแล้ว ค่อยเช็ค Session ย่อยของเราต่อ
+        checkSession();
+      } else {
+        // ถ้า Firebase บอกว่ายังไม่ล็อกอิน แต่หน้าเว็บจำว่าล็อกอินแล้ว = ผิดปกติ! ให้เตะออกไปหน้าล็อกอิน
+        if (localStorage.getItem("isLoggedIn") === "true") {
+          handleLogout();
+        } else {
+          setLoading(false);
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, [checkSession, handleLogout]);
 
   const handlePasswordSubmit = async (e) => {
     e.preventDefault();
@@ -109,11 +127,9 @@ export default function AuthGuard({ children }) {
     const auth = getAuth();
 
     try {
-      // 🌟 1. พยายาม Login ผ่าน Firebase Auth ด้วยอีเมลและรหัสผ่านจริง
       try {
         await signInWithEmailAndPassword(auth, email, password);
       } catch (loginError) {
-        // 🌟 2. ถ้าผู้ใช้ยังไม่มี (รันครั้งแรก) ให้ระบบแอบสร้างบัญชีอัตโนมัติ
         try {
           await createUserWithEmailAndPassword(auth, email, password);
         } catch (createError) {
@@ -131,7 +147,6 @@ export default function AuthGuard({ children }) {
         }
       }
 
-      // 🌟 3. พอ Login สำเร็จ ถึงจะมีสิทธิ์ไปดึงข้อมูลตั้งค่า 2FA
       const docRef = doc(db, "settings", "auth");
       const docSnap = await getDoc(docRef);
 
@@ -154,11 +169,10 @@ export default function AuthGuard({ children }) {
           setStep("otp");
         }
       } else {
-        // ถ้าเพิ่งใช้งานครั้งแรก สร้าง 2FA QR Code ใหม่
         const newSecret = new OTPAuth.Secret({ size: 20 });
         const totp = new OTPAuth.TOTP({
           issuer: "ระบบจัดการแชร์",
-          label: email, // ใช้อีเมลเป็น Label ในแอป Authenticator
+          label: email,
           algorithm: "SHA1",
           digits: 6,
           period: 30,
@@ -299,7 +313,6 @@ export default function AuthGuard({ children }) {
               </div>
 
               <form onSubmit={handlePasswordSubmit} className="space-y-5">
-                {/* 🌟 ช่องกรอกอีเมล */}
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
                     Admin Email
