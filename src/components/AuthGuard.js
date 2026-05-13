@@ -3,7 +3,14 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { db } from "@/lib/firebase";
-import { doc, getDoc, updateDoc, arrayUnion } from "firebase/firestore";
+import { doc, getDoc, setDoc, arrayUnion } from "firebase/firestore";
+// 🌟 นำเข้า Firebase Authentication
+import {
+  getAuth,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+} from "firebase/auth";
 import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
 import {
@@ -15,6 +22,7 @@ import {
   CheckCircle2,
   QrCode,
   MonitorCheck,
+  Mail, // 🌟 นำเข้าไอคอน Mail
 } from "lucide-react";
 
 export default function AuthGuard({ children }) {
@@ -24,6 +32,7 @@ export default function AuthGuard({ children }) {
   const [error, setError] = useState("");
 
   const [step, setStep] = useState("password");
+  const [email, setEmail] = useState(""); // 🌟 เพิ่ม State สำหรับเก็บอีเมล
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [rememberDevice, setRememberDevice] = useState(true);
@@ -39,11 +48,17 @@ export default function AuthGuard({ children }) {
     localStorage.removeItem("loginTimestamp");
     setIsAuth(false);
     setStep("password");
+    setEmail("");
     setPassword("");
     setOtp("");
-    if (typeof window !== "undefined") {
-      window.location.reload();
-    }
+
+    // 🌟 สั่ง Logout ออกจาก Firebase Auth ด้วย
+    const auth = getAuth();
+    signOut(auth).then(() => {
+      if (typeof window !== "undefined") {
+        window.location.reload();
+      }
+    });
   }, []);
 
   const checkSession = useCallback(async () => {
@@ -63,7 +78,6 @@ export default function AuthGuard({ children }) {
             const docSnap = await getDoc(docRef);
             if (docSnap.exists()) {
               const trustedDevices = docSnap.data().trustedDevices || [];
-              // 🌟 ลอจิกใหม่ รองรับทั้งแบบเก่า (String) และแบบใหม่ (Object)
               const isTrusted = trustedDevices.some((d) =>
                 typeof d === "string"
                   ? d === deviceToken
@@ -92,50 +106,72 @@ export default function AuthGuard({ children }) {
     setIsChecking(true);
     setError("");
 
+    const auth = getAuth();
+
     try {
+      // 🌟 1. พยายาม Login ผ่าน Firebase Auth ด้วยอีเมลและรหัสผ่านจริง
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+      } catch (loginError) {
+        // 🌟 2. ถ้าผู้ใช้ยังไม่มี (รันครั้งแรก) ให้ระบบแอบสร้างบัญชีอัตโนมัติ
+        try {
+          await createUserWithEmailAndPassword(auth, email, password);
+        } catch (createError) {
+          if (createError.code === "auth/email-already-in-use") {
+            setError("อีเมลหรือรหัสผ่านไม่ถูกต้อง");
+          } else if (createError.code === "auth/invalid-email") {
+            setError("รูปแบบอีเมลไม่ถูกต้อง");
+          } else if (createError.code === "auth/weak-password") {
+            setError("รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร");
+          } else {
+            setError("ระบบขัดข้อง: ไม่สามารถเข้าสู่ระบบฐานข้อมูลได้");
+          }
+          setIsChecking(false);
+          return;
+        }
+      }
+
+      // 🌟 3. พอ Login สำเร็จ ถึงจะมีสิทธิ์ไปดึงข้อมูลตั้งค่า 2FA
       const docRef = doc(db, "settings", "auth");
       const docSnap = await getDoc(docRef);
 
+      let data = {};
       if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (password === data.password) {
-          setAuthData(data);
-          const localToken = localStorage.getItem("deviceToken");
+        data = docSnap.data();
+      }
 
-          if (data.totpSecret) {
-            const isTrusted = data.trustedDevices?.some((d) =>
-              typeof d === "string" ? d === localToken : d.token === localToken,
-            );
+      setAuthData(data);
+      const localToken = localStorage.getItem("deviceToken");
 
-            if (localToken && isTrusted) {
-              completeLogin();
-            } else {
-              setStep("otp");
-            }
-          } else {
-            const newSecret = new OTPAuth.Secret({ size: 20 });
-            const totp = new OTPAuth.TOTP({
-              issuer: "ระบบจัดการแชร์",
-              label: "Boss",
-              algorithm: "SHA1",
-              digits: 6,
-              period: 30,
-              secret: newSecret,
-            });
+      if (data.totpSecret) {
+        const isTrusted = data.trustedDevices?.some((d) =>
+          typeof d === "string" ? d === localToken : d.token === localToken,
+        );
 
-            const secretBase32 = newSecret.base32;
-            const uri = totp.toString();
-            const qr = await QRCode.toDataURL(uri);
-
-            setTempSecret(secretBase32);
-            setQrCodeUrl(qr);
-            setStep("setup");
-          }
+        if (localToken && isTrusted) {
+          completeLogin();
         } else {
-          setError("รหัสผ่านไม่ถูกต้อง");
+          setStep("otp");
         }
       } else {
-        setError("ไม่พบการตั้งค่าในระบบ กรุณาสร้างเอกสาร settings/auth");
+        // ถ้าเพิ่งใช้งานครั้งแรก สร้าง 2FA QR Code ใหม่
+        const newSecret = new OTPAuth.Secret({ size: 20 });
+        const totp = new OTPAuth.TOTP({
+          issuer: "ระบบจัดการแชร์",
+          label: email, // ใช้อีเมลเป็น Label ในแอป Authenticator
+          algorithm: "SHA1",
+          digits: 6,
+          period: 30,
+          secret: newSecret,
+        });
+
+        const secretBase32 = newSecret.base32;
+        const uri = totp.toString();
+        const qr = await QRCode.toDataURL(uri);
+
+        setTempSecret(secretBase32);
+        setQrCodeUrl(qr);
+        setStep("setup");
       }
     } catch (err) {
       console.error("Login Error:", err);
@@ -151,7 +187,7 @@ export default function AuthGuard({ children }) {
     setError("");
 
     try {
-      const secretToUse = tempSecret || authData.totpSecret;
+      const secretToUse = tempSecret || authData?.totpSecret;
       const totpVerify = new OTPAuth.TOTP({
         secret: OTPAuth.Secret.fromBase32(secretToUse),
         algorithm: "SHA1",
@@ -166,14 +202,13 @@ export default function AuthGuard({ children }) {
         const docRef = doc(db, "settings", "auth");
 
         if (tempSecret) {
-          await updateDoc(docRef, { totpSecret: tempSecret });
+          await setDoc(docRef, { totpSecret: tempSecret }, { merge: true });
         }
 
         if (rememberDevice) {
           const newToken = crypto.randomUUID();
           localStorage.setItem("deviceToken", newToken);
 
-          // 🌟 แอบดึงข้อมูลเครื่อง (Device Info) และที่อยู่ (IP Location)
           let deviceName = "Unknown Device";
           let locationStr = "ไม่ทราบตำแหน่ง";
           let ipStr = "";
@@ -186,7 +221,6 @@ export default function AuthGuard({ children }) {
               deviceName = "Apple Device (iOS)";
             else if (/Android/i.test(ua)) deviceName = "Android Device";
 
-            // ดึง IP และ จังหวัด
             const res = await fetch("https://ipapi.co/json/");
             if (res.ok) {
               const locData = await res.json();
@@ -199,7 +233,6 @@ export default function AuthGuard({ children }) {
             console.error("Failed to get device info", err);
           }
 
-          // 🌟 บันทึกเป็น Object ลงไปในฐานข้อมูล
           const deviceRecord = {
             token: newToken,
             device: deviceName,
@@ -208,9 +241,13 @@ export default function AuthGuard({ children }) {
             timestamp: new Date().toISOString(),
           };
 
-          await updateDoc(docRef, {
-            trustedDevices: arrayUnion(deviceRecord),
-          });
+          await setDoc(
+            docRef,
+            {
+              trustedDevices: arrayUnion(deviceRecord),
+            },
+            { merge: true },
+          );
         }
 
         completeLogin();
@@ -261,7 +298,25 @@ export default function AuthGuard({ children }) {
                 </p>
               </div>
 
-              <form onSubmit={handlePasswordSubmit} className="space-y-6">
+              <form onSubmit={handlePasswordSubmit} className="space-y-5">
+                {/* 🌟 ช่องกรอกอีเมล */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                    Admin Email
+                  </label>
+                  <div className="relative">
+                    <Mail className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-300" />
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full pl-14 pr-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:border-orange-500 focus:bg-white font-bold text-gray-800 transition-all"
+                      placeholder="admin@example.com"
+                      required
+                    />
+                  </div>
+                </div>
+
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
                     Master Password
@@ -286,8 +341,8 @@ export default function AuthGuard({ children }) {
                 )}
 
                 <button
-                  disabled={isChecking || !password}
-                  className="w-full bg-gray-900 hover:bg-black text-white py-4 sm:py-5 rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl shadow-gray-200 transition-all active:scale-95 disabled:opacity-50"
+                  disabled={isChecking || !password || !email}
+                  className="w-full bg-gray-900 hover:bg-black text-white py-4 sm:py-5 rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl shadow-gray-200 transition-all active:scale-95 disabled:opacity-50 mt-2"
                 >
                   {isChecking ? (
                     <Loader2 className="w-5 h-5 animate-spin mx-auto" />
