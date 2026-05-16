@@ -14,12 +14,12 @@ import {
 import {
   Calendar as CalendarIcon,
   Search,
-  PhoneCall,
   CheckCircle2,
   Clock,
-  Check,
   Loader2,
   AlertCircle,
+  MessageCircle,
+  Megaphone, // เปลี่ยนไอคอน Header ให้ดูเข้ากับการทวงถาม
 } from "lucide-react";
 
 export default function CollectionsPage() {
@@ -47,13 +47,13 @@ export default function CollectionsPage() {
         const loanRef = doc(db, "loans", scheduleData.loanId);
         const loanSnap = await getDoc(loanRef);
 
-        // เช็คด้วยว่าวงกู้หลักต้องไม่ถูก "ปิด" (status !== "closed")
         if (loanSnap.exists() && loanSnap.data().status !== "closed") {
           const loanData = loanSnap.data();
           list.push({
             id: docSnap.id,
             ...scheduleData,
             phone: loanData.customerPhone || "ไม่มีเบอร์โทร",
+            chatLink: loanData.chatLink || "",
             loanNumber: loanData.loanNumber || "-",
             loanName: loanData.loanName || loanData.customerName,
             bankColor: loanData.bankColor || "#cbd5e1",
@@ -126,101 +126,94 @@ export default function CollectionsPage() {
   ).length;
 
   return (
-    <div className="w-full pb-20 px-4 md:px-8 font-sans animate-in fade-in duration-500">
+    <div className="w-full pb-20 px-4 md:px-8 max-w-5xl mx-auto font-sans animate-in fade-in duration-500">
       {/* Header Section */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6 mb-8 pt-10">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-6 pt-8">
         <div>
-          <h1 className="text-2xl md:text-3xl font-black text-gray-800 tracking-tight flex items-center gap-3">
-            <PhoneCall className="w-7 h-7 text-orange-500" /> คิวติดตามทวงถาม
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <Megaphone className="w-6 h-6 text-orange-500" /> รายการติดตามทวงถาม
           </h1>
-          <p className="text-sm font-bold text-gray-400 mt-1 uppercase tracking-widest">
-            Daily Follow-up List
+          <p className="text-sm font-medium text-gray-500 mt-1">
+            เช็คยอดและติดตามลูกค้าประจำวัน
           </p>
         </div>
 
-        <div className="bg-white p-1.5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-3 px-4 font-black text-gray-700 w-full lg:w-auto">
-          <CalendarIcon className="w-5 h-5 text-orange-500 shrink-0" />
+        <div className="bg-white p-2 rounded-xl shadow-sm border border-gray-200 flex items-center gap-2 w-full md:w-auto">
+          <CalendarIcon className="w-5 h-5 text-orange-500 ml-2 shrink-0" />
           <input
             type="date"
             value={selectedDate}
             onChange={(e) => setSelectedDate(e.target.value)}
-            className="bg-transparent outline-none cursor-pointer uppercase tracking-widest text-sm w-full"
+            className="bg-transparent outline-none cursor-pointer text-gray-700 font-semibold text-sm w-full p-1"
           />
         </div>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-        <div className="bg-[#1F2335] p-6 rounded-[1.5rem] shadow-lg flex items-center justify-between text-white relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/10 rounded-full -mr-12 -mt-12 blur-xl"></div>
+      <div className="grid grid-cols-2 gap-3 mb-6">
+        <div className="bg-gray-900 p-4 rounded-2xl shadow-md flex flex-col justify-center relative overflow-hidden">
           <div className="relative z-10">
-            <p className="text-[10px] font-black text-orange-400 uppercase tracking-widest mb-1">
-              คิวที่ต้องตามวันนี้
+            <p className="text-xs font-medium text-orange-400 mb-1">
+              ยอดคิวทั้งหมด
             </p>
-            <p className="text-3xl font-black">
+            <p className="text-2xl font-bold text-white">
               {totalToCall}{" "}
-              <span className="text-sm opacity-50 font-bold tracking-normal">
-                ราย
-              </span>
+              <span className="text-sm font-normal opacity-70">ราย</span>
             </p>
           </div>
-          <Clock className="w-10 h-10 text-orange-400 opacity-30" />
+          <Clock className="absolute right-[-10px] bottom-[-10px] w-16 h-16 text-white opacity-10" />
         </div>
 
-        <div className="bg-white p-6 rounded-[1.5rem] border border-gray-100 shadow-sm flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">
-              ทวงเรียบร้อยแล้ว
-            </p>
-            <p className="text-3xl font-black text-green-600">
+        <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex flex-col justify-center relative overflow-hidden">
+          <div className="relative z-10">
+            <p className="text-xs font-medium text-gray-500 mb-1">ทวงแล้ว</p>
+            <p className="text-2xl font-bold text-emerald-600">
               {contactedCount}{" "}
-              <span className="text-sm text-gray-300 font-bold tracking-normal">
-                ราย
-              </span>
+              <span className="text-sm font-normal text-gray-400">ราย</span>
             </p>
           </div>
-          <CheckCircle2 className="w-10 h-10 text-green-500 opacity-20" />
+          <CheckCircle2 className="absolute right-[-10px] bottom-[-10px] w-16 h-16 text-emerald-500 opacity-10" />
         </div>
       </div>
 
       {/* Search Bar */}
-      <div className="bg-white p-2 rounded-[1.2rem] shadow-sm border border-gray-100 mb-6">
-        <div className="relative group">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 group-focus-within:text-orange-500 transition-colors" />
+      <div className="bg-white p-1 rounded-xl shadow-sm border border-gray-200 mb-6">
+        <div className="relative flex items-center">
+          <Search className="absolute left-3 w-5 h-5 text-gray-400" />
           <input
             type="text"
             placeholder="ค้นหาชื่อลูกค้า, ชื่อวง หรือ รหัสวง..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-transparent outline-none font-bold text-gray-700 text-sm"
+            className="w-full pl-10 pr-4 py-2.5 bg-transparent outline-none font-medium text-gray-700 text-sm"
           />
         </div>
       </div>
 
-      {/* Collections List */}
-      <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden min-h-[400px]">
+      {/* Collections List - Redesigned for Clarity */}
+      <div className="flex flex-col gap-3">
         {loading ? (
-          <div className="py-32 flex flex-col items-center gap-4 text-gray-400 font-black text-[10px] uppercase tracking-widest">
-            <Loader2 className="w-10 h-10 animate-spin text-orange-500" />
-            กำลังโหลดข้อมูลคิวงาน...
+          <div className="py-20 flex flex-col items-center gap-3 text-gray-500 font-medium text-sm">
+            <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
+            กำลังโหลดข้อมูล...
           </div>
         ) : filteredCollections.length > 0 ? (
-          <div className="divide-y divide-gray-50 flex flex-col gap-4 p-4 md:p-0 md:gap-0">
-            {filteredCollections.map((item) => (
-              <div
-                key={item.id}
-                className={`flex flex-col xl:flex-row items-start xl:items-center justify-between p-5 md:p-6 gap-5 md:gap-6 transition-all duration-300 rounded-[1.5rem] border border-gray-100 md:border-0 md:rounded-none ${
-                  item.callStatus === "contacted"
-                    ? "opacity-60 bg-gray-50/50 grayscale-[20%]"
-                    : "bg-white hover:bg-orange-50/10 shadow-sm md:shadow-none"
-                }`}
-              >
-                {/* 1. Profile Info & Amount */}
-                <div className="flex flex-col md:flex-row justify-between w-full xl:w-auto xl:flex-1 gap-4">
-                  {/* Profile */}
-                  <div className="flex items-center gap-4 w-full md:w-auto">
+          filteredCollections.map((item) => (
+            <div
+              key={item.id}
+              className={`p-4 md:p-5 rounded-2xl border transition-all duration-200 flex flex-col md:flex-row gap-4 justify-between ${
+                item.callStatus === "contacted"
+                  ? "bg-gray-50 border-gray-200 opacity-70 grayscale-[30%]"
+                  : "bg-white border-gray-200 shadow-sm hover:border-orange-200 hover:shadow-md"
+              }`}
+            >
+              {/* ข้อมูลลูกค้า และ ยอดเงิน (Mobile-First Layout) */}
+              <div className="flex flex-col gap-3 w-full md:w-auto md:flex-1">
+                {/* แถวบน: รูปโปรไฟล์ + ชื่อ */}
+                <div className="flex justify-between items-start">
+                  <div className="flex items-center gap-3">
                     <div
-                      className="w-14 h-14 rounded-2xl flex items-center justify-center font-black text-xl transition-all shrink-0 shadow-sm"
+                      className="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shrink-0"
                       style={{
                         backgroundColor:
                           item.callStatus === "contacted"
@@ -230,91 +223,99 @@ export default function CollectionsPage() {
                           item.callStatus === "contacted"
                             ? "#9ca3af"
                             : item.bankColor,
-                        border: `1px solid ${item.callStatus === "contacted" ? "transparent" : `${item.bankColor}30`}`,
                       }}
                     >
                       {item.loanNumber}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-lg md:text-xl font-black text-gray-800 truncate">
-                        <span className="text-gray-400 text-sm mr-1">วง</span>
-                        {item.loanNumber} • {item.customerName}
+                    <div>
+                      <h3 className="text-base font-bold text-gray-900 leading-tight">
+                        {item.customerName}
                       </h3>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-xs font-bold text-gray-500 tracking-widest bg-gray-100 px-2.5 py-1 rounded-md">
-                          {item.phone}
-                        </span>
-                      </div>
+                      <p className="text-xs font-medium text-gray-500 mt-0.5">
+                        วง {item.loanName} • {item.phone}
+                      </p>
                     </div>
                   </div>
 
-                  {/* Amount to Collect (Mobile: Box, Desktop: Right aligned) */}
-                  <div className="w-full md:w-auto bg-gray-50/80 md:bg-transparent p-4 md:p-0 rounded-2xl md:rounded-none border border-gray-100 md:border-0 flex justify-between md:flex-col items-center md:items-end shrink-0">
-                    <p className="text-[11px] md:text-xs font-black text-gray-400 uppercase tracking-widest md:mb-1">
+                  {/* แถวบนขวา: ยอดเงิน (แสดงเฉพาะบน Desktop, ซ่อนในมือถือ) */}
+                  <div className="hidden md:block text-right">
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
                       ยอดเก็บงวดนี้
                     </p>
-                    <p className="text-2xl md:text-3xl font-black text-gray-800 tracking-tight">
+                    <p className="text-xl font-bold text-orange-600">
                       ฿{item.amount.toLocaleString()}
                     </p>
                   </div>
                 </div>
 
-                {/* 2. Actions (Full width on mobile) */}
-                <div className="flex items-center gap-3 w-full xl:w-auto justify-between xl:justify-end border-t xl:border-t-0 border-gray-100 pt-4 xl:pt-0 xl:pl-6 xl:border-l">
-                  <a
-                    href={`tel:${item.phone}`}
-                    className="flex-1 xl:flex-none flex justify-center items-center p-3.5 bg-white shadow-sm border border-gray-200 hover:shadow-md hover:border-orange-200 text-gray-500 hover:text-orange-500 rounded-[1.2rem] transition-all"
-                    title="โทรหาลูกค้า"
-                  >
-                    <PhoneCall className="w-5 h-5" />
-                    <span className="ml-2 font-bold text-sm xl:hidden">
-                      โทรหาลูกค้า
-                    </span>
-                  </a>
-
-                  <button
-                    onClick={() => toggleCallStatus(item.id, item.callStatus)}
-                    className={`relative w-[130px] h-[52px] rounded-[1.5rem] p-1.5 transition-colors duration-300 ease-in-out focus:outline-none shadow-inner flex items-center shrink-0 ${
-                      item.callStatus === "contacted"
-                        ? "bg-green-100"
-                        : "bg-rose-50"
-                    }`}
-                  >
-                    <div className="absolute inset-0 flex items-center justify-between px-4">
-                      <span
-                        className={`text-[11px] font-black uppercase tracking-widest transition-opacity ${item.callStatus === "contacted" ? "opacity-100 text-green-800" : "opacity-0"}`}
-                      >
-                        ทวงแล้ว
-                      </span>
-                      <span
-                        className={`text-[11px] font-black uppercase tracking-widest transition-opacity ${item.callStatus === "pending" ? "opacity-100 text-rose-800" : "opacity-0"}`}
-                      >
-                        รอทวง
-                      </span>
-                    </div>
-                    <div
-                      className={`w-10 h-10 bg-white rounded-xl shadow-md transform transition-transform duration-300 ease-in-out flex items-center justify-center z-10 ${
-                        item.callStatus === "contacted"
-                          ? "translate-x-[78px]"
-                          : "translate-x-0"
-                      }`}
-                    >
-                      {item.callStatus === "contacted" ? (
-                        <Check className="w-5 h-5 text-green-500" />
-                      ) : (
-                        <AlertCircle className="w-5 h-5 text-rose-500 animate-pulse" />
-                      )}
-                    </div>
-                  </button>
+                {/* กล่องยอดเงินสำหรับ Mobile (ซ่อนใน Desktop) */}
+                <div className="md:hidden bg-orange-50/50 p-3 rounded-xl border border-orange-100 flex justify-between items-center mt-1">
+                  <span className="text-xs font-semibold text-gray-600">
+                    ยอดเก็บงวดนี้
+                  </span>
+                  <span className="text-lg font-bold text-orange-600">
+                    ฿{item.amount.toLocaleString()}
+                  </span>
                 </div>
               </div>
-            ))}
-          </div>
+
+              {/* โซนปุ่มกด (วางเรียงกันแนวนอนบนมือถือ, และขวาบน Desktop) */}
+              <div className="flex flex-row gap-2 w-full md:w-[280px] shrink-0 pt-2 md:pt-0 border-t border-gray-100 md:border-0">
+                {/* ปุ่มแชท Facebook */}
+                {item.chatLink ? (
+                  <a
+                    href={item.chatLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 md:flex-none md:w-[48px] flex justify-center items-center py-2.5 md:py-0 bg-[#eff6ff] text-[#3b82f6] border border-[#bfdbfe] hover:bg-[#dbeafe] rounded-xl transition-colors"
+                    title="ทักแชท Messenger"
+                  >
+                    <MessageCircle className="w-5 h-5" />
+                    <span className="ml-2 text-sm font-semibold md:hidden">
+                      แชท
+                    </span>
+                  </a>
+                ) : (
+                  <div
+                    className="flex-1 md:flex-none md:w-[48px] flex justify-center items-center py-2.5 md:py-0 bg-gray-50 text-gray-300 border border-gray-200 rounded-xl cursor-not-allowed"
+                    title="ไม่มีลิงก์แชท"
+                  >
+                    <MessageCircle className="w-5 h-5 opacity-50" />
+                    <span className="ml-2 text-sm font-semibold md:hidden">
+                      ไม่มีแชท
+                    </span>
+                  </div>
+                )}
+
+                {/* ปุ่มยืนยันสถานะ (ปุ่มใหญ่ เห็นชัดเจน) */}
+                <button
+                  onClick={() => toggleCallStatus(item.id, item.callStatus)}
+                  className={`flex-[2] md:flex-1 py-2.5 px-3 rounded-xl text-sm font-semibold flex justify-center items-center gap-2 transition-all ${
+                    item.callStatus === "contacted"
+                      ? "bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100"
+                      : "bg-gray-900 text-white hover:bg-gray-800 shadow-sm"
+                  }`}
+                >
+                  {item.callStatus === "contacted" ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>ทวงแล้ว</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="w-4 h-4 text-orange-400" />
+                      <span>รอทวง</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          ))
         ) : (
-          <div className="py-32 flex flex-col items-center justify-center text-center opacity-40">
-            <CheckCircle2 className="w-16 h-16 text-gray-300 mb-4" />
-            <p className="font-black text-xs uppercase tracking-[0.4em]">
-              เคลียร์คิวงานวันนี้หมดแล้ว
+          <div className="py-20 bg-white rounded-2xl border border-gray-200 flex flex-col items-center justify-center text-center">
+            <CheckCircle2 className="w-12 h-12 text-gray-300 mb-3" />
+            <p className="font-semibold text-gray-500">
+              ไม่มีคิวงานค้างในวันนี้
             </p>
           </div>
         )}
