@@ -19,7 +19,7 @@ import {
   Loader2,
   AlertCircle,
   MessageCircle,
-  Megaphone, // เปลี่ยนไอคอน Header ให้ดูเข้ากับการทวงถาม
+  Megaphone,
 } from "lucide-react";
 
 export default function CollectionsPage() {
@@ -29,6 +29,46 @@ export default function CollectionsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [collections, setCollections] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  // ==========================================
+  // 🌟 ท่าไม้ตาย: ฟังก์ชันบังคับเปิดแอป Messenger (จากหน้าวอร์รูม)
+  // ==========================================
+  const handleOpenMessenger = (e, fullLink) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!fullLink) return;
+
+    // 1. ดึงเฉพาะ "ตัวเลขรหัสกลุ่ม/แชท" ออกมาจากลิงก์
+    const match = fullLink.match(/\d+$/);
+    const chatID = match ? match[0] : null;
+
+    // 2. เช็คว่าเป็นมือถือระบบอะไร
+    const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+    const isAndroid = /android/i.test(userAgent);
+    const isIOS = /iPad|iPhone|iPod/.test(userAgent) && !window.MSStream;
+
+    if (chatID) {
+      if (isAndroid) {
+        // 🤖 ท่าไม้ตาย Android: บังคับยิงเข้า Package แอป Messenger โดยตรง
+        window.location.href = `intent://messages/t/${chatID}#Intent;package=com.facebook.orca;scheme=https;end;`;
+      } else if (isIOS) {
+        // 🍎 ท่าไม้ตาย iOS: ใช้ Protocol ของ Messenger
+        window.location.href = `fb-messenger://user-thread/${chatID}`;
+
+        // เซฟตี้: ถ้าภายใน 2.5 วินาทีแอปไม่เด้งขึ้นมา ให้พาไปเปิดเว็บแทน
+        setTimeout(() => {
+          window.open(fullLink, "_blank");
+        }, 2500);
+      } else {
+        // 💻 เปิดจากคอมพิวเตอร์ (PC/Mac) ให้เด้งแท็บใหม่ปกติ
+        window.open(fullLink, "_blank");
+      }
+    } else {
+      // ถ้ารูปแบบลิงก์แปลกๆ จนดึงรหัสไม่ได้ ให้เปิดแบบธรรมดาไปก่อน
+      window.open(fullLink, "_blank");
+    }
+  };
 
   const fetchCollections = useCallback(async () => {
     setLoading(true);
@@ -190,7 +230,7 @@ export default function CollectionsPage() {
         </div>
       </div>
 
-      {/* Collections List - Redesigned for Clarity */}
+      {/* Collections List */}
       <div className="flex flex-col gap-3">
         {loading ? (
           <div className="py-20 flex flex-col items-center gap-3 text-gray-500 font-medium text-sm">
@@ -207,9 +247,7 @@ export default function CollectionsPage() {
                   : "bg-white border-gray-200 shadow-sm hover:border-orange-200 hover:shadow-md"
               }`}
             >
-              {/* ข้อมูลลูกค้า และ ยอดเงิน (Mobile-First Layout) */}
               <div className="flex flex-col gap-3 w-full md:w-auto md:flex-1">
-                {/* แถวบน: รูปโปรไฟล์ + ชื่อ */}
                 <div className="flex justify-between items-start">
                   <div className="flex items-center gap-3">
                     <div
@@ -237,7 +275,6 @@ export default function CollectionsPage() {
                     </div>
                   </div>
 
-                  {/* แถวบนขวา: ยอดเงิน (แสดงเฉพาะบน Desktop, ซ่อนในมือถือ) */}
                   <div className="hidden md:block text-right">
                     <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
                       ยอดเก็บงวดนี้
@@ -248,7 +285,6 @@ export default function CollectionsPage() {
                   </div>
                 </div>
 
-                {/* กล่องยอดเงินสำหรับ Mobile (ซ่อนใน Desktop) */}
                 <div className="md:hidden bg-orange-50/50 p-3 rounded-xl border border-orange-100 flex justify-between items-center mt-1">
                   <span className="text-xs font-semibold text-gray-600">
                     ยอดเก็บงวดนี้
@@ -259,22 +295,19 @@ export default function CollectionsPage() {
                 </div>
               </div>
 
-              {/* โซนปุ่มกด (วางเรียงกันแนวนอนบนมือถือ, และขวาบน Desktop) */}
               <div className="flex flex-row gap-2 w-full md:w-[280px] shrink-0 pt-2 md:pt-0 border-t border-gray-100 md:border-0">
-                {/* ปุ่มแชท Facebook */}
+                {/* 🌟 ปุ่มแชท Facebook (เรียกใช้ฟังก์ชันท่าไม้ตายที่นี่) */}
                 {item.chatLink ? (
-                  <a
-                    href={item.chatLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    onClick={(e) => handleOpenMessenger(e, item.chatLink)}
                     className="flex-1 md:flex-none md:w-[48px] flex justify-center items-center py-2.5 md:py-0 bg-[#eff6ff] text-[#3b82f6] border border-[#bfdbfe] hover:bg-[#dbeafe] rounded-xl transition-colors"
-                    title="ทักแชท Messenger"
+                    title="ทักแชท Messenger (เข้าแอป)"
                   >
                     <MessageCircle className="w-5 h-5" />
                     <span className="ml-2 text-sm font-semibold md:hidden">
                       แชท
                     </span>
-                  </a>
+                  </button>
                 ) : (
                   <div
                     className="flex-1 md:flex-none md:w-[48px] flex justify-center items-center py-2.5 md:py-0 bg-gray-50 text-gray-300 border border-gray-200 rounded-xl cursor-not-allowed"
@@ -287,7 +320,6 @@ export default function CollectionsPage() {
                   </div>
                 )}
 
-                {/* ปุ่มยืนยันสถานะ (ปุ่มใหญ่ เห็นชัดเจน) */}
                 <button
                   onClick={() => toggleCallStatus(item.id, item.callStatus)}
                   className={`flex-[2] md:flex-1 py-2.5 px-3 rounded-xl text-sm font-semibold flex justify-center items-center gap-2 transition-all ${
