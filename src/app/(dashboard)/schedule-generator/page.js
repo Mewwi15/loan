@@ -265,7 +265,7 @@ export default function ScheduleGeneratorPage() {
       {/* 🌟 Header */}
       <div className="bg-white px-5 py-4 shadow-sm border-b border-gray-200 sticky top-0 z-30">
         <h1 className="text-xl font-black text-gray-800 tracking-tight flex items-center justify-center gap-2">
-          <Wand2 className="w-6 h-6 text-orange-500" /> เครื่องมือรันงวด
+          <Wand2 className="w-6 h-6 text-orange-500" /> รันงวด
         </h1>
       </div>
 
@@ -360,7 +360,7 @@ export default function ScheduleGeneratorPage() {
               ) : (
                 <div className="bg-gray-50 p-3.5 rounded-xl border border-gray-100 flex items-center justify-center animate-in zoom-in-95 duration-200 opacity-80">
                   <span className="text-[11px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                    <CalendarDays className="w-4 h-4" /> ทุกๆ 1 เดือน
+                    <CalendarDays className="w-4 h-4" /> รายเดือน
                   </span>
                 </div>
               )}
@@ -391,7 +391,7 @@ export default function ScheduleGeneratorPage() {
           onClick={generateSchedule}
           className="w-full bg-gray-900 hover:bg-black text-white font-black py-4 rounded-2xl shadow-xl active:scale-95 flex justify-center items-center gap-2 text-sm uppercase tracking-widest transition-all mb-6"
         >
-          <Wand2 className="w-5 h-5 text-orange-500" /> เสกตารางข้อความ
+          <Wand2 className="w-5 h-5 text-orange-500" /> สร้างตาราง
         </button>
 
         {/* 🌟 Output Note Pad (กล่องแสดงผลสไตล์สมุดโน้ต) */}
