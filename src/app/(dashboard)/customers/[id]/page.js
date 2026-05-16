@@ -36,15 +36,14 @@ import {
   User,
   HandCoins,
   Coins,
-  Calculator,
-  Target,
   Archive,
   Award,
   Package,
   RefreshCw,
   Undo2,
-  MessageCircle, // 🌟 นำเข้าไอคอนแชท
-  Link2, // 🌟 นำเข้าไอคอนเพิ่มลิงก์
+  MessageCircle,
+  Link2,
+  Target,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -209,7 +208,6 @@ export default function CustomerDetailPage({ params }) {
     activeSharesCount: 0,
     netShareBalance: 0,
   });
-  const [customerShares, setCustomerShares] = useState([]);
 
   const [isEditingProfit2025, setIsEditingProfit2025] = useState(false);
   const [tempProfit2025, setTempProfit2025] = useState("");
@@ -248,11 +246,11 @@ export default function CustomerDetailPage({ params }) {
     frequency: 1,
     type: "day",
     category: "normal",
-    chatLink: "", // 🌟 เพิ่มฟิลด์ chatLink
+    chatLink: "",
   });
 
   // ==========================================
-  // 🌟 ท่าไม้ตาย: เปิดแชท Messenger
+  // 🌟 ฟังก์ชันเปิดแชท Messenger
   // ==========================================
   const handleOpenMessenger = (e, fullLink) => {
     e.preventDefault();
@@ -283,7 +281,7 @@ export default function CustomerDetailPage({ params }) {
     }
   };
 
-  // 🌟 ฟังก์ชัน: เพิ่มลิงก์แชทแบบด่วน
+  // 🌟 ฟังก์ชันเพิ่มลิงก์แชทด่วน
   const handleAddChatLink = async (loanId) => {
     const newLink = window.prompt(
       "🔗 กรุณาวางลิงก์แชท Messenger\n(เช่น https://www.facebook.com/messages/t/...):",
@@ -294,7 +292,7 @@ export default function CustomerDetailPage({ params }) {
     try {
       await updateDoc(doc(db, "loans", loanId), { chatLink: newLink });
       alert("✅ เพิ่มลิงก์แชทเรียบร้อยแล้วครับ!");
-      fetchData(); // อัปเดตข้อมูลใหม่
+      fetchData();
     } catch (error) {
       console.error("Error updating chat link:", error);
       alert("❌ เกิดข้อผิดพลาดในการบันทึกลิงก์");
@@ -397,7 +395,6 @@ export default function CustomerDetailPage({ params }) {
           where("customerId", "==", customerId),
         );
         const sharesSnap = await getDocs(sharesQ).catch(() => ({ docs: [] }));
-
         const handsData = sharesSnap.docs.map((docSnap) => ({
           id: docSnap.id,
           ...docSnap.data(),
@@ -407,8 +404,6 @@ export default function CustomerDetailPage({ params }) {
         );
 
         let netBalance = 0;
-        const enrichedHands = [];
-
         if (activeHands.length > 0) {
           const uniqueShareIds = [
             ...new Set(activeHands.map((h) => h.shareId)),
@@ -429,9 +424,6 @@ export default function CustomerDetailPage({ params }) {
           activeHands.forEach((h) => {
             const shareData = sharesMap[h.shareId];
             if (!shareData || shareData.status !== "active") return;
-
-            enrichedHands.push({ ...h, shareDetails: shareData });
-
             if (h.status === "alive") {
               totalAliveSaved += h.totalPaid || 0;
             } else if (h.status === "dead") {
@@ -440,21 +432,14 @@ export default function CustomerDetailPage({ params }) {
             }
           });
 
-          enrichedHands.sort((a, b) => {
-            if (a.shareName !== b.shareName)
-              return a.shareName.localeCompare(b.shareName);
-            return a.handNumber - b.handNumber;
-          });
-
           netBalance = totalAliveSaved - totalDeadDebt;
         }
 
-        setCustomerShares(enrichedHands);
         setCustomerStats({
           expectedProfitNormal: profitNormal,
           expectedProfitPD: profitPD,
           profit2025: customerData.manualProfit2025 || 0,
-          activeSharesCount: enrichedHands.length,
+          activeSharesCount: activeHands.length,
           netShareBalance: netBalance,
         });
       }
@@ -592,7 +577,7 @@ export default function CustomerDetailPage({ params }) {
       frequency: loan.frequency || 1,
       type: loan.frequencyType || "day",
       category: loan.category || "normal",
-      chatLink: loan.chatLink || "", // 🌟 เซ็ตลิงก์แชทเข้าฟอร์ม
+      chatLink: loan.chatLink || "",
     });
     setIsCustomFreq(
       ![1, 5, 7].includes(loan.frequency) && loan.frequencyType === "day",
@@ -693,7 +678,7 @@ export default function CustomerDetailPage({ params }) {
         frequency: formData.frequency,
         frequencyType: formData.type,
         category: formData.category,
-        chatLink: formData.chatLink, // 🌟 บันทึกลิงก์แชท
+        chatLink: formData.chatLink,
       });
 
       await batch.commit();
@@ -1146,10 +1131,12 @@ export default function CustomerDetailPage({ params }) {
                   }`}
                 ></div>
 
-                <div className="p-4 sm:p-6 border-b border-gray-50 flex justify-between items-start gap-2 mt-1 sm:mt-0">
+                {/* 🌟 1. Header (ปรับ Layout ใหม่หมด) */}
+                <div className="p-4 sm:p-6 border-b border-gray-50 flex justify-between items-start gap-3 mt-1 sm:mt-0">
+                  {/* Left Side: Icon + Name + Buttons */}
                   <div className="flex items-start gap-3 sm:gap-4 w-full">
                     <div
-                      className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center font-black text-lg sm:text-xl shrink-0 shadow-sm ${isPD ? "bg-rose-100 text-rose-600 border border-rose-200" : ""}`}
+                      className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center font-black text-xl sm:text-2xl shrink-0 shadow-sm ${isPD ? "bg-rose-100 text-rose-600 border border-rose-200" : ""}`}
                       style={
                         !isPD
                           ? {
@@ -1160,44 +1147,71 @@ export default function CustomerDetailPage({ params }) {
                       }
                     >
                       {isPD ? (
-                        <Package className="w-5 h-5 sm:w-6 sm:h-6" />
+                        <Package className="w-6 h-6 sm:w-7 sm:h-7" />
                       ) : (
                         loan.loanNumber || index + 1
                       )}
                     </div>
-                    <div className="flex-1">
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-1">
-                        <h3 className="text-lg sm:text-xl font-black text-gray-800 tracking-tight">
-                          วง {loan.loanNumber || index + 1}
-                        </h3>
+
+                    <div className="flex-1 mt-0.5">
+                      <h3 className="text-lg sm:text-xl font-black text-gray-900 tracking-tight leading-none mb-2">
+                        วง {loan.loanNumber || index + 1}
+                      </h3>
+
+                      {/* 🌟 2. โซนปุ่มแชทอยู่ตรงกลางพอดีเป๊ะ */}
+                      <div className="flex flex-wrap items-center gap-2 mb-2">
                         <button
                           type="button"
                           onClick={() => handleToggleCategory(loan)}
                           disabled={isProcessingAction}
-                          className={`text-[9px] sm:text-[10px] font-black uppercase px-2 py-0.5 rounded-md shadow-sm border transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1 cursor-pointer w-max ${
+                          className={`text-[10px] sm:text-xs font-bold px-2.5 py-1.5 rounded-lg shadow-sm border transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer w-max ${
                             isPD
                               ? "bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100"
                               : "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100"
                           }`}
-                          title="คลิกเพื่อเปลี่ยนประเภท"
                         >
                           <RefreshCw className="w-3 h-3" />
                           {isPD ? "ผ่อนของ (PD)" : "กู้ปกติ"}
                         </button>
+
+                        {loan.chatLink ? (
+                          <button
+                            onClick={(e) =>
+                              handleOpenMessenger(e, loan.chatLink)
+                            }
+                            className="text-[10px] sm:text-xs font-bold px-3 py-1.5 bg-[#eff6ff] text-[#2563eb] hover:bg-[#dbeafe] border border-[#bfdbfe] rounded-lg transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+                            title="เปิดแชท Messenger"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            แชท
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleAddChatLink(loan.id)}
+                            className="text-[10px] sm:text-xs font-bold px-3 py-1.5 bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-200 rounded-lg transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+                            title="ยังไม่มีลิงก์แชท (กดเพื่อเพิ่ม)"
+                          >
+                            <Link2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            เพิ่มแชท
+                          </button>
+                        )}
                       </div>
-                      <p className="text-[10px] sm:text-[12px] font-black text-gray-500 uppercase tracking-widest">
+
+                      <p className="text-[11px] sm:text-xs font-bold text-gray-500 uppercase tracking-widest">
                         {loan.loanName || loan.customerName}
                       </p>
                     </div>
                   </div>
-                  <div className="text-right shrink-0">
+
+                  {/* Right Side: Amount */}
+                  <div className="text-right shrink-0 mt-0.5">
                     <p
-                      className={`text-[8px] sm:text-[10px] font-black uppercase tracking-widest mb-0.5 sm:mb-1 ${isPD ? "text-rose-400" : "text-gray-400"}`}
+                      className={`text-[9px] sm:text-[11px] font-black uppercase tracking-widest mb-1 ${isPD ? "text-rose-400" : "text-gray-400"}`}
                     >
                       ยอดส่ง/งวด
                     </p>
                     <p
-                      className={`text-lg sm:text-2xl font-black leading-none ${isPD ? "text-rose-500" : "text-orange-500"}`}
+                      className={`text-xl sm:text-3xl font-black leading-none tracking-tight ${isPD ? "text-rose-500" : "text-orange-500"}`}
                     >
                       ฿{loan.installmentAmount.toLocaleString()}
                     </p>
@@ -1259,22 +1273,23 @@ export default function CustomerDetailPage({ params }) {
                   </div>
                 </div>
 
+                {/* 🌟 3. เคลียร์ปุ่มด้านล่างให้กดง่ายขึ้น */}
                 <div className="p-3 sm:p-5 bg-white border-t border-gray-50 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex gap-1.5 sm:gap-2">
                     <button
                       onClick={() => handleCloseLoan(loan.id)}
                       disabled={isProcessingAction}
-                      className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-red-500 hover:text-red-600 bg-red-50 hover:bg-red-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1 disabled:opacity-50 cursor-pointer"
+                      className="text-[10px] sm:text-[12px] font-bold text-red-500 hover:text-red-600 bg-red-50 hover:bg-red-100 px-3 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                       title="ลบทิ้งเฉพาะกรณีสร้างผิด"
                     >
-                      <PowerOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                      <PowerOff className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                       <span className="hidden min-[400px]:inline">ลบทิ้ง</span>
                     </button>
                     <button
                       onClick={() => openEditContract(loan)}
-                      className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600 bg-blue-50 hover:bg-blue-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1 cursor-pointer"
+                      className="text-[10px] sm:text-[12px] font-bold text-blue-500 hover:text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
                     >
-                      <Edit className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                      <Edit className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                       <span className="hidden min-[400px]:inline">แก้</span>
                     </button>
                     <button
@@ -1283,43 +1298,20 @@ export default function CustomerDetailPage({ params }) {
                         setPayoffDate(new Date().toISOString().split("T")[0]);
                         setEarlyPayoffModalOpen(true);
                       }}
-                      className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1 cursor-pointer"
+                      className="text-[10px] sm:text-[12px] font-bold text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
                       title="โปะยอดที่เหลือ"
                     >
-                      <Coins className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                      <Coins className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                       <span className="hidden min-[400px]:inline">โปะ</span>
                     </button>
-
-                    {/* 🌟 โซนปุ่มแชทใหม่! */}
-                    {loan.chatLink ? (
-                      <button
-                        onClick={(e) => handleOpenMessenger(e, loan.chatLink)}
-                        className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600 bg-[#eff6ff] hover:bg-[#dbeafe] px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1 cursor-pointer border border-[#bfdbfe]"
-                        title="เปิดแชท Messenger"
-                      >
-                        <MessageCircle className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                        <span className="hidden min-[400px]:inline">แชท</span>
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => handleAddChatLink(loan.id)}
-                        className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-rose-500 hover:text-rose-600 bg-rose-50 hover:bg-rose-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1 cursor-pointer border border-rose-100"
-                        title="ยังไม่มีลิงก์แชท (กดเพื่อเพิ่ม)"
-                      >
-                        <Link2 className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                        <span className="hidden min-[400px]:inline">
-                          ลิ้งค์
-                        </span>
-                      </button>
-                    )}
                   </div>
 
                   <button
                     onClick={() => openSchedule(loan)}
-                    className="bg-gray-900 hover:bg-black text-white px-3 py-1.5 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all shadow-md flex items-center gap-1 sm:gap-1.5 cursor-pointer ml-auto"
+                    className="bg-gray-900 hover:bg-black text-white px-4 py-2 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer ml-auto"
                   >
-                    <FileText className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> ตาราง
-                    <ChevronRight className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                    <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> ตาราง
+                    <ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                   </button>
                 </div>
               </div>
@@ -1608,7 +1600,7 @@ export default function CustomerDetailPage({ params }) {
             </div>
 
             <div className="overflow-y-auto p-5 sm:p-8 flex-1 space-y-4 sm:space-y-6">
-              {/* 🌟 ช่องแก้ไขลิงก์แชท (ย้ายมาไว้บนๆ ให้อยู่เด่นๆ) */}
+              {/* 🌟 ช่องแก้ไขลิงก์แชท */}
               <div className="grid grid-cols-1 gap-4 sm:gap-6 mt-1">
                 <div>
                   <label className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest ml-1 text-blue-500 flex items-center gap-1">
