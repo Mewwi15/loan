@@ -250,7 +250,7 @@ export default function CustomerDetailPage({ params }) {
   });
 
   // ==========================================
-  // 🌟 ฟังก์ชันเปิดแชท Messenger
+  // 🌟 ท่าไม้ตาย: เปิดแชท Messenger (อัปเกรดทำความสะอาดลิงก์)
   // ==========================================
   const handleOpenMessenger = (e, fullLink) => {
     e.preventDefault();
@@ -258,22 +258,30 @@ export default function CustomerDetailPage({ params }) {
 
     if (!fullLink) return;
 
-    const match = fullLink.match(/\d+$/);
+    // 🌟 ดักตัดพวก ?mibextid=... หรือ / ที่แถมมาด้านหลังทิ้งไปก่อน
+    const cleanLink = fullLink.split("?")[0].replace(/\/$/, "");
+
+    // ดึงเฉพาะ "ตัวเลขรหัส" ออกมาจากลิงก์ที่สะอาดแล้ว
+    const match = cleanLink.match(/\d+$/);
     const chatID = match ? match[0] : null;
 
+    // เช็คว่าเป็นมือถือระบบอะไร
     const userAgent = navigator.userAgent || navigator.vendor || window.opera;
     const isAndroid = /android/i.test(userAgent);
     const isIOS = /iPad|iPhone|iPod/.test(userAgent) && !window.MSStream;
 
     if (chatID) {
       if (isAndroid) {
+        // 🤖 ท่าไม้ตาย Android
         window.location.href = `intent://messages/t/${chatID}#Intent;package=com.facebook.orca;scheme=https;end;`;
       } else if (isIOS) {
+        // 🍎 ท่าไม้ตาย iOS
         window.location.href = `fb-messenger://user-thread/${chatID}`;
         setTimeout(() => {
           window.open(fullLink, "_blank");
         }, 2500);
       } else {
+        // 💻 เปิดจากคอมพิวเตอร์
         window.open(fullLink, "_blank");
       }
     } else {

@@ -178,41 +178,41 @@ export default function WarRoomPage() {
   const [expandedGroups, setExpandedGroups] = useState([]);
 
   // ==========================================
-  // 🌟 ท่าไม้ตาย: ฟังก์ชันบังคับเปิดแอป Messenger
+  // 🌟 ท่าไม้ตาย: เปิดแชท Messenger (อัปเกรดทำความสะอาดลิงก์)
   // ==========================================
   const handleOpenMessenger = (e, fullLink) => {
     e.preventDefault();
-    e.stopPropagation(); // กันไม่ให้การ์ดขยายเวลาจิ้มปุ่ม
+    e.stopPropagation();
 
     if (!fullLink) return;
 
-    // 1. ดึงเฉพาะ "ตัวเลขรหัสกลุ่ม" ออกมาจากลิงก์
-    const match = fullLink.match(/\d+$/);
+    // 🌟 ดักตัดพวก ?mibextid=... หรือ / ที่แถมมาด้านหลังทิ้งไปก่อน
+    const cleanLink = fullLink.split("?")[0].replace(/\/$/, "");
+
+    // ดึงเฉพาะ "ตัวเลขรหัส" ออกมาจากลิงก์ที่สะอาดแล้ว
+    const match = cleanLink.match(/\d+$/);
     const chatID = match ? match[0] : null;
 
-    // 2. เช็คว่าเป็นมือถือระบบอะไร
+    // เช็คว่าเป็นมือถือระบบอะไร
     const userAgent = navigator.userAgent || navigator.vendor || window.opera;
     const isAndroid = /android/i.test(userAgent);
     const isIOS = /iPad|iPhone|iPod/.test(userAgent) && !window.MSStream;
 
     if (chatID) {
       if (isAndroid) {
-        // 🤖 ท่าไม้ตาย Android: บังคับยิงเข้า Package แอป Messenger โดยตรง
+        // 🤖 ท่าไม้ตาย Android
         window.location.href = `intent://messages/t/${chatID}#Intent;package=com.facebook.orca;scheme=https;end;`;
       } else if (isIOS) {
-        // 🍎 ท่าไม้ตาย iOS: ใช้ Protocol ของ Messenger
+        // 🍎 ท่าไม้ตาย iOS
         window.location.href = `fb-messenger://user-thread/${chatID}`;
-
-        // เซฟตี้: ถ้าภายใน 2.5 วินาทีแอปไม่เด้งขึ้นมา ให้พาไปเปิดเว็บแทน
         setTimeout(() => {
           window.open(fullLink, "_blank");
         }, 2500);
       } else {
-        // 💻 เปิดจากคอมพิวเตอร์ (PC/Mac) ให้เด้งแท็บใหม่ปกติ
+        // 💻 เปิดจากคอมพิวเตอร์
         window.open(fullLink, "_blank");
       }
     } else {
-      // ถ้ารูปแบบลิงก์แปลกๆ จนดึงรหัสไม่ได้ ให้เปิดแบบธรรมดาไปก่อน
       window.open(fullLink, "_blank");
     }
   };
