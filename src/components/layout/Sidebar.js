@@ -16,7 +16,8 @@ import {
   HandCoins,
   PlusCircle,
   ShieldCheck,
-  Landmark, // 🌟 นำเข้าไอคอนสำหรับหน้าสรุปยอด
+  Landmark,
+  Wand2, // 🌟 นำเข้าไอคอนสำหรับหน้าเครื่องมือรันงวด
 } from "lucide-react";
 
 export default function Sidebar() {
@@ -175,6 +176,20 @@ export default function Sidebar() {
               <Activity className="w-5 h-5" />
               <span>หน้าวอร์</span>
             </Link>
+
+            {/* 🌟 ลิงก์เครื่องมือรันงวดใหม่ */}
+            <Link
+              href="/schedule-generator"
+              onClick={handleLinkClick}
+              className={`flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all duration-200 ${
+                isActive("/schedule-generator")
+                  ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20 font-black"
+                  : "text-gray-400 hover:text-white hover:bg-white/5 font-bold"
+              }`}
+            >
+              <Wand2 className="w-5 h-5" />
+              <span>เครื่องมือรันงวด</span>
+            </Link>
           </div>
 
           {/* โซนที่ 3: ระบบวงแชร์ */}
@@ -196,7 +211,6 @@ export default function Sidebar() {
               <span>แผงควบคุมวงแชร์</span>
             </Link>
 
-            {/* 🌟 ลิงก์หน้าใหม่: สรุปยอดสะสม */}
             <Link
               href="/shares/summary"
               onClick={handleLinkClick}
