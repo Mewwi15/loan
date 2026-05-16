@@ -43,6 +43,8 @@ import {
   Package,
   RefreshCw,
   Undo2,
+  MessageCircle, // 🌟 นำเข้าไอคอนแชท
+  Link2, // 🌟 นำเข้าไอคอนเพิ่มลิงก์
 } from "lucide-react";
 import Link from "next/link";
 
@@ -246,7 +248,58 @@ export default function CustomerDetailPage({ params }) {
     frequency: 1,
     type: "day",
     category: "normal",
+    chatLink: "", // 🌟 เพิ่มฟิลด์ chatLink
   });
+
+  // ==========================================
+  // 🌟 ท่าไม้ตาย: เปิดแชท Messenger
+  // ==========================================
+  const handleOpenMessenger = (e, fullLink) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!fullLink) return;
+
+    const match = fullLink.match(/\d+$/);
+    const chatID = match ? match[0] : null;
+
+    const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+    const isAndroid = /android/i.test(userAgent);
+    const isIOS = /iPad|iPhone|iPod/.test(userAgent) && !window.MSStream;
+
+    if (chatID) {
+      if (isAndroid) {
+        window.location.href = `intent://messages/t/${chatID}#Intent;package=com.facebook.orca;scheme=https;end;`;
+      } else if (isIOS) {
+        window.location.href = `fb-messenger://user-thread/${chatID}`;
+        setTimeout(() => {
+          window.open(fullLink, "_blank");
+        }, 2500);
+      } else {
+        window.open(fullLink, "_blank");
+      }
+    } else {
+      window.open(fullLink, "_blank");
+    }
+  };
+
+  // 🌟 ฟังก์ชัน: เพิ่มลิงก์แชทแบบด่วน
+  const handleAddChatLink = async (loanId) => {
+    const newLink = window.prompt(
+      "🔗 กรุณาวางลิงก์แชท Messenger\n(เช่น https://www.facebook.com/messages/t/...):",
+    );
+
+    if (!newLink) return;
+
+    try {
+      await updateDoc(doc(db, "loans", loanId), { chatLink: newLink });
+      alert("✅ เพิ่มลิงก์แชทเรียบร้อยแล้วครับ!");
+      fetchData(); // อัปเดตข้อมูลใหม่
+    } catch (error) {
+      console.error("Error updating chat link:", error);
+      alert("❌ เกิดข้อผิดพลาดในการบันทึกลิงก์");
+    }
+  };
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -286,12 +339,10 @@ export default function CustomerDetailPage({ params }) {
         const processLoan = (docSnap) => {
           let data = { id: docSnap.id, ...docSnap.data() };
 
-          // 🌟 Auto-Heal: ซ่อมแซมข้อมูลที่ค้างอยู่ (ถ้ายอดเหลือ 0 แต่สถานะไม่โดนปิด)
           if (data.status !== "closed" && (data.remainingBalance || 0) <= 0) {
             const now = new Date().toISOString();
             data.status = "closed";
             data.closedAt = data.closedAt || now;
-            // แอบอัปเดตลงฐานข้อมูลให้เนียนๆ
             updateDoc(doc(db, "loans", docSnap.id), {
               status: "closed",
               closedAt: data.closedAt,
@@ -541,6 +592,7 @@ export default function CustomerDetailPage({ params }) {
       frequency: loan.frequency || 1,
       type: loan.frequencyType || "day",
       category: loan.category || "normal",
+      chatLink: loan.chatLink || "", // 🌟 เซ็ตลิงก์แชทเข้าฟอร์ม
     });
     setIsCustomFreq(
       ![1, 5, 7].includes(loan.frequency) && loan.frequencyType === "day",
@@ -641,6 +693,7 @@ export default function CustomerDetailPage({ params }) {
         frequency: formData.frequency,
         frequencyType: formData.type,
         category: formData.category,
+        chatLink: formData.chatLink, // 🌟 บันทึกลิงก์แชท
       });
 
       await batch.commit();
@@ -1236,10 +1289,34 @@ export default function CustomerDetailPage({ params }) {
                       <Coins className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                       <span className="hidden min-[400px]:inline">โปะ</span>
                     </button>
+
+                    {/* 🌟 โซนปุ่มแชทใหม่! */}
+                    {loan.chatLink ? (
+                      <button
+                        onClick={(e) => handleOpenMessenger(e, loan.chatLink)}
+                        className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600 bg-[#eff6ff] hover:bg-[#dbeafe] px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1 cursor-pointer border border-[#bfdbfe]"
+                        title="เปิดแชท Messenger"
+                      >
+                        <MessageCircle className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                        <span className="hidden min-[400px]:inline">แชท</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleAddChatLink(loan.id)}
+                        className="text-[9px] sm:text-[12px] font-black uppercase tracking-widest text-rose-500 hover:text-rose-600 bg-rose-50 hover:bg-rose-100 px-2.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1 cursor-pointer border border-rose-100"
+                        title="ยังไม่มีลิงก์แชท (กดเพื่อเพิ่ม)"
+                      >
+                        <Link2 className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                        <span className="hidden min-[400px]:inline">
+                          ลิ้งค์
+                        </span>
+                      </button>
+                    )}
                   </div>
+
                   <button
                     onClick={() => openSchedule(loan)}
-                    className="bg-gray-900 hover:bg-black text-white px-3 py-1.5 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all shadow-md flex items-center gap-1 sm:gap-1.5 cursor-pointer"
+                    className="bg-gray-900 hover:bg-black text-white px-3 py-1.5 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all shadow-md flex items-center gap-1 sm:gap-1.5 cursor-pointer ml-auto"
                   >
                     <FileText className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> ตาราง
                     <ChevronRight className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
@@ -1531,7 +1608,24 @@ export default function CustomerDetailPage({ params }) {
             </div>
 
             <div className="overflow-y-auto p-5 sm:p-8 flex-1 space-y-4 sm:space-y-6">
-              <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+              {/* 🌟 ช่องแก้ไขลิงก์แชท (ย้ายมาไว้บนๆ ให้อยู่เด่นๆ) */}
+              <div className="grid grid-cols-1 gap-4 sm:gap-6 mt-1">
+                <div>
+                  <label className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest ml-1 text-blue-500 flex items-center gap-1">
+                    <MessageCircle className="w-3 h-3" /> ลิงก์แชท Messenger
+                  </label>
+                  <input
+                    name="chatLink"
+                    type="url"
+                    value={formData.chatLink}
+                    onChange={handleFormChange}
+                    className="w-full mt-1.5 px-3.5 py-3 sm:px-4 sm:py-3.5 bg-blue-50/30 border border-blue-100 rounded-xl sm:rounded-2xl outline-none focus:bg-white focus:border-blue-500 font-bold transition-all text-sm sm:text-base text-gray-700 placeholder:text-gray-400"
+                    placeholder="https://www.facebook.com/messages/t/..."
+                  />
+                </div>
+              </div>
+
+              <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 mt-4">
                 <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2 flex items-center gap-2">
                   <Package className="w-4 h-4 text-blue-500" /> ประเภทวง
                   (Category)
