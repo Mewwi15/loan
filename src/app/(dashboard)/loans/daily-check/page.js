@@ -22,6 +22,7 @@ import {
   Loader2,
   TrendingUp,
   Landmark,
+  MessageCircle,
 } from "lucide-react";
 
 export default function DailyCheckPage() {
@@ -33,7 +34,39 @@ export default function DailyCheckPage() {
   const [loading, setLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // 🌟 ลอจิกใหม่ขั้นสุด: บังคับดึงงวดเก่าสุด + กรองข้อมูลซ้ำซ้อน (Ultimate Deduplication)
+  // ==========================================
+  // 🌟 ฟังก์ชันบังคับเปิดแอป Messenger
+  // ==========================================
+  const handleOpenMessenger = (e, fullLink) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!fullLink) return;
+
+    const cleanLink = fullLink.split("?")[0].replace(/\/$/, "");
+    const match = cleanLink.match(/\d+$/);
+    const chatID = match ? match[0] : null;
+
+    const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+    const isAndroid = /android/i.test(userAgent);
+    const isIOS = /iPad|iPhone|iPod/.test(userAgent) && !window.MSStream;
+
+    if (chatID) {
+      if (isAndroid) {
+        window.location.href = `intent://messages/t/${chatID}#Intent;package=com.facebook.orca;scheme=https;end;`;
+      } else if (isIOS) {
+        window.location.href = `fb-messenger://user-thread/${chatID}`;
+        setTimeout(() => {
+          window.open(fullLink, "_blank");
+        }, 2500);
+      } else {
+        window.open(fullLink, "_blank");
+      }
+    } else {
+      window.open(fullLink, "_blank");
+    }
+  };
+
   const fetchDailyJobs = useCallback(async () => {
     if (!selectedDate) return;
 
@@ -81,16 +114,14 @@ export default function DailyCheckPage() {
       });
 
       const jobs = [];
-      const seenSet = new Set(); // 🌟 ถังพักไว้จำข้อมูลที่เคยโหลดแล้ว
+      const seenSet = new Set();
 
       for (const [loanId, schedule] of earliestPendingMap.entries()) {
         const loanData = activeLoansMap.get(loanId);
 
-        // 🌟 กุญแจเช็คข้อมูลซ้ำแบบขั้นสุด (ลบช่องว่าง, ลบวงเล็บ, เช็ค 4 ชั้น)
-        // เพื่อป้องกันกรณีชื่อ "แม่น้ำ" กับ "แม่น้ำ " หรือ "แม่น้ำ (Mami)"
         const cleanName = String(loanData.customerName || "")
-          .split("(")[0] // ตัดข้อความในวงเล็บทิ้ง
-          .replace(/\s+/g, "") // ลบช่องว่างทั้งหมด
+          .split("(")[0]
+          .replace(/\s+/g, "")
           .toLowerCase();
 
         const cleanLoanNum = String(loanData.loanNumber || "")
@@ -100,11 +131,10 @@ export default function DailyCheckPage() {
         const instNo = Number(schedule.installmentNo);
         const amount = Number(schedule.amount);
 
-        // Unique Key = ชื่อ + เลขวง + งวดที่ + ยอดเงิน
         const uniqueKey = `${cleanName}-${cleanLoanNum}-${instNo}-${amount}`;
 
         if (!seenSet.has(uniqueKey)) {
-          seenSet.add(uniqueKey); // จดจำไว้ว่าคนนี้/บิลนี้ โชว์ไปแล้วนะ ห้ามเอามาซ้ำอีก!
+          seenSet.add(uniqueKey);
 
           jobs.push({
             id: schedule.id,
@@ -120,6 +150,7 @@ export default function DailyCheckPage() {
             isChecked: false,
             penalty: 0,
             isOverdue: schedule.dueDate < selectedDate,
+            chatLink: loanData.chatLink || null,
           });
         }
       }
@@ -190,7 +221,6 @@ export default function DailyCheckPage() {
 
     try {
       for (const item of itemsToPay) {
-        // 1. อัปเดตตารางค่างวด
         const scheduleRef = doc(db, "schedules", item.id);
         batch.update(scheduleRef, {
           status: "paid",
@@ -198,16 +228,14 @@ export default function DailyCheckPage() {
           appliedPenalty: item.penalty,
         });
 
-        // 2. อัปเดตข้อมูลวงกู้หลัก + 🌟 ลอจิก Auto-Close
         const loanRef = doc(db, "loans", item.loanId);
-        const newBalance = item.remainingBefore - item.amount; // คำนวณยอดเงินที่จะเหลือหลังจ่าย
+        const newBalance = item.remainingBefore - item.amount;
 
         const loanUpdateData = {
           remainingBalance: increment(-item.amount),
           currentInstallment: increment(1),
         };
 
-        // ถ้าจ่ายงวดนี้แล้วยอดเหลือ 0 บาท หรือติดลบ ให้เตะเข้าประวัติทันที!
         if (newBalance <= 0) {
           loanUpdateData.status = "closed";
           loanUpdateData.closedAt = new Date().toISOString();
@@ -215,7 +243,6 @@ export default function DailyCheckPage() {
 
         batch.update(loanRef, loanUpdateData);
 
-        // 3. หักหนี้ออกจากโปรไฟล์ลูกค้า
         if (item.customerId) {
           const customerRef = doc(db, "customers", item.customerId);
           batch.update(customerRef, {
@@ -235,7 +262,6 @@ export default function DailyCheckPage() {
           }
         }
 
-        // 4. สร้างบิล (Transaction) เก็บไว้เป็นหลักฐาน
         const transRef = doc(collection(db, "transactions"));
         batch.set(transRef, {
           loanId: item.loanId,
@@ -309,7 +335,9 @@ export default function DailyCheckPage() {
                     เช็คจ่าย
                   </th>
                   <th className="px-3 md:px-4 py-4">ข้อมูลวงกู้</th>
-                  <th className="px-3 md:px-4 py-4">บัญชีรับโอน</th>
+                  <th className="hidden md:table-cell px-3 md:px-4 py-4">
+                    บัญชีรับโอน
+                  </th>
                   <th className="px-3 md:px-4 py-4 text-right">ยอดเก็บ</th>
                   <th className="px-3 md:px-4 py-4 text-right">
                     <span className="text-orange-500 flex items-center justify-end gap-1">
@@ -345,42 +373,91 @@ export default function DailyCheckPage() {
                           <CheckCircle2 className="w-4 h-4 md:w-5 md:h-5" />
                         </button>
                       </td>
+
+                      {/* 🌟 TD ข้อมูลวงกู้ */}
                       <td className="px-3 md:px-4 py-3 md:py-4">
-                        <div className="flex items-center gap-2 md:gap-3">
-                          <div
-                            className="w-8 h-8 md:w-10 md:h-10 rounded-xl flex items-center justify-center font-black text-xs md:text-sm shrink-0"
-                            style={{
-                              backgroundColor: item.isChecked
-                                ? "#f3f4f6"
-                                : `${item.bankColor}15`,
-                              color: item.isChecked
-                                ? "#9ca3af"
-                                : item.bankColor,
-                            }}
-                          >
-                            {item.loanNumber}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-xs md:text-sm font-black text-gray-800 truncate">
-                              วง {item.loanNumber} • {item.loanName}
-                            </p>
-                            <div className="flex flex-wrap items-center gap-1 md:gap-2 mt-0.5">
-                              <span className="text-[8px] md:text-[9px] font-bold text-gray-500 uppercase tracking-widest bg-white border border-gray-100 shadow-sm px-1.5 md:px-2 py-0.5 rounded-md">
-                                งวดที่ {item.installmentNo}
-                              </span>
-                              {item.isOverdue && (
-                                <span className="text-[8px] md:text-[9px] font-bold text-red-600 uppercase tracking-widest bg-red-50 border border-red-200 px-1.5 md:px-2 py-0.5 rounded-md shadow-sm animate-pulse">
-                                  ค้างชำระ
+                        <div className="flex items-center justify-between gap-3 min-w-0">
+                          {/* ซ้าย: ข้อมูลลูกค้าและวงกู้ */}
+                          <div className="flex items-center gap-2 md:gap-3 min-w-0">
+                            <div
+                              className="w-8 h-8 md:w-10 md:h-10 rounded-xl flex items-center justify-center font-black text-xs md:text-sm shrink-0"
+                              style={{
+                                backgroundColor: item.isChecked
+                                  ? "#f3f4f6"
+                                  : `${item.bankColor}15`,
+                                color: item.isChecked
+                                  ? "#9ca3af"
+                                  : item.bankColor,
+                              }}
+                            >
+                              {item.loanNumber}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs md:text-sm font-black text-gray-800 truncate">
+                                วง {item.loanNumber} • {item.loanName}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-1 md:gap-2 mt-0.5">
+                                <span className="text-[8px] md:text-[9px] font-bold text-gray-500 uppercase tracking-widest bg-white border border-gray-100 shadow-sm px-1.5 md:px-2 py-0.5 rounded-md">
+                                  งวดที่ {item.installmentNo}
                                 </span>
-                              )}
-                              <span className="text-[9px] md:text-[10px] font-bold text-gray-400 truncate max-w-[80px] md:max-w-[120px] ml-1">
+                                {item.isOverdue && (
+                                  <span className="text-[8px] md:text-[9px] font-bold text-red-600 uppercase tracking-widest bg-red-50 border border-red-200 px-1.5 md:px-2 py-0.5 rounded-md shadow-sm animate-pulse">
+                                    ค้างชำระ
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[9px] md:text-[10px] font-bold text-gray-400 mt-1 truncate max-w-[120px]">
                                 {item.customerName}
-                              </span>
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* ขวา: ปุ่มแชทพอดีๆ + ธนาคาร */}
+                          <div className="flex items-center gap-2.5 ml-auto shrink-0">
+                            {/* 🌟 ปุ่ม Messenger แบบพอดีๆ (w-9 h-9) */}
+                            {item.chatLink ? (
+                              <button
+                                onClick={(e) =>
+                                  handleOpenMessenger(e, item.chatLink)
+                                }
+                                className="w-9 h-9 md:w-10 md:h-10 rounded-xl flex items-center justify-center shrink-0 bg-blue-50 text-blue-500 hover:bg-blue-600 hover:text-white transition-colors shadow-sm active:scale-95"
+                                title="เปิดแชท Messenger"
+                              >
+                                <MessageCircle className="w-4 h-4 md:w-5 md:h-5" />
+                              </button>
+                            ) : (
+                              <div
+                                className="w-9 h-9 md:w-10 md:h-10 rounded-xl flex items-center justify-center shrink-0 bg-gray-100 text-gray-300 cursor-not-allowed"
+                                title="ยังไม่มีลิงก์แชท"
+                              >
+                                <MessageCircle className="w-4 h-4 md:w-5 md:h-5" />
+                              </div>
+                            )}
+
+                            {/* 🌟 ธนาคารบนมือถือ */}
+                            <div className="flex md:hidden items-center gap-1.5 border-l border-gray-100 pl-2 shrink-0">
+                              <div
+                                className="w-6 h-6 rounded-lg flex items-center justify-center shadow-sm shrink-0"
+                                style={{
+                                  backgroundColor: `${item.bankColor}15`,
+                                }}
+                              >
+                                <Landmark
+                                  className="w-3.5 h-3.5"
+                                  style={{ color: item.bankColor }}
+                                />
+                              </div>
+                              <div className="hidden min-[400px]:block">
+                                <p className="text-[10px] font-black text-gray-800 whitespace-nowrap">
+                                  {item.bankName}
+                                </p>
+                              </div>
                             </div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-3 md:px-4 py-3 md:py-4">
+
+                      <td className="hidden md:table-cell px-3 md:px-4 py-3 md:py-4">
                         <div className="flex items-center gap-2">
                           <div
                             className="w-6 h-6 md:w-7 md:h-7 rounded-lg flex items-center justify-center shadow-sm shrink-0"
@@ -439,7 +516,6 @@ export default function DailyCheckPage() {
                             ตัดหนี้ -฿{item.amount.toLocaleString()}
                           </p>
                         )}
-                        {/* 🌟 แสดงป้ายเตือนปิดวงเมื่อติ๊กแล้วยอดเป็น 0 */}
                         {item.isChecked && remainingAfter <= 0 && (
                           <p className="text-[8px] md:text-[9px] font-bold text-orange-500 uppercase whitespace-nowrap mt-0.5 animate-pulse">
                             📦 เตรียมปิดวงอัตโนมัติ
