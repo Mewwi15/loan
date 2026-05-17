@@ -16,7 +16,6 @@ import {
   CheckCircle2,
   Calendar,
   Search,
-  AlertTriangle,
   Save,
   UserCheck,
   Loader2,
@@ -187,14 +186,6 @@ export default function DailyCheckPage() {
     );
   };
 
-  const updatePenalty = (id, value) => {
-    setDailyQueue((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, penalty: Number(value) } : item,
-      ),
-    );
-  };
-
   const filteredQueue = dailyQueue.filter((item) => {
     const searchLower = searchTerm.toLowerCase();
     return (
@@ -225,7 +216,7 @@ export default function DailyCheckPage() {
         batch.update(scheduleRef, {
           status: "paid",
           paidAt: serverTimestamp(),
-          appliedPenalty: item.penalty,
+          appliedPenalty: 0, // ส่งเป็น 0 เสมอเนื่องจากเอาช่องค่าปรับออกแล้ว
         });
 
         const loanRef = doc(db, "loans", item.loanId);
@@ -269,7 +260,7 @@ export default function DailyCheckPage() {
           customerName: item.customerName,
           amountPaid: item.amount,
           profitShare: item.profitShare || 0,
-          penalty: item.penalty || 0,
+          penalty: 0,
           installmentNo: item.installmentNo,
           paymentDate: selectedDate,
           createdAt: serverTimestamp(),
@@ -344,9 +335,6 @@ export default function DailyCheckPage() {
                       <TrendingUp className="w-3 h-3" /> กำไร
                     </span>
                   </th>
-                  <th className="px-3 md:px-4 py-4 text-center w-28">
-                    บวกค่าปรับ
-                  </th>
                   <th className="px-3 md:px-4 py-4 text-right pr-6">คงเหลือ</th>
                 </tr>
               </thead>
@@ -377,7 +365,6 @@ export default function DailyCheckPage() {
                       {/* 🌟 TD ข้อมูลวงกู้ */}
                       <td className="px-3 md:px-4 py-3 md:py-4">
                         <div className="flex items-center justify-between gap-3 min-w-0">
-                          {/* ซ้าย: ข้อมูลลูกค้าและวงกู้ */}
                           <div className="flex items-center gap-2 md:gap-3 min-w-0">
                             <div
                               className="w-8 h-8 md:w-10 md:h-10 rounded-xl flex items-center justify-center font-black text-xs md:text-sm shrink-0"
@@ -412,9 +399,8 @@ export default function DailyCheckPage() {
                             </div>
                           </div>
 
-                          {/* ขวา: ปุ่มแชทพอดีๆ + ธนาคาร */}
                           <div className="flex items-center gap-2.5 ml-auto shrink-0">
-                            {/* 🌟 ปุ่ม Messenger แบบพอดีๆ (w-9 h-9) */}
+                            {/* 🌟 ปุ่ม Messenger */}
                             {item.chatLink ? (
                               <button
                                 onClick={(e) =>
@@ -434,10 +420,10 @@ export default function DailyCheckPage() {
                               </div>
                             )}
 
-                            {/* 🌟 ธนาคารบนมือถือ */}
+                            {/* 🌟 ธนาคารบนมือถือ พร้อมโชว์ชื่อเจ้าของบัญชี */}
                             <div className="flex md:hidden items-center gap-1.5 border-l border-gray-100 pl-2 shrink-0">
                               <div
-                                className="w-6 h-6 rounded-lg flex items-center justify-center shadow-sm shrink-0"
+                                className="w-7 h-7 rounded-lg flex items-center justify-center shadow-sm shrink-0"
                                 style={{
                                   backgroundColor: `${item.bankColor}15`,
                                 }}
@@ -447,9 +433,12 @@ export default function DailyCheckPage() {
                                   style={{ color: item.bankColor }}
                                 />
                               </div>
-                              <div className="hidden min-[400px]:block">
-                                <p className="text-[10px] font-black text-gray-800 whitespace-nowrap">
+                              <div className="flex flex-col max-w-[80px]">
+                                <p className="text-[10px] font-black text-gray-800 whitespace-nowrap truncate leading-tight">
                                   {item.bankName}
+                                </p>
+                                <p className="text-[8px] font-bold text-gray-400 truncate mt-0.5">
+                                  {item.bankOwner}
                                 </p>
                               </div>
                             </div>
@@ -483,27 +472,6 @@ export default function DailyCheckPage() {
                       </td>
                       <td className="px-3 md:px-4 py-3 md:py-4 text-right font-black text-green-500 text-xs md:text-sm whitespace-nowrap">
                         +฿{(item.profitShare || 0).toLocaleString()}
-                      </td>
-                      <td className="px-3 md:px-4 py-3 md:py-4 text-center">
-                        <div className="flex justify-center">
-                          <div
-                            className={`flex items-center gap-1 px-2 md:px-3 py-1 md:py-1.5 bg-gray-50 rounded-xl border border-gray-100 ${item.penalty > 0 ? "border-orange-200 bg-orange-50" : ""}`}
-                          >
-                            <AlertTriangle
-                              className={`w-3 h-3 ${item.penalty > 0 ? "text-orange-500" : "text-gray-300"}`}
-                            />
-                            <input
-                              type="number"
-                              min="0"
-                              value={item.penalty === 0 ? "" : item.penalty}
-                              placeholder="0"
-                              onChange={(e) =>
-                                updatePenalty(item.id, e.target.value)
-                              }
-                              className="w-10 md:w-14 bg-transparent outline-none text-center font-black text-gray-700 text-xs md:text-sm"
-                            />
-                          </div>
-                        </div>
                       </td>
                       <td className="px-3 md:px-4 py-3 md:py-4 text-right pr-6">
                         <p
