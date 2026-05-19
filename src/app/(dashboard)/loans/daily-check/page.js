@@ -279,7 +279,8 @@ export default function DailyCheckPage() {
   };
 
   return (
-    <div className="w-full pb-20 px-4 md:px-6 lg:px-8 font-sans animate-in fade-in duration-500">
+    <div className="w-full pb-24 px-4 md:px-6 lg:px-8 font-sans animate-in fade-in duration-500">
+      {/* 🌟 Header Section */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6 mb-8 pt-6 md:pt-10">
         <div>
           <h1 className="text-xl md:text-2xl font-black text-gray-800 flex items-center gap-3">
@@ -318,59 +319,209 @@ export default function DailyCheckPage() {
             </p>
           </div>
         ) : filteredQueue.length > 0 ? (
-          <div className="overflow-x-auto w-full">
-            <table className="w-full text-left min-w-[700px] xl:min-w-full">
-              <thead className="bg-gray-50/50 border-b border-gray-50">
-                <tr className="text-[10px] md:text-[12px] font-black text-gray-400 uppercase tracking-[0.1em] md:tracking-[0.2em]">
-                  <th className="px-3 md:px-4 py-4 text-center w-16">
-                    เช็คจ่าย
-                  </th>
-                  <th className="px-3 md:px-4 py-4">ข้อมูลวงกู้</th>
-                  <th className="hidden md:table-cell px-3 md:px-4 py-4">
-                    บัญชีรับโอน
-                  </th>
-                  <th className="px-3 md:px-4 py-4 text-right">ยอดเก็บ</th>
-                  <th className="px-3 md:px-4 py-4 text-right">
-                    <span className="text-orange-500 flex items-center justify-end gap-1">
-                      <TrendingUp className="w-3 h-3" /> กำไร
-                    </span>
-                  </th>
-                  <th className="px-3 md:px-4 py-4 text-right pr-6">คงเหลือ</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filteredQueue.map((item) => {
-                  const remainingAfter = item.isChecked
-                    ? item.remainingBefore - item.amount
-                    : item.remainingBefore;
+          <div className="w-full">
+            {/* ========================================= */}
+            {/* 📱 1. รูปแบบ Mobile (ซ่อนเมื่ออยู่บนจอคอม) */}
+            {/* ========================================= */}
+            <div className="md:hidden flex flex-col divide-y divide-gray-100">
+              {filteredQueue.map((item) => {
+                const remainingAfter = item.isChecked
+                  ? item.remainingBefore - item.amount
+                  : item.remainingBefore;
 
-                  return (
-                    <tr
-                      key={item.id}
-                      className={`transition-all duration-300 ${item.isChecked ? "bg-green-50/30" : "hover:bg-gray-50/30"}`}
-                    >
-                      <td className="px-3 md:px-4 py-4 text-center align-top md:align-middle">
+                return (
+                  <div
+                    key={`mobile-${item.id}`}
+                    className={`p-4 transition-colors duration-300 ${item.isChecked ? "bg-green-50/50" : "hover:bg-gray-50"}`}
+                  >
+                    <div className="flex gap-3">
+                      {/* Checkbox (ซ้ายสุด) */}
+                      <div className="pt-1 shrink-0">
                         <button
                           onClick={() => toggleCheck(item.id)}
-                          className={`w-7 h-7 md:w-8 md:h-8 mx-auto mt-1 md:mt-0 rounded-xl flex items-center justify-center transition-all active:scale-90 ${
+                          className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all active:scale-90 ${
                             item.isChecked
-                              ? "bg-green-500 text-white shadow-lg shadow-green-500/20"
-                              : "bg-gray-100 text-gray-300 hover:bg-gray-200"
+                              ? "bg-green-500 text-white shadow-md shadow-green-500/20"
+                              : "bg-gray-100 text-gray-300 border border-gray-200"
                           }`}
                         >
-                          <CheckCircle2 className="w-4 h-4 md:w-5 md:h-5" />
+                          <CheckCircle2 className="w-5 h-5" />
                         </button>
-                      </td>
+                      </div>
 
-                      {/* 🌟 TD ข้อมูลวงกู้ (อัปเกรดให้โปร่ง สบายตา เป็นระเบียบ) */}
-                      <td className="px-3 md:px-4 py-4">
-                        <div className="flex flex-col w-full min-w-0">
-                          {/* 🔹 แถวบน: ข้อมูลลูกค้าและวงกู้ */}
-                          <div className="flex items-start md:items-center justify-between gap-3 w-full min-w-0">
-                            {/* บล็อกซ้าย (เนื้อหา) */}
-                            <div className="flex items-start md:items-center gap-3 min-w-0">
+                      {/* รายละเอียด (ขวา) */}
+                      <div className="flex-1 min-w-0">
+                        {/* ส่วนหัว: ข้อมูลวงกู้ + แชท */}
+                        <div className="flex justify-between items-start mb-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div
+                              className="w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 shadow-sm"
+                              style={{
+                                backgroundColor: item.isChecked
+                                  ? "#f3f4f6"
+                                  : `${item.bankColor}15`,
+                                color: item.isChecked
+                                  ? "#9ca3af"
+                                  : item.bankColor,
+                              }}
+                            >
+                              {item.loanNumber}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-black text-gray-800 truncate leading-tight">
+                                วง {item.loanNumber} • {item.loanName}
+                              </p>
+                              <p className="text-[11px] font-bold text-gray-500 mt-0.5 truncate">
+                                {item.customerName}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* ปุ่มแชท (มุมขวาบนของการ์ด) */}
+                          <div className="shrink-0 ml-2">
+                            {item.chatLink ? (
+                              <button
+                                onClick={(e) =>
+                                  handleOpenMessenger(e, item.chatLink)
+                                }
+                                className="w-8 h-8 rounded-lg flex items-center justify-center bg-blue-50 text-blue-500 shadow-sm border border-blue-100 active:scale-95"
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                              </button>
+                            ) : (
+                              <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-gray-50 text-gray-300 border border-gray-100">
+                                <MessageCircle className="w-4 h-4" />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* ป้ายสถานะ */}
+                        <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                          <span className="text-[9px] font-bold text-gray-500 uppercase tracking-widest bg-white border border-gray-200 px-1.5 py-0.5 rounded-md shadow-sm">
+                            งวดที่ {item.installmentNo}
+                          </span>
+                          {item.isOverdue && (
+                            <span className="text-[9px] font-bold text-red-600 uppercase tracking-widest bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-md shadow-sm animate-pulse">
+                              ค้างชำระ
+                            </span>
+                          )}
+                        </div>
+
+                        {/* 🌟 กล่องสรุปยอด (ระบุข้อมูลชัดเจนด้านล่าง) */}
+                        <div className="grid grid-cols-2 gap-3 bg-gray-50/80 rounded-xl p-3 border border-gray-100 mb-3 shadow-inner">
+                          <div>
+                            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
+                              ยอดเก็บ
+                            </p>
+                            <p className="text-sm font-black text-gray-800">
+                              ฿{item.amount.toLocaleString()}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
+                              กำไร
+                            </p>
+                            <p className="text-sm font-black text-green-500">
+                              +฿{(item.profitShare || 0).toLocaleString()}
+                            </p>
+                          </div>
+                          <div className="col-span-2 pt-2 border-t border-gray-200 flex justify-between items-end">
+                            <div>
+                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
+                                ยอดคงเหลือ
+                              </p>
+                              <p
+                                className={`text-base font-black leading-none ${item.isChecked ? "text-orange-600" : "text-gray-800"}`}
+                              >
+                                ฿{remainingAfter.toLocaleString()}
+                              </p>
+                            </div>
+                            {item.isChecked && (
+                              <div className="text-right">
+                                <p className="text-[9px] font-bold text-green-500">
+                                  ตัดหนี้ -฿{item.amount.toLocaleString()}
+                                </p>
+                                {remainingAfter <= 0 && (
+                                  <p className="text-[9px] font-bold text-orange-500 mt-0.5 animate-pulse">
+                                    📦 เตรียมปิดวง
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* ข้อมูลธนาคาร (ล่างสุด) */}
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 shadow-sm bg-white">
+                            <Landmark
+                              className="w-3.5 h-3.5"
+                              style={{ color: item.bankColor }}
+                            />
+                          </div>
+                          <p className="text-[11px] font-black text-gray-800 truncate">
+                            {item.bankName}{" "}
+                            <span className="text-gray-400 font-bold ml-1">
+                              ({item.bankOwner})
+                            </span>
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* ========================================= */}
+            {/* 💻 2. รูปแบบ Desktop (ตารางเดิม ซ่อนบนมือถือ) */}
+            {/* ========================================= */}
+            <div className="hidden md:block overflow-x-auto w-full">
+              <table className="w-full text-left w-full">
+                <thead className="bg-gray-50/50 border-b border-gray-50">
+                  <tr className="text-[12px] font-black text-gray-400 uppercase tracking-[0.2em]">
+                    <th className="px-4 py-4 text-center w-20">เช็คจ่าย</th>
+                    <th className="px-4 py-4">ข้อมูลวงกู้</th>
+                    <th className="px-4 py-4">บัญชีรับโอน</th>
+                    <th className="px-4 py-4 text-right">ยอดเก็บ</th>
+                    <th className="px-4 py-4 text-right">
+                      <span className="text-orange-500 flex items-center justify-end gap-1">
+                        <TrendingUp className="w-3 h-3" /> กำไร
+                      </span>
+                    </th>
+                    <th className="px-4 py-4 text-right pr-6">คงเหลือ</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {filteredQueue.map((item) => {
+                    const remainingAfter = item.isChecked
+                      ? item.remainingBefore - item.amount
+                      : item.remainingBefore;
+
+                    return (
+                      <tr
+                        key={`desktop-${item.id}`}
+                        className={`transition-all duration-300 ${item.isChecked ? "bg-green-50/30" : "hover:bg-gray-50/30"}`}
+                      >
+                        <td className="px-4 py-4 text-center align-middle">
+                          <button
+                            onClick={() => toggleCheck(item.id)}
+                            className={`w-8 h-8 mx-auto rounded-xl flex items-center justify-center transition-all active:scale-90 ${
+                              item.isChecked
+                                ? "bg-green-500 text-white shadow-lg shadow-green-500/20"
+                                : "bg-gray-100 text-gray-300 hover:bg-gray-200"
+                            }`}
+                          >
+                            <CheckCircle2 className="w-5 h-5" />
+                          </button>
+                        </td>
+
+                        <td className="px-4 py-4 align-middle">
+                          <div className="flex items-center justify-between gap-3 min-w-0">
+                            <div className="flex items-center gap-3 min-w-0">
                               <div
-                                className="w-9 h-9 md:w-10 md:h-10 rounded-xl flex items-center justify-center font-black text-xs md:text-sm shrink-0 mt-0.5 md:mt-0"
+                                className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm shrink-0"
                                 style={{
                                   backgroundColor: item.isChecked
                                     ? "#f3f4f6"
@@ -383,145 +534,98 @@ export default function DailyCheckPage() {
                                 {item.loanNumber}
                               </div>
                               <div className="min-w-0">
-                                <p className="text-[13px] md:text-sm font-black text-gray-800 truncate leading-tight">
+                                <p className="text-sm font-black text-gray-800 truncate leading-tight">
                                   วง {item.loanNumber} • {item.loanName}
                                 </p>
-                                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                                  <span className="text-[9px] font-bold text-gray-500 uppercase tracking-widest bg-white border border-gray-200 shadow-sm px-1.5 py-0.5 rounded-md">
+                                <div className="flex flex-wrap items-center gap-2 mt-1">
+                                  <span className="text-[9px] font-bold text-gray-500 uppercase tracking-widest bg-white border border-gray-200 shadow-sm px-2 py-0.5 rounded-md">
                                     งวดที่ {item.installmentNo}
                                   </span>
                                   {item.isOverdue && (
-                                    <span className="text-[9px] font-bold text-red-600 uppercase tracking-widest bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-md shadow-sm animate-pulse">
+                                    <span className="text-[9px] font-bold text-red-600 uppercase tracking-widest bg-red-50 border border-red-200 px-2 py-0.5 rounded-md shadow-sm animate-pulse">
                                       ค้างชำระ
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-[11px] font-bold text-gray-400 mt-1.5 truncate">
+                                <p className="text-[11px] font-bold text-gray-400 mt-1 truncate">
                                   {item.customerName}
                                 </p>
                               </div>
                             </div>
 
-                            {/* ปุ่มแชท (จะแสดงตรงนี้เฉพาะตอนเปิดบนจอคอม/แท็บเล็ต) */}
-                            <div className="hidden md:flex shrink-0 ml-4">
+                            <div className="flex shrink-0 ml-4">
                               {item.chatLink ? (
                                 <button
                                   onClick={(e) =>
                                     handleOpenMessenger(e, item.chatLink)
                                   }
-                                  className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-blue-50 text-blue-500 hover:bg-blue-600 hover:text-white transition-colors shadow-sm active:scale-95"
+                                  className="w-10 h-10 rounded-xl flex items-center justify-center bg-blue-50 text-blue-500 hover:bg-blue-600 hover:text-white transition-colors shadow-sm active:scale-95"
                                   title="เปิดแชท Messenger"
                                 >
                                   <MessageCircle className="w-5 h-5" />
                                 </button>
                               ) : (
-                                <div
-                                  className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-gray-50 text-gray-300 cursor-not-allowed border border-gray-100"
-                                  title="ยังไม่มีลิงก์แชท"
-                                >
+                                <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gray-50 text-gray-300 border border-gray-100 cursor-not-allowed">
                                   <MessageCircle className="w-5 h-5" />
                                 </div>
                               )}
                             </div>
                           </div>
+                        </td>
 
-                          {/* 🔹 แถวล่าง (แสดงเฉพาะมือถือ): ใส่กล่องสีเทาอ่อน แยกธนาคารกับแชทให้ชัดเจน! */}
-                          <div className="flex md:hidden mt-3.5 bg-gray-50/80 rounded-[0.8rem] p-2.5 items-center justify-between border border-gray-100/60">
-                            {/* ธนาคาร */}
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <div className="w-8 h-8 rounded-lg flex items-center justify-center shadow-sm shrink-0 bg-white">
-                                <Landmark
-                                  className="w-4 h-4"
-                                  style={{ color: item.bankColor }}
-                                />
-                              </div>
-                              <div className="flex flex-col min-w-0">
-                                <p className="text-[11px] font-black text-gray-800 whitespace-nowrap truncate leading-tight">
-                                  {item.bankName}
-                                </p>
-                                <p className="text-[10px] font-bold text-gray-500 truncate max-w-[150px] mt-0.5">
-                                  {item.bankOwner}
-                                </p>
-                              </div>
+                        <td className="px-4 py-4 align-middle">
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="w-7 h-7 rounded-lg flex items-center justify-center shadow-sm shrink-0"
+                              style={{ backgroundColor: `${item.bankColor}15` }}
+                            >
+                              <Landmark
+                                className="w-3.5 h-3.5"
+                                style={{ color: item.bankColor }}
+                              />
                             </div>
-
-                            {/* ปุ่มแชท */}
-                            <div className="shrink-0 ml-2">
-                              {item.chatLink ? (
-                                <button
-                                  onClick={(e) =>
-                                    handleOpenMessenger(e, item.chatLink)
-                                  }
-                                  className="w-9 h-9 rounded-xl flex items-center justify-center bg-white text-blue-500 hover:bg-blue-500 hover:text-white transition-colors shadow-sm border border-gray-100 active:scale-95"
-                                >
-                                  <MessageCircle className="w-4 h-4" />
-                                </button>
-                              ) : (
-                                <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-gray-100/50 text-gray-300 border border-gray-200">
-                                  <MessageCircle className="w-4 h-4" />
-                                </div>
-                              )}
+                            <div>
+                              <p className="text-[14px] font-black text-gray-800 whitespace-nowrap">
+                                {item.bankName}
+                              </p>
+                              <p className="text-[10px] font-bold text-gray-400 truncate max-w-[100px]">
+                                {item.bankOwner}
+                              </p>
                             </div>
                           </div>
-                          {/* จบแถวล่างมือถือ */}
-                        </div>
-                      </td>
-
-                      <td className="hidden md:table-cell px-3 md:px-4 py-4 align-top md:align-middle">
-                        <div className="flex items-center gap-2 mt-1 md:mt-0">
-                          <div
-                            className="w-6 h-6 md:w-7 md:h-7 rounded-lg flex items-center justify-center shadow-sm shrink-0"
-                            style={{ backgroundColor: `${item.bankColor}15` }}
-                          >
-                            <Landmark
-                              className="w-3 h-3 md:w-3.5 md:h-3.5"
-                              style={{ color: item.bankColor }}
-                            />
-                          </div>
-                          <div>
-                            <p className="text-[12px] md:text-[14px] font-black text-gray-800 whitespace-nowrap">
-                              {item.bankName}
-                            </p>
-                            <p className="text-[9px] md:text-[10px] font-bold text-gray-400 truncate max-w-[80px] md:max-w-[100px]">
-                              {item.bankOwner}
-                            </p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-3 md:px-4 py-4 text-right font-black text-gray-800 text-xs md:text-sm whitespace-nowrap align-top md:align-middle">
-                        <div className="mt-1 md:mt-0">
+                        </td>
+                        <td className="px-4 py-4 text-right font-black text-gray-800 text-sm whitespace-nowrap align-middle">
                           ฿{item.amount.toLocaleString()}
-                        </div>
-                      </td>
-                      <td className="px-3 md:px-4 py-4 text-right font-black text-green-500 text-xs md:text-sm whitespace-nowrap align-top md:align-middle">
-                        <div className="mt-1 md:mt-0">
+                        </td>
+                        <td className="px-4 py-4 text-right font-black text-green-500 text-sm whitespace-nowrap align-middle">
                           +฿{(item.profitShare || 0).toLocaleString()}
-                        </div>
-                      </td>
-                      <td className="px-3 md:px-4 py-4 text-right pr-6 align-top md:align-middle">
-                        <div className="mt-1 md:mt-0">
-                          <p
-                            className={`text-sm md:text-lg font-black tracking-tight transition-colors whitespace-nowrap ${item.isChecked ? "text-orange-600" : "text-gray-400"}`}
-                          >
-                            ฿{remainingAfter.toLocaleString()}
-                          </p>
-                          {item.isChecked && (
-                            <p className="text-[8px] md:text-[9px] font-bold text-green-500 uppercase whitespace-nowrap mt-0.5">
-                              ตัดหนี้ -฿{item.amount.toLocaleString()}
+                        </td>
+                        <td className="px-4 py-4 text-right pr-6 align-middle">
+                          <div>
+                            <p
+                              className={`text-lg font-black tracking-tight transition-colors whitespace-nowrap ${item.isChecked ? "text-orange-600" : "text-gray-400"}`}
+                            >
+                              ฿{remainingAfter.toLocaleString()}
                             </p>
-                          )}
-                          {item.isChecked && remainingAfter <= 0 && (
-                            <p className="text-[8px] md:text-[9px] font-bold text-orange-500 uppercase whitespace-nowrap mt-0.5 animate-pulse">
-                              📦 เตรียมปิดวงอัตโนมัติ
-                            </p>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                            {item.isChecked && (
+                              <p className="text-[9px] font-bold text-green-500 uppercase whitespace-nowrap mt-0.5">
+                                ตัดหนี้ -฿{item.amount.toLocaleString()}
+                              </p>
+                            )}
+                            {item.isChecked && remainingAfter <= 0 && (
+                              <p className="text-[9px] font-bold text-orange-500 uppercase whitespace-nowrap mt-0.5 animate-pulse">
+                                📦 เตรียมปิดวงอัตโนมัติ
+                              </p>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {/* สิ้นสุด Desktop Layout */}
           </div>
         ) : (
           <div className="py-24 text-center text-gray-400">
@@ -532,18 +636,18 @@ export default function DailyCheckPage() {
         )}
       </div>
 
-      <div className="mt-8 flex justify-end">
+      <div className="fixed md:static bottom-0 left-0 right-0 p-4 md:p-0 mt-0 md:mt-8 bg-white/90 md:bg-transparent backdrop-blur-md md:backdrop-blur-none border-t border-gray-100 md:border-0 z-40 flex justify-end">
         <button
           onClick={handleConfirmPayments}
           disabled={
             isSaving || dailyQueue.filter((i) => i.isChecked).length === 0
           }
-          className="bg-[#1F2335] hover:bg-black text-white px-8 md:px-12 py-3 md:py-4 rounded-[1.5rem] font-black shadow-xl transition-all active:scale-95 flex items-center gap-2 md:gap-3 text-xs md:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full md:w-auto bg-[#1F2335] hover:bg-black text-white px-8 md:px-12 py-4 md:py-4 rounded-[1.5rem] font-black shadow-xl transition-all active:scale-95 flex justify-center items-center gap-2 md:gap-3 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isSaving ? (
-            <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" />
+            <Loader2 className="w-5 h-5 animate-spin" />
           ) : (
-            <Save className="w-4 h-4 md:w-5 md:h-5 text-orange-500" />
+            <Save className="w-5 h-5 text-orange-500" />
           )}
           ยืนยันการตัดยอดเข้าสู่ระบบ
         </button>
