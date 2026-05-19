@@ -377,7 +377,7 @@ export default function DailyCheckPage() {
                             </div>
                           </div>
 
-                          {/* ปุ่มแชท (มุมขวาบนของการ์ด) */}
+                          {/* ปุ่มแชท */}
                           <div className="shrink-0 ml-2">
                             {item.chatLink ? (
                               <button
@@ -396,7 +396,7 @@ export default function DailyCheckPage() {
                           </div>
                         </div>
 
-                        {/* ป้ายสถานะ */}
+                        {/* ป้ายสถานะ (เพิ่มป้ายปิดวงตรงนี้) */}
                         <div className="flex flex-wrap items-center gap-1.5 mb-3">
                           <span className="text-[9px] font-bold text-gray-500 uppercase tracking-widest bg-white border border-gray-200 px-1.5 py-0.5 rounded-md shadow-sm">
                             งวดที่ {item.installmentNo}
@@ -406,10 +406,16 @@ export default function DailyCheckPage() {
                               ค้างชำระ
                             </span>
                           )}
+                          {/* 📦 ป้ายเตรียมปิดวง */}
+                          {item.isChecked && remainingAfter <= 0 && (
+                            <span className="text-[9px] font-bold text-orange-600 uppercase tracking-widest bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded-md shadow-sm animate-pulse">
+                              เตรียมปิดวง
+                            </span>
+                          )}
                         </div>
 
-                        {/* 🌟 กล่องสรุปยอด (ระบุข้อมูลชัดเจนด้านล่าง) */}
-                        <div className="grid grid-cols-2 gap-3 bg-gray-50/80 rounded-xl p-3 border border-gray-100 mb-3 shadow-inner">
+                        {/* 🌟 กล่องสีเทา (ยอดเงิน + ธนาคาร) */}
+                        <div className="grid grid-cols-2 gap-3 bg-gray-50/80 rounded-xl p-3 border border-gray-100 shadow-inner">
                           <div>
                             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
                               ยอดเก็บ
@@ -426,46 +432,22 @@ export default function DailyCheckPage() {
                               +฿{(item.profitShare || 0).toLocaleString()}
                             </p>
                           </div>
-                          <div className="col-span-2 pt-2 border-t border-gray-200 flex justify-between items-end">
-                            <div>
-                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
-                                ยอดคงเหลือ
-                              </p>
-                              <p
-                                className={`text-base font-black leading-none ${item.isChecked ? "text-orange-600" : "text-gray-800"}`}
-                              >
-                                ฿{remainingAfter.toLocaleString()}
-                              </p>
-                            </div>
-                            {item.isChecked && (
-                              <div className="text-right">
-                                <p className="text-[9px] font-bold text-green-500">
-                                  ตัดหนี้ -฿{item.amount.toLocaleString()}
-                                </p>
-                                {remainingAfter <= 0 && (
-                                  <p className="text-[9px] font-bold text-orange-500 mt-0.5 animate-pulse">
-                                    📦 เตรียมปิดวง
-                                  </p>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
 
-                        {/* ข้อมูลธนาคาร (ล่างสุด) */}
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 shadow-sm bg-white">
-                            <Landmark
-                              className="w-3.5 h-3.5"
-                              style={{ color: item.bankColor }}
-                            />
+                          {/* 🌟 ธนาคารแทนที่ยอดคงเหลือ */}
+                          <div className="col-span-2 pt-2 border-t border-gray-200 flex items-center gap-2">
+                            <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 shadow-sm bg-white">
+                              <Landmark
+                                className="w-3.5 h-3.5"
+                                style={{ color: item.bankColor }}
+                              />
+                            </div>
+                            <p className="text-[11px] font-black text-gray-800 truncate">
+                              {item.bankName}{" "}
+                              <span className="text-gray-400 font-bold ml-1">
+                                ({item.bankOwner})
+                              </span>
+                            </p>
                           </div>
-                          <p className="text-[11px] font-black text-gray-800 truncate">
-                            {item.bankName}{" "}
-                            <span className="text-gray-400 font-bold ml-1">
-                              ({item.bankOwner})
-                            </span>
-                          </p>
                         </div>
                       </div>
                     </div>
@@ -475,7 +457,7 @@ export default function DailyCheckPage() {
             </div>
 
             {/* ========================================= */}
-            {/* 💻 2. รูปแบบ Desktop (ตารางเดิม ซ่อนบนมือถือ) */}
+            {/* 💻 2. รูปแบบ Desktop (ซ่อนเมื่ออยู่บนมือถือ) */}
             {/* ========================================= */}
             <div className="hidden md:block overflow-x-auto w-full">
               <table className="w-full text-left w-full">
@@ -485,12 +467,11 @@ export default function DailyCheckPage() {
                     <th className="px-4 py-4">ข้อมูลวงกู้</th>
                     <th className="px-4 py-4">บัญชีรับโอน</th>
                     <th className="px-4 py-4 text-right">ยอดเก็บ</th>
-                    <th className="px-4 py-4 text-right">
+                    <th className="px-4 py-4 text-right pr-6">
                       <span className="text-orange-500 flex items-center justify-end gap-1">
                         <TrendingUp className="w-3 h-3" /> กำไร
                       </span>
                     </th>
-                    <th className="px-4 py-4 text-right pr-6">คงเหลือ</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -546,6 +527,12 @@ export default function DailyCheckPage() {
                                       ค้างชำระ
                                     </span>
                                   )}
+                                  {/* 📦 ป้ายเตรียมปิดวง */}
+                                  {item.isChecked && remainingAfter <= 0 && (
+                                    <span className="text-[9px] font-bold text-orange-600 uppercase tracking-widest bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-md shadow-sm animate-pulse">
+                                      เตรียมปิดวง
+                                    </span>
+                                  )}
                                 </div>
                                 <p className="text-[11px] font-bold text-gray-400 mt-1 truncate">
                                   {item.customerName}
@@ -597,27 +584,8 @@ export default function DailyCheckPage() {
                         <td className="px-4 py-4 text-right font-black text-gray-800 text-sm whitespace-nowrap align-middle">
                           ฿{item.amount.toLocaleString()}
                         </td>
-                        <td className="px-4 py-4 text-right font-black text-green-500 text-sm whitespace-nowrap align-middle">
+                        <td className="px-4 py-4 text-right font-black text-green-500 text-sm whitespace-nowrap pr-6 align-middle">
                           +฿{(item.profitShare || 0).toLocaleString()}
-                        </td>
-                        <td className="px-4 py-4 text-right pr-6 align-middle">
-                          <div>
-                            <p
-                              className={`text-lg font-black tracking-tight transition-colors whitespace-nowrap ${item.isChecked ? "text-orange-600" : "text-gray-400"}`}
-                            >
-                              ฿{remainingAfter.toLocaleString()}
-                            </p>
-                            {item.isChecked && (
-                              <p className="text-[9px] font-bold text-green-500 uppercase whitespace-nowrap mt-0.5">
-                                ตัดหนี้ -฿{item.amount.toLocaleString()}
-                              </p>
-                            )}
-                            {item.isChecked && remainingAfter <= 0 && (
-                              <p className="text-[9px] font-bold text-orange-500 uppercase whitespace-nowrap mt-0.5 animate-pulse">
-                                📦 เตรียมปิดวงอัตโนมัติ
-                              </p>
-                            )}
-                          </div>
                         </td>
                       </tr>
                     );
