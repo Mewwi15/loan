@@ -22,6 +22,7 @@ import {
   AlertCircle,
   Calculator,
   CheckCircle2,
+  RefreshCw,
 } from "lucide-react";
 
 export default function CustomerSharesProfilePage() {
@@ -39,7 +40,6 @@ export default function CustomerSharesProfilePage() {
   useEffect(() => {
     if (!customerId) return;
 
-    // ดึงข้อมูลลูกค้า
     const unsubCustomer = onSnapshot(
       doc(db, "customers", customerId),
       (docSnap) => {
@@ -52,7 +52,6 @@ export default function CustomerSharesProfilePage() {
       },
     );
 
-    // ดึงข้อมูลรายมือที่ลูกค้านี้ถืออยู่ทั้งหมด
     const qHands = query(
       collection(db, "share_hands"),
       where("customerId", "==", customerId),
@@ -60,7 +59,6 @@ export default function CustomerSharesProfilePage() {
     const unsubHands = onSnapshot(qHands, async (handsSnap) => {
       const handsData = handsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-      // ถอดรหัสวงแชร์ (shareId) ที่ไม่ซ้ำกัน เพื่อไปดึงรายละเอียดวง
       const uniqueShareIds = [...new Set(handsData.map((h) => h.shareId))];
 
       if (uniqueShareIds.length === 0) {
@@ -80,37 +78,31 @@ export default function CustomerSharesProfilePage() {
           if (s.exists()) sharesMap[s.id] = s.data();
         });
 
-        // นำข้อมูลมือแชร์ มาประกบกับ ข้อมูลวงแชร์
         const mergedHands = handsData
           .map((h) => ({
             ...h,
             shareDetails: sharesMap[h.shareId] || null,
           }))
-          .filter((h) => h.shareDetails); // กรองเฉพาะวงที่ยังมีอยู่
+          .filter((h) => h.shareDetails);
 
-        // 🌟 ลอจิกใหม่: จัดเรียงตามสถานะ (มือเป็น -> มือตาย -> ปิดบัญชี) แล้วค่อยเรียงตามชื่อวง
         mergedHands.sort((a, b) => {
-          // 1. ให้คะแนนสถานะ (Status Priority)
           const getStatusScore = (status) => {
-            if (status === "alive") return 1; // มือเป็น (ขึ้นก่อน)
-            if (status === "dead") return 2; // มือตาย (อันดับสอง)
-            return 3; // closed (ไว้ล่างสุด)
+            if (status === "alive") return 1;
+            if (status === "dead") return 2;
+            return 3;
           };
 
           const scoreA = getStatusScore(a.status);
           const scoreB = getStatusScore(b.status);
 
-          // ถ้าสถานะต่างกัน ให้เรียงตามคะแนนสถานะ
           if (scoreA !== scoreB) {
             return scoreA - scoreB;
           }
 
-          // 2. ถ้าสถานะเดียวกัน ให้เรียงตามชื่อวง
           if (a.shareName !== b.shareName) {
             return a.shareName.localeCompare(b.shareName);
           }
 
-          // 3. ถ้าชื่อวงเดียวกัน ให้เรียงตามมือที่
           return a.handNumber - b.handNumber;
         });
 
@@ -145,28 +137,37 @@ export default function CustomerSharesProfilePage() {
     (h) => h.shareDetails.status === "completed",
   );
 
-  let totalAliveSaved = 0; // ยอดรวมมือเป็น (เงินออม)
-  let totalDeadDebt = 0; // ยอดรวมมือตาย (หนี้สิน)
+  let totalAliveSaved = 0;
+  let totalDeadDebt = 0;
 
-  activeHands.forEach((h) => {
-    const shareData = h.shareDetails;
-    const isTao = h.handNumber === 1;
-    const isAlive = h.status === "alive";
-    const isClosed = h.status === "closed";
+  activeHands.forEach((hand) => {
+    const shareData = hand.shareDetails;
+    const isTao = hand.handNumber === 1;
+    const isAlive = hand.status === "alive";
+    const isClosed = hand.status === "closed";
+    const isSwapped = !!hand.isSwapped; // 🌟 เพิ่มตัวเช็คสวมสิทธิ์
 
-    const realTotalPaid =
-      (h.paidPeriods?.length || 0) * shareData.installmentAmount;
+    if (isClosed) return;
 
-    if (isClosed) return; // ปิดวงแล้ว ข้ามการคิดยอด
+    // 🌟 [แก้ไขแล้ว]: คำนวณจำนวนงวดที่จ่ายจริง (แยกกรณีสวมสิทธิ์)
+    const activePaidCount = isSwapped
+      ? hand.paidPeriods?.filter((p) => p >= hand.swappedAtPeriod).length || 0
+      : hand.paidPeriods?.length || 0;
+
+    const realTotalPaid = activePaidCount * shareData.installmentAmount;
 
     if (isAlive) {
       totalAliveSaved += realTotalPaid;
-    } else if (h.status === "dead" && !isTao) {
+    } else if (hand.status === "dead" && !isTao) {
       const totalCollected = shareData.installmentAmount * shareData.totalHands;
       const standardGuaranteeDeduction = shareData.installmentAmount * 3;
-      const totalObligation = totalCollected - standardGuaranteeDeduction;
 
-      let debt = totalObligation - realTotalPaid;
+      // 🌟 [แก้ไขแล้ว]: คำนวณหนี้ตั้งต้นของคนสวมสิทธิ์ให้ถูกต้อง
+      const baseDebt = isSwapped
+        ? hand.customBaseDebt || 0
+        : totalCollected - standardGuaranteeDeduction;
+
+      let debt = baseDebt - realTotalPaid;
       if (debt < 0) debt = 0;
       totalDeadDebt += debt;
     }
@@ -261,24 +262,34 @@ export default function CustomerSharesProfilePage() {
                   const isClosed = hand.status === "closed";
                   const isDead = hand.status === "dead";
                   const isTao = hand.handNumber === 1;
+                  const isSwapped = !!hand.isSwapped; // 🌟 เพิ่มตัวเช็คสวมสิทธิ์
+
+                  // 🌟 [แก้ไขแล้ว]: คำนวณจำนวนงวดที่จ่ายจริง (แยกกรณีสวมสิทธิ์)
+                  const activePaidCount = isSwapped
+                    ? hand.paidPeriods?.filter((p) => p >= hand.swappedAtPeriod)
+                        .length || 0
+                    : hand.paidPeriods?.length || 0;
 
                   const realTotalPaid =
-                    (hand.paidPeriods?.length || 0) *
-                    shareData.installmentAmount;
+                    activePaidCount * shareData.installmentAmount;
 
                   const totalCollected =
                     shareData.installmentAmount * shareData.totalHands;
                   const guaranteeDeduction = shareData.installmentAmount * 3;
-                  const totalObligation = totalCollected - guaranteeDeduction;
 
-                  let currentRemainingDebt = totalObligation - realTotalPaid;
+                  // 🌟 [แก้ไขแล้ว]: คำนวณหนี้ตั้งต้นของคนสวมสิทธิ์ให้ถูกต้อง
+                  const baseDebtForThisHand = isSwapped
+                    ? hand.customBaseDebt || 0
+                    : totalCollected - guaranteeDeduction;
+
+                  let currentRemainingDebt =
+                    baseDebtForThisHand - realTotalPaid;
                   if (currentRemainingDebt < 0) currentRemainingDebt = 0;
 
                   const displayAmount = isAlive
                     ? realTotalPaid
                     : currentRemainingDebt;
 
-                  // ตรวจสอบว่าต้องโชว์ Header ของกลุ่มสถานะนี้ไหม (Group Separator)
                   let showGroupHeader = false;
                   let groupTitle = "";
                   let groupColorClass = "";
@@ -314,7 +325,6 @@ export default function CustomerSharesProfilePage() {
 
                   return (
                     <React.Fragment key={hand.id}>
-                      {/* 🌟 หัวข้อแยกกลุ่ม (Group Header) */}
                       {showGroupHeader && (
                         <tr>
                           <td
@@ -326,7 +336,6 @@ export default function CustomerSharesProfilePage() {
                         </tr>
                       )}
 
-                      {/* ข้อมูลในตาราง */}
                       <tr
                         className={`transition-colors ${
                           isClosed
@@ -356,7 +365,15 @@ export default function CustomerSharesProfilePage() {
                               </span>
                             )}
                           </div>
-                          <p className="text-[11px] font-semibold text-gray-500 mt-0.5">
+
+                          {/* 🌟 แสดงป้ายสวมสิทธิ์เพื่อให้แอดมินจำได้ */}
+                          {isSwapped && (
+                            <span className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-md font-bold mt-1 inline-flex items-center gap-1">
+                              <RefreshCw className="w-3 h-3" /> สวมสิทธิ์มา
+                            </span>
+                          )}
+
+                          <p className="text-[11px] font-semibold text-gray-500 mt-1.5">
                             กองกลาง: ฿{shareData.poolAmount.toLocaleString()} |
                             งวด: {shareData.currentPeriod}/
                             {shareData.totalHands}
@@ -442,7 +459,6 @@ export default function CustomerSharesProfilePage() {
           </div>
         )}
 
-        {/* 🌟 แถบสรุปยอดแนบท้ายตาราง (Summary Footer) */}
         {activeHands.length > 0 && (
           <div className="bg-gray-50 p-6 flex flex-col md:flex-row justify-between items-center gap-4 md:gap-6">
             <div className="flex items-center gap-6 w-full md:w-auto">
@@ -525,7 +541,6 @@ export default function CustomerSharesProfilePage() {
         )}
       </div>
 
-      {/* --- 🕒 ประวัติวงที่จบแล้ว --- */}
       {completedHands.length > 0 && (
         <div className="pt-6">
           <h3 className="font-bold text-gray-500 mb-4 flex items-center gap-2 text-sm border-l-4 border-gray-300 pl-3">
