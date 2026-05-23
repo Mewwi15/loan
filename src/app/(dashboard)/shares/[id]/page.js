@@ -32,13 +32,12 @@ import {
   Camera,
   Crown,
   Undo2,
-  Coins,
   CheckCircle2,
   RefreshCw,
   Search,
   AlertCircle,
   User,
-  Wrench, // 🌟 ไอคอนสำหรับซ่อมยอด
+  Wrench,
 } from "lucide-react";
 import { toPng } from "html-to-image";
 
@@ -362,7 +361,6 @@ export default function ShareCommandCenterPage() {
     }
   };
 
-  // 🌟 ฟังก์ชันใหม่: ซ่อมยอดโดยใช้ "Template คนส่วนใหญ่"
   const handleRepairHandWithMajority = async (hand, correctPeriods) => {
     const confirmMsg = `ระบบตรวจพบว่ายอดของ "${hand.customerName}" แตกต่างจากคนส่วนใหญ่\n\nต้องการคัดลอกยอดจ่ายของ 'คนส่วนใหญ่' มาใส่แทนเพื่อซ่อมแซมให้ถูกต้องหรือไม่?`;
     if (!window.confirm(confirmMsg)) return;
@@ -508,27 +506,24 @@ export default function ShareCommandCenterPage() {
     collectedCount * share.installmentAmount + share.installmentAmount;
 
   // =================================================================
-  // 🌟 AI SCANNER: วิเคราะห์หา "ยอดส่วนใหญ่" (Majority Pattern) ของวงนี้
+  // 🌟 AI SCANNER: วิเคราะห์หา "ยอดส่วนใหญ่" (Majority Pattern)
   // =================================================================
   const lengthCounts = {};
   let maxFreq = 0;
-  let majorityTemplatePeriods = []; // เก็บประวัติการจ่ายของคนที่ปกติที่สุด
+  let majorityTemplatePeriods = [];
 
   hands.forEach((h) => {
-    // กรองคนที่มีโอกาสข้อมูลเพี้ยนออกไปก่อน (ท้าว, คนปิดวง, คนสวมสิทธิ์) ให้เหลือแต่คนปกติมาคำนวณโหวต
     if (h.handNumber === 1 || h.status === "closed" || h.isSwapped) return;
 
     const len = h.paidPeriods?.length || 0;
     lengthCounts[len] = (lengthCounts[len] || 0) + 1;
 
-    // หาว่าความยาวไหนซ้ำกันเยอะสุด (โหมด)
     if (lengthCounts[len] > maxFreq) {
       maxFreq = lengthCounts[len];
-      majorityTemplatePeriods = h.paidPeriods || []; // ยึด array คนนี้เป็นบรรทัดฐาน
+      majorityTemplatePeriods = h.paidPeriods || [];
     }
   });
 
-  // Fallback กรณีที่มือแชร์ปกติหายากมาก ให้พึ่งพาคนที่จ่ายเยอะสุดแทน
   if (majorityTemplatePeriods.length === 0) {
     hands.forEach((h) => {
       if (h.handNumber === 1 || h.status === "closed") return;
@@ -701,8 +696,14 @@ export default function ShareCommandCenterPage() {
 
                 const hasPaidThisPeriod =
                   hand.paidPeriods?.includes(currentPeriod);
-                const realTotalPaid =
-                  (hand.paidPeriods?.length || 0) * share.installmentAmount;
+
+                // 🌟 [แก้ไขแล้ว]: คำนวณจำนวนงวดที่จ่ายจริง (แยกกรณีสวมสิทธิ์)
+                const activePaidCount = isSwapped
+                  ? hand.paidPeriods?.filter((p) => p >= hand.swappedAtPeriod)
+                      .length || 0
+                  : hand.paidPeriods?.length || 0;
+
+                const realTotalPaid = activePaidCount * share.installmentAmount;
                 const prevPaid = hasPaidThisPeriod
                   ? realTotalPaid - share.installmentAmount
                   : realTotalPaid;
@@ -731,21 +732,16 @@ export default function ShareCommandCenterPage() {
                   currentRemainingDebt / share.installmentAmount,
                 );
 
-                // =================================================================
                 // 🌟 เทียบหาความผิดปกติ (Anomaly Detection) จาก Template คนส่วนใหญ่
-                // =================================================================
                 const startPeriod = isSwapped ? hand.swappedAtPeriod || 1 : 1;
-
-                // คัดลอก Template ของคนส่วนใหญ่ แล้วตัดงวดที่เริ่มสวมสิทธิ์ และงวดที่กดสละสิทธิ์ออกไป
                 const expectedPeriods = majorityTemplatePeriods.filter(
                   (p) =>
                     p >= startPeriod &&
                     !(hand.skippedPeriods || []).includes(p),
                 );
                 const expectedLength = expectedPeriods.length;
-                const currentLength = hand.paidPeriods?.length || 0;
+                const currentLength = activePaidCount; // ใช้ค่าที่ถูกต้องแล้ว
 
-                // ถ้าสแกนเจอว่า คนนี้มียอดน้อยกว่าคนส่วนใหญ่ (แปลว่าข้อมูลแหว่ง/เพี้ยนชัวร์ๆ) จะโชว์ปุ่มประแจ
                 const isOutOfSync =
                   currentLength < expectedLength && !isClosed && !isTao;
 
@@ -874,7 +870,6 @@ export default function ShareCommandCenterPage() {
                             >
                               ฿{realTotalPaid.toLocaleString()}
                             </span>
-                            {/* 🌟 ปุ่มประแจโผล่ตรงนี้ถ้ายอดไม่เท่าเพื่อน */}
                             {isOutOfSync && (
                               <button
                                 onClick={() =>
@@ -898,7 +893,6 @@ export default function ShareCommandCenterPage() {
                             <span className="text-[11px] text-orange-500 font-semibold mt-0.5">
                               รอรับยอด
                             </span>
-                            {/* 🌟 ปุ่มประแจโผล่ตรงนี้ถ้ายอดไม่เท่าเพื่อน */}
                             {isOutOfSync && (
                               <button
                                 onClick={() =>
