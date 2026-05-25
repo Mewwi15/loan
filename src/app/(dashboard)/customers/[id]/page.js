@@ -201,6 +201,10 @@ export default function CustomerDetailPage({ params }) {
   const [loading, setLoading] = useState(true);
   const [isProcessingAction, setIsProcessingAction] = useState(false);
 
+  // 🌟 State ควบคุม Custom Modals แจ้งเตือน
+  const [alertConfig, setAlertConfig] = useState(null);
+  const [confirmConfig, setConfirmConfig] = useState(null);
+
   const [customerStats, setCustomerStats] = useState({
     expectedProfitNormal: 0,
     expectedProfitPD: 0,
@@ -249,39 +253,28 @@ export default function CustomerDetailPage({ params }) {
     chatLink: "",
   });
 
-  // ==========================================
-  // 🌟 ท่าไม้ตาย: เปิดแชท Messenger (อัปเกรดทำความสะอาดลิงก์)
-  // ==========================================
   const handleOpenMessenger = (e, fullLink) => {
     e.preventDefault();
     e.stopPropagation();
 
     if (!fullLink) return;
-
-    // 🌟 ดักตัดพวก ?mibextid=... หรือ / ที่แถมมาด้านหลังทิ้งไปก่อน
     const cleanLink = fullLink.split("?")[0].replace(/\/$/, "");
-
-    // ดึงเฉพาะ "ตัวเลขรหัส" ออกมาจากลิงก์ที่สะอาดแล้ว
     const match = cleanLink.match(/\d+$/);
     const chatID = match ? match[0] : null;
 
-    // เช็คว่าเป็นมือถือระบบอะไร
     const userAgent = navigator.userAgent || navigator.vendor || window.opera;
     const isAndroid = /android/i.test(userAgent);
     const isIOS = /iPad|iPhone|iPod/.test(userAgent) && !window.MSStream;
 
     if (chatID) {
       if (isAndroid) {
-        // 🤖 ท่าไม้ตาย Android
         window.location.href = `intent://messages/t/${chatID}#Intent;package=com.facebook.orca;scheme=https;end;`;
       } else if (isIOS) {
-        // 🍎 ท่าไม้ตาย iOS
         window.location.href = `fb-messenger://user-thread/${chatID}`;
         setTimeout(() => {
           window.open(fullLink, "_blank");
         }, 2500);
       } else {
-        // 💻 เปิดจากคอมพิวเตอร์
         window.open(fullLink, "_blank");
       }
     } else {
@@ -289,21 +282,26 @@ export default function CustomerDetailPage({ params }) {
     }
   };
 
-  // 🌟 ฟังก์ชันเพิ่มลิงก์แชทด่วน
   const handleAddChatLink = async (loanId) => {
     const newLink = window.prompt(
-      "🔗 กรุณาวางลิงก์แชท Messenger\n(เช่น https://www.facebook.com/messages/t/...):",
+      "กรุณาวางลิงก์แชท Messenger (เช่น https://www.facebook.com/messages/t/...):",
     );
 
     if (!newLink) return;
 
     try {
       await updateDoc(doc(db, "loans", loanId), { chatLink: newLink });
-      alert("✅ เพิ่มลิงก์แชทเรียบร้อยแล้วครับ!");
+      setAlertConfig({
+        title: "เพิ่มลิงก์สำเร็จ",
+        message: "เพิ่มลิงก์แชทเข้าสู่ระบบเรียบร้อยแล้ว",
+      });
       fetchData();
     } catch (error) {
       console.error("Error updating chat link:", error);
-      alert("❌ เกิดข้อผิดพลาดในการบันทึกลิงก์");
+      setAlertConfig({
+        title: "เกิดข้อผิดพลาด",
+        message: "ไม่สามารถบันทึกลิงก์ได้ กรุณาลองใหม่อีกครั้ง",
+      });
     }
   };
 
@@ -505,7 +503,10 @@ export default function CustomerDetailPage({ params }) {
       setIsEditingProfit2025(false);
     } catch (error) {
       console.error("Error saving profit 2025:", error);
-      alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
+      setAlertConfig({
+        title: "เกิดข้อผิดพลาด",
+        message: "ไม่สามารถบันทึกข้อมูลได้",
+      });
     }
   };
 
@@ -519,40 +520,51 @@ export default function CustomerDetailPage({ params }) {
       setIsEditingCredit(false);
     } catch (error) {
       console.error("Error saving credit limit:", error);
-      alert("เกิดข้อผิดพลาดในการบันทึกวงเงิน");
+      setAlertConfig({
+        title: "เกิดข้อผิดพลาด",
+        message: "ไม่สามารถบันทึกวงเงินได้",
+      });
     }
   };
 
-  const handleToggleCategory = async (loan) => {
+  const handleToggleCategory = (loan) => {
     const newCategory = loan.category === "PD" ? "normal" : "PD";
-    const confirmMsg = `ยืนยันเปลี่ยนวง ${loan.loanNumber || ""} ให้เป็น "${newCategory === "PD" ? "ผ่อนของ (PD)" : "กู้ปกติ"}" ใช่หรือไม่?`;
+    const typeLabel = newCategory === "PD" ? "ผ่อนของ (PD)" : "กู้ปกติ";
 
-    if (!window.confirm(confirmMsg)) return;
+    setConfirmConfig({
+      title: "ยืนยันการเปลี่ยนประเภทวง",
+      message: `ต้องการเปลี่ยนประเภทวงที่ ${loan.loanNumber || ""} ให้เป็น "${typeLabel}" ใช่หรือไม่?`,
+      onConfirm: async () => {
+        setConfirmConfig(null);
+        setIsProcessingAction(true);
+        try {
+          const batch = writeBatch(db);
+          const loanRef = doc(db, "loans", loan.id);
+          batch.update(loanRef, { category: newCategory });
 
-    setIsProcessingAction(true);
-    try {
-      const batch = writeBatch(db);
-      const loanRef = doc(db, "loans", loan.id);
-      batch.update(loanRef, { category: newCategory });
+          const schedulesQ = query(
+            collection(db, "schedules"),
+            where("loanId", "==", loan.id),
+          );
+          const schedulesSnap = await getDocs(schedulesQ);
+          schedulesSnap.forEach((d) => {
+            batch.update(d.ref, { category: newCategory });
+          });
 
-      const schedulesQ = query(
-        collection(db, "schedules"),
-        where("loanId", "==", loan.id),
-      );
-      const schedulesSnap = await getDocs(schedulesQ);
-      schedulesSnap.forEach((d) => {
-        batch.update(d.ref, { category: newCategory });
-      });
-
-      await batch.commit();
-      await syncCustomerData();
-      fetchData();
-    } catch (error) {
-      console.error("Error toggling category:", error);
-      alert("เกิดข้อผิดพลาดในการเปลี่ยนประเภท");
-    } finally {
-      setIsProcessingAction(false);
-    }
+          await batch.commit();
+          await syncCustomerData();
+          fetchData();
+        } catch (error) {
+          console.error("Error toggling category:", error);
+          setAlertConfig({
+            title: "เกิดข้อผิดพลาด",
+            message: "ไม่สามารถเปลี่ยนประเภทวงได้",
+          });
+        } finally {
+          setIsProcessingAction(false);
+        }
+      },
+    });
   };
 
   const principal = Number(formData.principal) || 0;
@@ -692,51 +704,157 @@ export default function CustomerDetailPage({ params }) {
       await batch.commit();
       await syncCustomerData();
 
-      alert("✅ อัปเดตสัญญาสำเร็จ! ตำแหน่งงวดที่เคยชำระยังอยู่ครบถ้วน");
       setEditContractModalOpen(false);
       fetchData();
+      setAlertConfig({
+        title: "อัปเดตสัญญาสำเร็จ",
+        message:
+          "เงื่อนไขใหม่และตารางค่างวดถูกสร้างเรียบร้อยแล้ว ตำแหน่งงวดที่ชำระไปยังคงอยู่ครบถ้วน",
+      });
     } catch (error) {
       console.error("Error updating contract:", error);
-      alert("เกิดข้อผิดพลาดในการแก้ไขสัญญา");
+      setAlertConfig({
+        title: "เกิดข้อผิดพลาด",
+        message: "ไม่สามารถแก้ไขสัญญาได้ กรุณาลองใหม่อีกครั้ง",
+      });
     } finally {
       setIsSavingContract(false);
     }
   };
 
-  const handleCloseLoan = async (loanId) => {
-    if (
-      !window.confirm(
-        "⚠️ คำเตือน: นี่คือปุ่ม 'ลบทิ้ง' สำหรับกรณียกเลิกวงกู้ที่สร้างผิดพลาด\n\nระบบจะลบตารางค่างวดที่ยังไม่จ่ายทิ้งทั้งหมด และย้ายวงกู้ไปที่ 'ประวัติที่ปิดแล้ว'\n\nยืนยันการยกเลิก/ลบวงกู้นี้?",
-      )
-    )
-      return;
-    setIsProcessingAction(true);
-    try {
-      const batch = writeBatch(db);
-      const pendingSchedulesQ = query(
-        collection(db, "schedules"),
-        where("loanId", "==", loanId),
-        where("status", "==", "pending"),
-      );
-      const pendingSnap = await getDocs(pendingSchedulesQ);
-      pendingSnap.forEach((d) => batch.delete(d.ref));
+  const handleCloseLoan = (loanId) => {
+    setConfirmConfig({
+      title: "คำเตือน: ลบวงกู้",
+      message:
+        "นี่คือการยกเลิกหรือลบวงกู้ที่สร้างผิดพลาด\nระบบจะลบตารางค่างวดที่ยังไม่จ่ายทิ้งทั้งหมด และย้ายวงกู้นี้ไปที่ประวัติที่ปิดแล้ว\n\nต้องการดำเนินการต่อหรือไม่?",
+      onConfirm: async () => {
+        setConfirmConfig(null);
+        setIsProcessingAction(true);
+        try {
+          const batch = writeBatch(db);
+          const pendingSchedulesQ = query(
+            collection(db, "schedules"),
+            where("loanId", "==", loanId),
+            where("status", "==", "pending"),
+          );
+          const pendingSnap = await getDocs(pendingSchedulesQ);
+          pendingSnap.forEach((d) => batch.delete(d.ref));
 
-      batch.update(doc(db, "loans", loanId), {
-        status: "closed",
-        remainingBalance: 0,
-        closedAt: new Date().toISOString(),
-      });
-      await batch.commit();
+          batch.update(doc(db, "loans", loanId), {
+            status: "closed",
+            remainingBalance: 0,
+            closedAt: new Date().toISOString(),
+          });
+          await batch.commit();
 
-      await syncCustomerData();
-      alert("✅ ยกเลิก/ลบวงกู้เรียบร้อย!");
-      fetchData();
-    } catch (error) {
-      console.error("Error closing loan:", error);
-      alert("เกิดข้อผิดพลาดในการลบวงกู้");
-    } finally {
-      setIsProcessingAction(false);
-    }
+          await syncCustomerData();
+          fetchData();
+          setAlertConfig({
+            title: "ลบวงกู้สำเร็จ",
+            message: "ยกเลิกวงกู้และเคลียร์ข้อมูลเรียบร้อยแล้ว",
+          });
+        } catch (error) {
+          console.error("Error closing loan:", error);
+          setAlertConfig({
+            title: "เกิดข้อผิดพลาด",
+            message: "ไม่สามารถลบวงกู้ได้",
+          });
+        } finally {
+          setIsProcessingAction(false);
+        }
+      },
+    });
+  };
+
+  // ==========================================
+  // 🌟 ฟังก์ชันกู้คืนวงที่ปิดไป (Undo Close) ปรับปรุงใหม่ 100%
+  // ==========================================
+  const handleUndoCloseLoan = (loan) => {
+    setConfirmConfig({
+      title: "ยืนยันการกู้คืนวงกู้",
+      message: `ต้องการนำวง ${loan.loanNumber} กลับมาดำเนินการต่อใช่หรือไม่?\n\nระบบจะยกเลิกการชำระเงินของ "งวดล่าสุด" ให้อัตโนมัติ เพื่อให้ยอดหนี้กลับมาตามปกติ`,
+      onConfirm: async () => {
+        setConfirmConfig(null);
+        setIsProcessingAction(true);
+        try {
+          const batch = writeBatch(db);
+
+          // 1. ควานหางวดล่าสุดที่ถูกกดจ่ายไป
+          const sQ = query(
+            collection(db, "schedules"),
+            where("loanId", "==", loan.id),
+            where("status", "==", "paid"),
+          );
+          const sSnap = await getDocs(sQ);
+
+          let lastSchedule = null;
+          let maxNo = -1;
+
+          sSnap.forEach((d) => {
+            const data = d.data();
+            const instNo = Number(data.installmentNo);
+            if (!isNaN(instNo) && instNo > maxNo) {
+              maxNo = instNo;
+              lastSchedule = { id: d.id, ...data };
+            }
+          });
+
+          let addedBalance = 0;
+          let addedInst = 0;
+
+          // 2. ถ้าเจองวดล่าสุด ให้ปรับสถานะกลับเป็น pending
+          if (lastSchedule) {
+            batch.update(doc(db, "schedules", lastSchedule.id), {
+              status: "pending",
+              paidAt: null,
+            });
+            addedBalance = lastSchedule.amount;
+            addedInst = -1;
+
+            // ลบประวัติ transaction ที่เกิดจากงวดนั้นออก
+            const transQ = query(
+              collection(db, "transactions"),
+              where("loanId", "==", loan.id),
+              where("installmentNo", "==", lastSchedule.installmentNo),
+            );
+            const transSnap = await getDocs(transQ);
+            transSnap.forEach((t) => batch.delete(t.ref));
+          } else {
+            addedBalance = loan.installmentAmount || 0;
+          }
+
+          // 3. ปรับสถานะวงกู้และคืนยอดหนี้
+          batch.update(doc(db, "loans", loan.id), {
+            status: "active",
+            closedAt: null,
+            remainingBalance: (loan.remainingBalance || 0) + addedBalance,
+            currentInstallment: Math.max(
+              0,
+              (loan.currentInstallment || 0) + addedInst,
+            ),
+          });
+
+          await batch.commit();
+          await syncCustomerData();
+          setIsClosedLoansModalOpen(false);
+          fetchData();
+
+          setAlertConfig({
+            title: "กู้คืนวงกู้สำเร็จ",
+            message:
+              "วงกู้กลับมาอยู่ในสถานะกำลังดำเนินการ และดึงยอดงวดล่าสุดกลับมาให้เรียบร้อยแล้ว",
+          });
+        } catch (error) {
+          console.error("Error undoing close loan:", error);
+          setAlertConfig({
+            title: "เกิดข้อผิดพลาด",
+            message: "ไม่สามารถกู้คืนวงกู้ได้ กรุณาลองใหม่อีกครั้ง",
+          });
+        } finally {
+          setIsProcessingAction(false);
+        }
+      },
+    });
   };
 
   const confirmEarlyPayoff = async () => {
@@ -787,14 +905,19 @@ export default function CustomerDetailPage({ params }) {
       }
       await batch.commit();
       await syncCustomerData();
-      alert(
-        `🎉 ปิดวงล่วงหน้าสำเร็จ!\nยอดที่รับ: ฿${totalPaidAmount.toLocaleString()}`,
-      );
+
       setEarlyPayoffModalOpen(false);
       fetchData();
+      setAlertConfig({
+        title: "ปิดวงสำเร็จ",
+        message: `บันทึกการโปะปิดวงเรียบร้อยแล้ว\nยอดที่รับสุทธิ: ฿${totalPaidAmount.toLocaleString()}`,
+      });
     } catch (error) {
       console.error("Early Payoff Error:", error);
-      alert("เกิดข้อผิดพลาดในการโปะยอดปิดวง");
+      setAlertConfig({
+        title: "เกิดข้อผิดพลาด",
+        message: "ไม่สามารถโปะยอดปิดวงได้",
+      });
     } finally {
       setIsProcessingPayoff(false);
     }
@@ -823,107 +946,118 @@ export default function CustomerDetailPage({ params }) {
     }
   };
 
-  const toggleScheduleStatus = async (scheduleItem) => {
+  const toggleScheduleStatus = (scheduleItem) => {
     const isCurrentlyPaid = scheduleItem.status === "paid";
 
-    const confirmMsg = isCurrentlyPaid
-      ? `ต้องการยกเลิกการรับเงินงวดที่ ${scheduleItem.installmentNo} ใช่หรือไม่?\n(สถานะจะกลับเป็น "ค้างชำระ" และยอดหนี้จะเพิ่มขึ้น)`
-      : `ต้องการเปลี่ยนงวดที่ ${scheduleItem.installmentNo} เป็น "ชำระแล้ว" ใช่หรือไม่?\n(ยอดหนี้จะลดลง)`;
+    setConfirmConfig({
+      title: "ยืนยันการปรับสถานะ",
+      message: isCurrentlyPaid
+        ? `ต้องการยกเลิกการรับเงินงวดที่ ${scheduleItem.installmentNo} ใช่หรือไม่?\nสถานะจะกลับเป็น "ค้างชำระ" และยอดหนี้จะเพิ่มขึ้น`
+        : `ต้องการเปลี่ยนงวดที่ ${scheduleItem.installmentNo} เป็น "ชำระแล้ว" ใช่หรือไม่?\nยอดหนี้ของลูกค้าจะลดลง`,
+      onConfirm: async () => {
+        setConfirmConfig(null);
+        setIsProcessingAction(true);
+        try {
+          const batch = writeBatch(db);
 
-    if (!window.confirm(confirmMsg)) return;
+          const scheduleRef = doc(db, "schedules", scheduleItem.id);
+          batch.update(scheduleRef, {
+            status: isCurrentlyPaid ? "pending" : "paid",
+            paidAt: isCurrentlyPaid ? null : serverTimestamp(),
+          });
 
-    setIsProcessingAction(true);
-    try {
-      const batch = writeBatch(db);
+          const loanRef = doc(db, "loans", selectedLoan.id);
+          const amountChange = isCurrentlyPaid
+            ? scheduleItem.amount
+            : -scheduleItem.amount;
+          const installmentChange = isCurrentlyPaid ? -1 : 1;
 
-      const scheduleRef = doc(db, "schedules", scheduleItem.id);
-      batch.update(scheduleRef, {
-        status: isCurrentlyPaid ? "pending" : "paid",
-        paidAt: isCurrentlyPaid ? null : serverTimestamp(),
-      });
+          const newBalance = selectedLoan.remainingBalance + amountChange;
+          const updateData = {
+            remainingBalance: increment(amountChange),
+            currentInstallment: increment(installmentChange),
+          };
 
-      const loanRef = doc(db, "loans", selectedLoan.id);
-      const amountChange = isCurrentlyPaid
-        ? scheduleItem.amount
-        : -scheduleItem.amount;
-      const installmentChange = isCurrentlyPaid ? -1 : 1;
+          let willAutoClose = false;
 
-      const newBalance = selectedLoan.remainingBalance + amountChange;
-      const updateData = {
-        remainingBalance: increment(amountChange),
-        currentInstallment: increment(installmentChange),
-      };
+          if (!isCurrentlyPaid && newBalance <= 0) {
+            updateData.status = "closed";
+            updateData.closedAt = new Date().toISOString();
+            willAutoClose = true;
+          } else if (
+            isCurrentlyPaid &&
+            newBalance > 0 &&
+            selectedLoan.status === "closed"
+          ) {
+            updateData.status = "active";
+            updateData.closedAt = null;
+          }
 
-      if (!isCurrentlyPaid && newBalance <= 0) {
-        updateData.status = "closed";
-        updateData.closedAt = new Date().toISOString();
-        alert(
-          "🎉 ลูกค้าชำระครบแล้ว! ระบบได้ทำการย้ายเข้าประวัติวงปิดแล้วให้อัตโนมัติครับ",
-        );
-      } else if (
-        isCurrentlyPaid &&
-        newBalance > 0 &&
-        selectedLoan.status === "closed"
-      ) {
-        updateData.status = "active";
-        updateData.closedAt = null;
-      }
+          batch.update(loanRef, updateData);
 
-      batch.update(loanRef, updateData);
+          if (isCurrentlyPaid) {
+            const transQ = query(
+              collection(db, "transactions"),
+              where("loanId", "==", selectedLoan.id),
+              where("installmentNo", "==", scheduleItem.installmentNo),
+            );
+            const transSnap = await getDocs(transQ);
+            transSnap.forEach((t) => batch.delete(t.ref));
+          } else {
+            const transRef = doc(collection(db, "transactions"));
+            batch.set(transRef, {
+              loanId: selectedLoan.id,
+              customerId: customerId,
+              customerName: selectedLoan.customerName,
+              amountPaid: scheduleItem.amount,
+              profitShare: scheduleItem.profitShare || 0,
+              penalty: 0,
+              installmentNo: scheduleItem.installmentNo,
+              paymentDate: new Date().toISOString().split("T")[0],
+              createdAt: serverTimestamp(),
+              note: "บันทึกจากการแก้ไขตารางค่างวด (Manual)",
+              category: selectedLoan.category || "normal",
+            });
+          }
 
-      if (isCurrentlyPaid) {
-        const transQ = query(
-          collection(db, "transactions"),
-          where("loanId", "==", selectedLoan.id),
-          where("installmentNo", "==", scheduleItem.installmentNo),
-        );
-        const transSnap = await getDocs(transQ);
-        transSnap.forEach((t) => batch.delete(t.ref));
-      } else {
-        const transRef = doc(collection(db, "transactions"));
-        batch.set(transRef, {
-          loanId: selectedLoan.id,
-          customerId: customerId,
-          customerName: selectedLoan.customerName,
-          amountPaid: scheduleItem.amount,
-          profitShare: scheduleItem.profitShare || 0,
-          penalty: 0,
-          installmentNo: scheduleItem.installmentNo,
-          paymentDate: new Date().toISOString().split("T")[0],
-          createdAt: serverTimestamp(),
-          note: "บันทึกจากการแก้ไขตารางค่างวด (Manual)",
-          category: selectedLoan.category || "normal",
-        });
-      }
+          await batch.commit();
+          await syncCustomerData();
 
-      await batch.commit();
-      await syncCustomerData();
+          if (willAutoClose) {
+            setScheduleModalOpen(false);
+            setAlertConfig({
+              title: "ปิดบัญชีอัตโนมัติ",
+              message:
+                "ลูกค้าชำระครบแล้ว ระบบได้ทำการย้ายเข้าประวัติวงปิดให้อัตโนมัติ",
+            });
+          } else {
+            setLoanSchedule((prev) =>
+              prev.map((s) =>
+                s.id === scheduleItem.id
+                  ? { ...s, status: isCurrentlyPaid ? "pending" : "paid" }
+                  : s,
+              ),
+            );
+          }
 
-      if (!isCurrentlyPaid && newBalance <= 0) {
-        setScheduleModalOpen(false);
-      } else {
-        setLoanSchedule((prev) =>
-          prev.map((s) =>
-            s.id === scheduleItem.id
-              ? { ...s, status: isCurrentlyPaid ? "pending" : "paid" }
-              : s,
-          ),
-        );
-      }
-
-      fetchData();
-    } catch (error) {
-      console.error("Error toggling status:", error);
-      alert("เกิดข้อผิดพลาดในการปรับสถานะ");
-    } finally {
-      setIsProcessingAction(false);
-    }
+          fetchData();
+        } catch (error) {
+          console.error("Error toggling status:", error);
+          setAlertConfig({
+            title: "เกิดข้อผิดพลาด",
+            message: "ไม่สามารถปรับสถานะได้",
+          });
+        } finally {
+          setIsProcessingAction(false);
+        }
+      },
+    });
   };
 
   if (loading)
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-gray-400 font-black text-[10px] uppercase tracking-[0.3em]">
-        <Loader2 className="w-10 h-10 animate-spin text-orange-500" />{" "}
+        <Loader2 className="w-10 h-10 animate-spin text-orange-500" />
         กำลังโหลดข้อมูลลูกค้า...
       </div>
     );
@@ -1139,9 +1273,8 @@ export default function CustomerDetailPage({ params }) {
                   }`}
                 ></div>
 
-                {/* 🌟 1. Header (ปรับ Layout ใหม่หมด) */}
+                {/* 🌟 1. Header */}
                 <div className="p-4 sm:p-6 border-b border-gray-50 flex justify-between items-start gap-3 mt-1 sm:mt-0">
-                  {/* Left Side: Icon + Name + Buttons */}
                   <div className="flex items-start gap-3 sm:gap-4 w-full">
                     <div
                       className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center font-black text-xl sm:text-2xl shrink-0 shadow-sm ${isPD ? "bg-rose-100 text-rose-600 border border-rose-200" : ""}`}
@@ -1166,7 +1299,6 @@ export default function CustomerDetailPage({ params }) {
                         วง {loan.loanNumber || index + 1}
                       </h3>
 
-                      {/* 🌟 2. โซนปุ่มแชทอยู่ตรงกลางพอดีเป๊ะ */}
                       <div className="flex flex-wrap items-center gap-2 mb-2">
                         <button
                           type="button"
@@ -1211,7 +1343,6 @@ export default function CustomerDetailPage({ params }) {
                     </div>
                   </div>
 
-                  {/* Right Side: Amount */}
                   <div className="text-right shrink-0 mt-0.5">
                     <p
                       className={`text-[9px] sm:text-[11px] font-black uppercase tracking-widest mb-1 ${isPD ? "text-rose-400" : "text-gray-400"}`}
@@ -1281,7 +1412,6 @@ export default function CustomerDetailPage({ params }) {
                   </div>
                 </div>
 
-                {/* 🌟 3. เคลียร์ปุ่มด้านล่างให้กดง่ายขึ้น */}
                 <div className="p-3 sm:p-5 bg-white border-t border-gray-50 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex gap-1.5 sm:gap-2">
                     <button
@@ -1424,10 +1554,63 @@ export default function CustomerDetailPage({ params }) {
       </div>
 
       {/* ======================================================== */}
-      {/* 🌟🌟 MODALS ทั้งหมด 🌟🌟 */}
+      {/* MODALS ส่วนเสริม */}
       {/* ======================================================== */}
 
-      {/* Modal ประวัติวงที่ปิดแล้ว */}
+      {/* Modal แจ้งเตือนแบบกำหนดเอง (Alert) */}
+      {alertConfig && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-gray-900/70 backdrop-blur-sm">
+          <div className="bg-white rounded-[1.5rem] shadow-2xl p-6 w-full max-w-sm animate-in zoom-in-95 text-center">
+            <h3 className="text-xl font-black text-gray-800 mb-2">
+              {alertConfig.title}
+            </h3>
+            <p className="text-sm font-bold text-gray-500 mb-6 whitespace-pre-wrap">
+              {alertConfig.message}
+            </p>
+            <button
+              onClick={() => setAlertConfig(null)}
+              className="w-full py-3 bg-gray-900 hover:bg-black text-white rounded-xl font-black text-sm transition-colors"
+            >
+              ตกลง
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal ยืนยันแบบกำหนดเอง (Confirm) */}
+      {confirmConfig && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-gray-900/70 backdrop-blur-sm">
+          <div className="bg-white rounded-[1.5rem] shadow-2xl p-6 w-full max-w-sm animate-in zoom-in-95 text-center">
+            <h3 className="text-xl font-black text-gray-800 mb-2">
+              {confirmConfig.title}
+            </h3>
+            <p className="text-sm font-bold text-gray-500 mb-6 whitespace-pre-wrap leading-relaxed">
+              {confirmConfig.message}
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmConfig(null)}
+                className="w-full py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-black text-sm transition-colors"
+                disabled={isProcessingAction}
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={confirmConfig.onConfirm}
+                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black text-sm transition-colors flex justify-center items-center gap-2"
+                disabled={isProcessingAction}
+              >
+                {isProcessingAction && (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                )}
+                ยืนยัน
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal ประวัติวงที่ปิดแล้ว พร้อมปุ่มกู้คืน */}
       {isClosedLoansModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div
@@ -1489,12 +1672,23 @@ export default function CustomerDetailPage({ params }) {
                         </div>
                       </div>
                       <div className="text-right w-full sm:w-auto flex flex-row sm:flex-col justify-between sm:justify-center items-center sm:items-end border-t sm:border-t-0 border-gray-50 pt-3 sm:pt-0 mt-2 sm:mt-0">
-                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">
-                          กำไรที่ได้
-                        </p>
-                        <p className="text-lg font-black text-green-500">
-                          +฿{(loan.totalProfit || 0).toLocaleString()}
-                        </p>
+                        <div>
+                          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5 text-left sm:text-right">
+                            กำไรที่ได้
+                          </p>
+                          <p className="text-lg font-black text-green-500">
+                            +฿{(loan.totalProfit || 0).toLocaleString()}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleUndoCloseLoan(loan)}
+                          disabled={isProcessingAction}
+                          className="mt-0 sm:mt-2 px-3 py-1.5 sm:px-4 sm:py-2 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-500 hover:text-gray-700 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer disabled:opacity-50"
+                          title="กู้คืนวงกู้นี้กลับไปสถานะเดิม"
+                        >
+                          <Undo2 className="w-3.5 h-3.5 pointer-events-none" />
+                          กู้คืน
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -1608,7 +1802,6 @@ export default function CustomerDetailPage({ params }) {
             </div>
 
             <div className="overflow-y-auto p-5 sm:p-8 flex-1 space-y-4 sm:space-y-6">
-              {/* 🌟 ช่องแก้ไขลิงก์แชท */}
               <div className="grid grid-cols-1 gap-4 sm:gap-6 mt-1">
                 <div>
                   <label className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest ml-1 text-blue-500 flex items-center gap-1">
@@ -1999,7 +2192,7 @@ export default function CustomerDetailPage({ params }) {
         </div>
       )}
 
-      {/* Modal ดูตารางงวด พร้อมปุ่มแก้บิลสุดเทพ */}
+      {/* Modal ดูตารางงวด */}
       {scheduleModalOpen && selectedLoan && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div
@@ -2018,7 +2211,7 @@ export default function CustomerDetailPage({ params }) {
                     วง {selectedLoan.loanNumber || "-"}
                   </span>
                   <p className="text-[9px] sm:text-[14px] font-black text-gray-400 uppercase tracking-widest">
-                    แตะที่ ❌ หรือ ✅ เพื่อแก้ไขสถานะงวด
+                    แตะที่เครื่องหมายเพื่อแก้ไขสถานะงวด
                   </p>
                 </div>
               </div>
