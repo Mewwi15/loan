@@ -46,6 +46,7 @@ import {
   Target,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 const BANK_OPTIONS = [
   { owner: "พงศกร ศรีษเกตุ", bank: "TTB", acc: "9219175719", color: "#f6821f" },
@@ -193,6 +194,9 @@ const getDisbursementDate = (startDate, frequency, type) => {
 };
 
 export default function CustomerDetailPage({ params }) {
+  // 🌟 เพิ่มการประกาศใช้งาน router ตรงนี้
+  const router = useRouter();
+
   const unwrappedParams = React.use(params);
   const customerId = unwrappedParams.id;
 
@@ -448,13 +452,19 @@ export default function CustomerDetailPage({ params }) {
           activeSharesCount: activeHands.length,
           netShareBalance: netBalance,
         });
+      } else {
+        setAlertConfig({
+          title: "ไม่พบข้อมูล",
+          message: "ไม่พบข้อมูลลูกค้าในระบบ",
+        });
+        router.push("/customers");
       }
     } catch (error) {
       console.error("Error fetching details:", error);
     } finally {
       setLoading(false);
     }
-  }, [customerId]);
+  }, [customerId, router]); // 🌟 ใช้ตัวแปรที่ประกาศแล้วได้อย่างปลอดภัย
 
   useEffect(() => {
     fetchData();
@@ -772,65 +782,128 @@ export default function CustomerDetailPage({ params }) {
   const handleUndoCloseLoan = (loan) => {
     setConfirmConfig({
       title: "ยืนยันการกู้คืนวงกู้",
-      message: `ต้องการนำวง ${loan.loanNumber} กลับมาดำเนินการต่อใช่หรือไม่?\n\nระบบจะยกเลิกการชำระเงินของ "งวดล่าสุด" ให้อัตโนมัติ เพื่อให้ยอดหนี้กลับมาตามปกติ`,
+      message: `ต้องการนำวง ${loan.loanNumber} กลับมาดำเนินการต่อใช่หรือไม่?\n\nระบบจะตรวจสอบและยกเลิกการชำระเงินของ "รายการล่าสุด" ให้อัตโนมัติ เพื่อให้ยอดหนี้กลับมาตามปกติ และรันต่อได้ทันที`,
       onConfirm: async () => {
         setConfirmConfig(null);
         setIsProcessingAction(true);
         try {
           const batch = writeBatch(db);
 
-          // 1. ควานหางวดล่าสุดที่ถูกกดจ่ายไป
-          const sQ = query(
-            collection(db, "schedules"),
+          // 1. ค้นหา Transaction ล่าสุดของวงนี้
+          const transQ = query(
+            collection(db, "transactions"),
             where("loanId", "==", loan.id),
-            where("status", "==", "paid"),
           );
-          const sSnap = await getDocs(sQ);
+          const transSnap = await getDocs(transQ);
 
-          let lastSchedule = null;
-          let maxNo = -1;
+          let transList = transSnap.docs.map((d) => ({
+            id: d.id,
+            ref: d.ref,
+            ...d.data(),
+          }));
+          // เรียงจากใหม่ไปเก่า
+          transList.sort(
+            (a, b) =>
+              (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0),
+          );
 
-          sSnap.forEach((d) => {
-            const data = d.data();
-            const instNo = Number(data.installmentNo);
-            if (!isNaN(instNo) && instNo > maxNo) {
-              maxNo = instNo;
-              lastSchedule = { id: d.id, ...data };
-            }
-          });
+          const lastTrans = transList[0];
+          let revertedAmount = 0;
+          let revertedCount = 0;
 
-          let addedBalance = 0;
-          let addedInst = 0;
+          if (lastTrans) {
+            // ลบ Transaction ล่าสุดทิ้งเพื่อไม่ให้กำไร/ยอดรับซ้ำซ้อน
+            batch.delete(lastTrans.ref);
+            revertedAmount = lastTrans.amountPaid || 0;
 
-          // 2. ถ้าเจองวดล่าสุด ให้ปรับสถานะกลับเป็น pending
-          if (lastSchedule) {
-            batch.update(doc(db, "schedules", lastSchedule.id), {
-              status: "pending",
-              paidAt: null,
-            });
-            addedBalance = lastSchedule.amount;
-            addedInst = -1;
-
-            // ลบประวัติ transaction ที่เกิดจากงวดนั้นออก
-            const transQ = query(
-              collection(db, "transactions"),
+            // ค้นหา Schedules ที่เป็น paid ทั้งหมดของวงนี้
+            const sQ = query(
+              collection(db, "schedules"),
               where("loanId", "==", loan.id),
-              where("installmentNo", "==", lastSchedule.installmentNo),
+              where("status", "==", "paid"),
             );
-            const transSnap = await getDocs(transQ);
-            transSnap.forEach((t) => batch.delete(t.ref));
+            const sSnap = await getDocs(sQ);
+            const schedules = sSnap.docs.map((d) => ({
+              id: d.id,
+              ref: d.ref,
+              ...d.data(),
+            }));
+
+            if (lastTrans.installmentNo === "Early Payoff") {
+              // ถ้าเป็นการโปะปิดวง ให้หางวดที่ถูกเซ็ตจ่ายตรงกับวันที่โปะ
+              schedules.forEach((s) => {
+                if (s.dueDate === lastTrans.paymentDate) {
+                  batch.update(s.ref, { status: "pending", paidAt: null });
+                  revertedCount++;
+                }
+              });
+
+              // Fallback หากหางวดไม่เจอจากวันที่ ให้เรียงจากงวดล่าสุดแล้วนับถอยหลังตามยอดเงิน
+              if (revertedCount === 0) {
+                schedules.sort((a, b) => b.installmentNo - a.installmentNo);
+                let estimatedCount = Math.ceil(
+                  revertedAmount / (loan.installmentAmount || 1),
+                );
+                for (
+                  let i = 0;
+                  i < estimatedCount && i < schedules.length;
+                  i++
+                ) {
+                  batch.update(schedules[i].ref, {
+                    status: "pending",
+                    paidAt: null,
+                  });
+                  revertedCount++;
+                }
+              }
+            } else {
+              // ถ้าเป็นการจ่ายปกติ 1 งวดสุดท้าย ให้ยกเลิกเฉพาะงวดนั้น
+              const targetSchedule = schedules.find(
+                (s) =>
+                  String(s.installmentNo) === String(lastTrans.installmentNo),
+              );
+              if (targetSchedule) {
+                batch.update(targetSchedule.ref, {
+                  status: "pending",
+                  paidAt: null,
+                });
+                revertedCount = 1;
+              }
+            }
           } else {
-            addedBalance = loan.installmentAmount || 0;
+            // ถ้าไม่พบประวัติ Transaction เลย (เช่น ปิดด้วยปุ่มลบทิ้ง)
+            revertedAmount = loan.installmentAmount || 0;
+            revertedCount = 1;
+
+            // ดึงงวดสุดท้ายที่เป็น paid กลับมา
+            const sQ = query(
+              collection(db, "schedules"),
+              where("loanId", "==", loan.id),
+              where("status", "==", "paid"),
+            );
+            const sSnap = await getDocs(sQ);
+            let maxNo = -1;
+            let lastRef = null;
+            sSnap.forEach((d) => {
+              const instNo = Number(d.data().installmentNo);
+              if (instNo > maxNo) {
+                maxNo = instNo;
+                lastRef = d.ref;
+              }
+            });
+            if (lastRef) {
+              batch.update(lastRef, { status: "pending", paidAt: null });
+            }
           }
 
           // 3. ปรับสถานะวงกู้และคืนยอดหนี้
           batch.update(doc(db, "loans", loan.id), {
             status: "active",
             closedAt: null,
-            remainingBalance: (loan.remainingBalance || 0) + addedBalance,
+            remainingBalance: (loan.remainingBalance || 0) + revertedAmount,
             currentInstallment: Math.max(
               0,
-              (loan.currentInstallment || 0) + addedInst,
+              (loan.currentInstallment || 0) - revertedCount,
             ),
           });
 
@@ -842,7 +915,7 @@ export default function CustomerDetailPage({ params }) {
           setAlertConfig({
             title: "กู้คืนวงกู้สำเร็จ",
             message:
-              "วงกู้กลับมาอยู่ในสถานะกำลังดำเนินการ และดึงยอดงวดล่าสุดกลับมาให้เรียบร้อยแล้ว",
+              "ระบบดึงวงกู้กลับมาดำเนินการต่อ และยกเลิกรายการจ่ายล่าสุดให้เรียบร้อยแล้ว",
           });
         } catch (error) {
           console.error("Error undoing close loan:", error);
@@ -2079,7 +2152,7 @@ export default function CustomerDetailPage({ params }) {
                   <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
                 ) : (
                   <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                )}{" "}
+                )}
                 บันทึก
               </button>
             </div>
