@@ -36,6 +36,8 @@ import {
   Package,
   MessageCircle,
   Link2,
+  UserPlus,
+  Trash2,
 } from "lucide-react";
 
 // --- รายชื่อธนาคารสำหรับเลือกตอนแก้ไข ---
@@ -186,30 +188,23 @@ export default function WarRoomPage() {
 
     if (!fullLink) return;
 
-    // 🌟 ดักตัดพวก ?mibextid=... หรือ / ที่แถมมาด้านหลังทิ้งไปก่อน
     const cleanLink = fullLink.split("?")[0].replace(/\/$/, "");
-
-    // ดึงเฉพาะ "ตัวเลขรหัส" ออกมาจากลิงก์ที่สะอาดแล้ว
     const match = cleanLink.match(/\d+$/);
     const chatID = match ? match[0] : null;
 
-    // เช็คว่าเป็นมือถือระบบอะไร
     const userAgent = navigator.userAgent || navigator.vendor || window.opera;
     const isAndroid = /android/i.test(userAgent);
     const isIOS = /iPad|iPhone|iPod/.test(userAgent) && !window.MSStream;
 
     if (chatID) {
       if (isAndroid) {
-        // 🤖 ท่าไม้ตาย Android
         window.location.href = `intent://messages/t/${chatID}#Intent;package=com.facebook.orca;scheme=https;end;`;
       } else if (isIOS) {
-        // 🍎 ท่าไม้ตาย iOS
         window.location.href = `fb-messenger://user-thread/${chatID}`;
         setTimeout(() => {
           window.open(fullLink, "_blank");
         }, 2500);
       } else {
-        // 💻 เปิดจากคอมพิวเตอร์
         window.open(fullLink, "_blank");
       }
     } else {
@@ -217,7 +212,6 @@ export default function WarRoomPage() {
     }
   };
 
-  // 🌟 ฟังก์ชัน: เพิ่มและเซฟลิงก์แชทเข้า Firebase
   const handleAddChatLink = async (loanIdOrArray, isGroup = false) => {
     const newLink = window.prompt(
       "🔗 กรุณาวางลิงก์แชท Messenger (เช่น https://www.facebook.com/messages/t/...):",
@@ -229,20 +223,17 @@ export default function WarRoomPage() {
       const batch = writeBatch(db);
 
       if (isGroup && Array.isArray(loanIdOrArray)) {
-        // ถ้าเป็นกลุ่ม ให้อัปเดต chatLink ให้ทุกคนในกลุ่มเหมือนกัน
         loanIdOrArray.forEach((member) => {
           const loanRef = doc(db, "loans", member.id);
           batch.update(loanRef, { chatLink: newLink });
         });
       } else {
-        // ถ้าเป็นวงเดี่ยว อัปเดตแค่วงเดียว
         const loanRef = doc(db, "loans", loanIdOrArray);
         batch.update(loanRef, { chatLink: newLink });
       }
 
       await batch.commit();
       alert("✅ เพิ่มลิงก์แชทเรียบร้อยแล้วครับบอส!");
-      // UI จะรีเฟรชเองเพราะใช้ onSnapshot
     } catch (error) {
       console.error("Error updating chat link:", error);
       alert("❌ เกิดข้อผิดพลาดในการบันทึกลิงก์");
@@ -548,7 +539,6 @@ export default function WarRoomPage() {
                         </p>
                       </div>
 
-                      {/* 🌟 ปุ่มแชท Messenger (วงเดี่ยว หรือ วงกลุ่มใหญ่) */}
                       {loan.chatLink ? (
                         <button
                           onClick={(e) => handleOpenMessenger(e, loan.chatLink)}
@@ -573,7 +563,6 @@ export default function WarRoomPage() {
                         </button>
                       )}
 
-                      {/* 🌟 ปุ่มแก้ไขสัญญา */}
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -627,7 +616,6 @@ export default function WarRoomPage() {
                           </div>
 
                           <div className="flex gap-2 shrink-0 items-center">
-                            {/* 🌟 ปุ่มแชท (แยกลูกวงแต่ละคน) */}
                             {member.chatLink ? (
                               <button
                                 onClick={(e) =>
@@ -683,7 +671,6 @@ export default function WarRoomPage() {
         )}
       </div>
 
-      {/* --- Modals --- */}
       {selectedLoan && (
         <LoanDetailModal
           loan={selectedLoan}
@@ -701,10 +688,54 @@ export default function WarRoomPage() {
 }
 
 // ==========================================
-// 🌟 Component Modal แก้ไขรายละเอียดสัญญา
+// 🌟 Component Modal แก้ไขรายละเอียดสัญญา (เพิ่มระบบจัดการสมาชิก)
 // ==========================================
 function EditLoanModal({ loan, onClose }) {
   const [isSaving, setIsSaving] = useState(false);
+
+  // 🌟 ระบบดึงรายชื่อลูกค้าสำหรับเพิ่มเข้ากลุ่ม
+  const [allCustomers, setAllCustomers] = useState([]);
+  const [searchCustomerQuery, setSearchCustomerQuery] = useState("");
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+
+  // 🌟 เก็บรายการสมาชิกลูกวงปัจจุบัน (ถ้าวงเดี่ยว ก็จะมีคนเดียว)
+  const initialMembers = loan.isGroup ? loan.originalLoans : [loan];
+  const [currentMembers, setCurrentMembers] = useState(initialMembers);
+
+  useEffect(() => {
+    const fetchCustomers = async () => {
+      const snap = await getDocs(collection(db, "customers"));
+      setAllCustomers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    };
+    fetchCustomers();
+  }, []);
+
+  const handleAddMemberToGroup = (cust) => {
+    // ดักไม่ให้แอดคนซ้ำ
+    if (currentMembers.some((m) => m.customerId === cust.id)) return;
+
+    setCurrentMembers((prev) => [
+      ...prev,
+      {
+        id: `new_${Date.now()}`, // ID จำลองเพื่อบ่งบอกว่าเป็นคนใหม่
+        isNew: true,
+        customerId: cust.id,
+        customerName: cust.nickname
+          ? `${cust.nickname} (${cust.name})`
+          : cust.name,
+      },
+    ]);
+    setSearchCustomerQuery("");
+    setShowCustomerDropdown(false);
+  };
+
+  const handleRemoveMemberFromGroup = (memberId) => {
+    if (currentMembers.length === 1) {
+      alert("ต้องมีสมาชิกอย่างน้อย 1 คนในวงกู้นี้ครับบอส");
+      return;
+    }
+    setCurrentMembers((prev) => prev.filter((m) => m.id !== memberId));
+  };
 
   const bIndexInitial = BANK_OPTIONS.findIndex(
     (b) => b.acc === loan.bankAccount,
@@ -720,7 +751,7 @@ function EditLoanModal({ loan, onClose }) {
     frequency: loan.frequency || 1,
     type: loan.frequencyType || "day",
     category: loan.category || "normal",
-    chatLink: loan.chatLink || "", // 🌟 เพิ่มมารับค่า
+    chatLink: loan.chatLink || "",
   });
 
   const handleFormChange = (e) => {
@@ -744,27 +775,65 @@ function EditLoanModal({ loan, onClose }) {
     setIsSaving(true);
     const batch = writeBatch(db);
     try {
-      const loansToUpdate = loan.isGroup ? loan.originalLoans : [loan];
+      const initialIds = initialMembers.map((m) => m.id);
+      const currentIds = currentMembers.map((m) => m.id);
 
-      for (const targetLoan of loansToUpdate) {
+      // คนที่โดนลบออก
+      const removedMembers = initialMembers.filter(
+        (m) => !currentIds.includes(m.id),
+      );
+
+      // 1. จัดการคนที่โดนเตะออก (ลบตารางล่วงหน้า + ปิดวงให้)
+      for (const rm of removedMembers) {
         const oldSchedulesQ = query(
           collection(db, "schedules"),
-          where("loanId", "==", targetLoan.id),
+          where("loanId", "==", rm.id),
+          where("status", "==", "pending"),
         );
         const oldSchedulesSnap = await getDocs(oldSchedulesQ);
+        oldSchedulesSnap.forEach((d) => batch.delete(d.ref));
 
-        const paidHistoryMap = {};
-        oldSchedulesSnap.forEach((d) => {
-          const data = d.data();
-          if (data.status === "paid") {
-            paidHistoryMap[data.installmentNo] = data;
-          }
-          batch.delete(d.ref);
+        batch.update(doc(db, "loans", rm.id), {
+          status: "closed",
+          remainingBalance: 0,
+          closedAt: new Date().toISOString(),
         });
+      }
+
+      // 2. จัดการคนเดิมที่อยู่ต่อ และคนใหม่ที่เพิ่งเพิ่มเข้ามา
+      for (const member of currentMembers) {
+        const isNewMember = member.isNew;
+        let loanIdToUse = member.id;
+        let loanRef;
+
+        if (isNewMember) {
+          loanRef = doc(collection(db, "loans")); // สร้างวงใหม่ให้คนเพิ่งถูกแอดเข้ากลุ่ม
+          loanIdToUse = loanRef.id;
+        } else {
+          loanRef = doc(db, "loans", member.id);
+        }
 
         let newRemainingBalance = actualTotal;
         let newCurrentInstallment = 0;
+        const paidHistoryMap = {};
 
+        // ถ้าเป็นคนเก่า ให้ดึงประวัติการจ่ายเดิมมาด้วย
+        if (!isNewMember) {
+          const oldSchedulesQ = query(
+            collection(db, "schedules"),
+            where("loanId", "==", member.id),
+          );
+          const oldSchedulesSnap = await getDocs(oldSchedulesQ);
+          oldSchedulesSnap.forEach((d) => {
+            const data = d.data();
+            if (data.status === "paid") {
+              paidHistoryMap[data.installmentNo] = data;
+            }
+            batch.delete(d.ref); // ลบทิ้งเพื่อสร้างตารางโฉมใหม่
+          });
+        }
+
+        // สร้างตารางค่างวด
         for (let i = 0; i < formData.installments; i++) {
           let dueDate = new Date(formData.startDate);
           if (formData.type === "day") {
@@ -774,7 +843,8 @@ function EditLoanModal({ loan, onClose }) {
           }
 
           const instNo = i + 1;
-          const isPaid = !!paidHistoryMap[instNo];
+          const oldPaidData = paidHistoryMap[instNo];
+          const isPaid = !!oldPaidData;
 
           if (isPaid) {
             newRemainingBalance -= installmentAmount;
@@ -783,9 +853,9 @@ function EditLoanModal({ loan, onClose }) {
 
           const schRef = doc(collection(db, "schedules"));
           batch.set(schRef, {
-            loanId: targetLoan.id,
-            customerId: targetLoan.customerId || null,
-            customerName: targetLoan.customerName,
+            loanId: loanIdToUse,
+            customerId: member.customerId || null,
+            customerName: member.customerName,
             loanName: formData.loanName,
             loanNumber: formData.loanNumber,
             installmentNo: instNo,
@@ -793,12 +863,15 @@ function EditLoanModal({ loan, onClose }) {
             amount: installmentAmount,
             profitShare: profitPerInstallment,
             status: isPaid ? "paid" : "pending",
-            paidAt: isPaid ? paidHistoryMap[instNo].paidAt : null,
+            paidAt: isPaid ? oldPaidData.paidAt : null,
             category: formData.category,
           });
         }
 
-        batch.update(doc(db, "loans", targetLoan.id), {
+        // อัปเดตข้อมูลวงกู้
+        const loanDataObj = {
+          customerId: member.customerId || null,
+          customerName: member.customerName,
           loanName: formData.loanName,
           loanNumber: formData.loanNumber,
           bankName: selectedBank.bank,
@@ -818,14 +891,20 @@ function EditLoanModal({ loan, onClose }) {
           frequency: formData.frequency,
           frequencyType: formData.type,
           category: formData.category,
-          chatLink: formData.chatLink, // 🌟 เซฟทับไปด้วยตอนแก้ไข
-        });
+          chatLink: formData.chatLink,
+        };
+
+        if (isNewMember) {
+          loanDataObj.status = "active";
+          loanDataObj.createdAt = serverTimestamp();
+          batch.set(loanRef, loanDataObj);
+        } else {
+          batch.update(loanRef, loanDataObj);
+        }
       }
 
       await batch.commit();
-      alert(
-        `✅ อัปเดตรายละเอียดสัญญา${loan.isGroup ? "ทั้งกลุ่ม" : ""}สำเร็จ!`,
-      );
+      alert(`✅ อัปเดตและบันทึกข้อมูลเรียบร้อยแล้วครับบอส!`);
       onClose();
     } catch (e) {
       console.error(e);
@@ -849,13 +928,11 @@ function EditLoanModal({ loan, onClose }) {
             </div>
             <div>
               <h2 className="text-xl font-black text-gray-800">
-                แก้ไขข้อมูลวงกู้
+                แก้ไขข้อมูลวงกู้ {loan.isGroup ? "(แบบกลุ่ม)" : ""}
               </h2>
-              {loan.isGroup && (
-                <p className="text-[10px] font-bold text-orange-500 uppercase mt-0.5 tracking-widest">
-                  ⚠️ กำลังแก้ไขข้อมูลพร้อมกันทั้งกลุ่ม
-                </p>
-              )}
+              <p className="text-[10px] font-bold text-orange-500 uppercase mt-0.5 tracking-widest">
+                การแก้ไขจะมีผลกับสมาชิกทุกคนในกลุ่มนี้
+              </p>
             </div>
           </div>
           <button
@@ -882,7 +959,7 @@ function EditLoanModal({ loan, onClose }) {
             </div>
             <div>
               <label className="text-[10px] font-black uppercase text-gray-400 ml-1">
-                เลขวง
+                เลขวง (จับกลุ่มอัตโนมัติ)
               </label>
               <input
                 name="loanNumber"
@@ -894,10 +971,90 @@ function EditLoanModal({ loan, onClose }) {
             </div>
           </div>
 
-          {/* 🌟 ช่องแก้ไขลิงก์แชทใน Modal */}
+          {/* 🌟 โซนใหม่: จัดการสมาชิกลูกวง */}
+          <div className="bg-gray-50 border border-gray-200 p-5 rounded-2xl space-y-4">
+            <label className="text-[10px] font-black uppercase text-gray-500 flex items-center gap-1.5">
+              <Users className="w-4 h-4 text-blue-500" /> จัดการสมาชิกลูกวง
+            </label>
+
+            <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
+              {currentMembers.map((m, idx) => (
+                <div
+                  key={m.id}
+                  className="flex justify-between items-center bg-white border border-gray-100 p-3 rounded-xl shadow-sm"
+                >
+                  <span className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                    <div className="w-6 h-6 bg-gray-100 rounded-md flex items-center justify-center text-[10px] text-gray-500">
+                      {idx + 1}
+                    </div>
+                    {m.customerName}
+                    {m.isNew && (
+                      <span className="text-[9px] bg-green-100 text-green-600 px-1.5 py-0.5 rounded uppercase font-black tracking-widest">
+                        New
+                      </span>
+                    )}
+                  </span>
+                  <button
+                    onClick={() => handleRemoveMemberFromGroup(m.id)}
+                    className="text-gray-300 hover:text-red-500 hover:bg-red-50 p-2 rounded-lg transition-colors"
+                    title="ลบออกจากกลุ่ม"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="relative mt-2">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <UserPlus className="h-4 w-4 text-gray-400" />
+              </div>
+              <input
+                type="text"
+                placeholder="ค้นหาชื่อลูกค้าเพื่อเพิ่มเข้ากลุ่ม..."
+                value={searchCustomerQuery}
+                onChange={(e) => {
+                  setSearchCustomerQuery(e.target.value);
+                  setShowCustomerDropdown(true);
+                }}
+                onFocus={() => setShowCustomerDropdown(true)}
+                className="w-full pl-10 pr-3 py-3 text-sm font-bold bg-white border border-gray-200 rounded-xl outline-none focus:border-blue-400 shadow-sm transition-all"
+              />
+              {showCustomerDropdown && searchCustomerQuery && (
+                <div className="absolute w-full max-h-40 overflow-y-auto bg-white border border-gray-100 shadow-xl rounded-xl mt-2 z-50 py-1">
+                  {allCustomers
+                    .filter(
+                      (c) =>
+                        c.name?.includes(searchCustomerQuery) ||
+                        (c.nickname || "").includes(searchCustomerQuery),
+                    )
+                    .map((c) => (
+                      <div
+                        key={c.id}
+                        onClick={() => handleAddMemberToGroup(c)}
+                        className="px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-blue-50 cursor-pointer transition-colors"
+                      >
+                        {c.nickname ? `${c.nickname} (${c.name})` : c.name}
+                      </div>
+                    ))}
+                  {allCustomers.filter(
+                    (c) =>
+                      c.name?.includes(searchCustomerQuery) ||
+                      (c.nickname || "").includes(searchCustomerQuery),
+                  ).length === 0 && (
+                    <div className="px-4 py-3 text-xs text-gray-400 text-center">
+                      ไม่พบชื่อลูกค้า
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
           <div>
             <label className="text-[10px] font-black uppercase text-blue-400 ml-1 flex items-center gap-1">
               <MessageCircle className="w-3 h-3" /> ลิงก์แชท Messenger
+              (อัปเดตทุกคนในกลุ่ม)
             </label>
             <input
               name="chatLink"
@@ -930,7 +1087,7 @@ function EditLoanModal({ loan, onClose }) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-[10px] font-black uppercase text-gray-400 ml-1">
-                เงินต้น {loan.isGroup ? "(ต่อคน)" : ""}
+                เงินต้น (ต่อคน)
               </label>
               <input
                 type="number"
@@ -1008,7 +1165,7 @@ function EditLoanModal({ loan, onClose }) {
             </div>
             <div className="text-right">
               <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">
-                กำไรสุทธิวงนี้
+                กำไรสุทธิ (ต่อคน)
               </p>
               <p className="text-2xl font-black text-green-400">
                 ฿{totalProfit.toLocaleString()}

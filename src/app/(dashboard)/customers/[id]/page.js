@@ -44,6 +44,7 @@ import {
   MessageCircle,
   Link2,
   Target,
+  Users,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -194,7 +195,6 @@ const getDisbursementDate = (startDate, frequency, type) => {
 };
 
 export default function CustomerDetailPage({ params }) {
-  // 🌟 เพิ่มการประกาศใช้งาน router ตรงนี้
   const router = useRouter();
 
   const unwrappedParams = React.use(params);
@@ -317,36 +317,18 @@ export default function CustomerDetailPage({ params }) {
         const customerData = customerDoc.data();
         setCustomer(customerData);
 
-        const formattedName =
-          customerData.nickname && customerData.name
-            ? `${customerData.nickname} (${customerData.name})`
-            : customerData.nickname || customerData.name || "";
-
-        const searchNames = [];
-        if (customerData.name) searchNames.push(customerData.name);
-        if (customerData.nickname) searchNames.push(customerData.nickname);
-        if (formattedName && !searchNames.includes(formattedName))
-          searchNames.push(formattedName);
-
+        // ดึงวงกู้ทั้งหมด (ไม่ต้องรวบกลุ่ม) เพื่อรักษาประวัติทุกวง
         const qById = query(
           collection(db, "loans"),
           where("customerId", "==", customerId),
         );
         const snapById = await getDocs(qById);
 
-        let snapByName = { docs: [] };
-        if (searchNames.length > 0) {
-          const qByName = query(
-            collection(db, "loans"),
-            where("customerName", "in", searchNames.slice(0, 10)),
-          );
-          snapByName = await getDocs(qByName);
-        }
-
-        const loanMap = new Map();
-        const processLoan = (docSnap) => {
+        const loanList = [];
+        snapById.docs.forEach((docSnap) => {
           let data = { id: docSnap.id, ...docSnap.data() };
 
+          // Auto-close logic
           if (data.status !== "closed" && (data.remainingBalance || 0) <= 0) {
             const now = new Date().toISOString();
             data.status = "closed";
@@ -357,40 +339,64 @@ export default function CustomerDetailPage({ params }) {
             }).catch(console.error);
           }
 
-          const key = String(data.loanNumber || data.id).trim();
+          loanList.push(data);
+        });
 
-          if (loanMap.has(key)) {
-            const existing = loanMap.get(key);
-            if (existing.status === "closed" && data.status === "active") {
-              loanMap.set(key, data);
-            } else if (existing.status === data.status) {
-              if (
-                !existing.customerName?.includes("(") &&
-                data.customerName?.includes("(")
-              ) {
-                loanMap.set(key, data);
-              }
-            }
-          } else {
-            loanMap.set(key, data);
+        // 🌟 ดึงข้อมูลเพื่อนร่วมวงทั้งหมดเพื่อตรวจสอบว่าเป็นวงกลุ่มหรือไม่
+        const allLoansSnap = await getDocs(collection(db, "loans"));
+        const allLoansMap = {};
+
+        allLoansSnap.docs.forEach((docSnap) => {
+          const data = docSnap.data();
+          const rawNum = String(data.loanNumber || "999999")
+            .trim()
+            .toUpperCase();
+          if (!allLoansMap[rawNum]) {
+            allLoansMap[rawNum] = [];
           }
-        };
+          allLoansMap[rawNum].push(data);
+        });
 
-        snapById.docs.forEach(processLoan);
-        snapByName.docs.forEach(processLoan);
+        // เช็คว่าแต่ละวงใน loanList เป็นกลุ่มหรือไม่
+        const finalLoanList = loanList.map((loan) => {
+          const rawNum = String(loan.loanNumber || "999999")
+            .trim()
+            .toUpperCase();
+          const groupMembers = allLoansMap[rawNum] || [];
 
-        const loanList = Array.from(loanMap.values()).sort((a, b) => {
+          // กรองคนที่ Active อยู่ในกลุ่มเดียวกัน
+          const activeGroupMembers = groupMembers.filter(
+            (m) => m.status !== "closed",
+          );
+
+          let isGroup = false;
+          let memberCount = 1;
+
+          // ถ้าวงนี้เป็นวง Active และมีเพื่อนที่ Active เหมือนกันใช้เลขเดียวกันเกิน 1 คน = เป็นวงกลุ่ม
+          if (loan.status !== "closed") {
+            isGroup = activeGroupMembers.length > 1;
+            memberCount = activeGroupMembers.length;
+          } else {
+            // ถ้าวงปิดแล้ว ให้ดูว่าตอนนั้นมีเพื่อนในเลขวงเดียวกันกี่คน (รวมทั้งปิดแล้วและกำลังเดิน)
+            isGroup = groupMembers.length > 1;
+            memberCount = groupMembers.length;
+          }
+
+          return { ...loan, isGroup, memberCount };
+        });
+
+        finalLoanList.sort((a, b) => {
           const numA = Number(a.loanNumber);
           const numB = Number(b.loanNumber);
           if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
           return String(a.loanNumber).localeCompare(String(b.loanNumber));
         });
 
-        setLoans(loanList);
+        setLoans(finalLoanList);
 
         let profitNormal = 0;
         let profitPD = 0;
-        loanList
+        finalLoanList
           .filter((l) => l.status !== "closed")
           .forEach((loan) => {
             if (loan.category === "PD") {
@@ -464,7 +470,7 @@ export default function CustomerDetailPage({ params }) {
     } finally {
       setLoading(false);
     }
-  }, [customerId, router]); // 🌟 ใช้ตัวแปรที่ประกาศแล้วได้อย่างปลอดภัย
+  }, [customerId, router]);
 
   useEffect(() => {
     fetchData();
@@ -776,9 +782,6 @@ export default function CustomerDetailPage({ params }) {
     });
   };
 
-  // ==========================================
-  // 🌟 ฟังก์ชันกู้คืนวงที่ปิดไป (Undo Close) ปรับปรุงใหม่ 100%
-  // ==========================================
   const handleUndoCloseLoan = (loan) => {
     setConfirmConfig({
       title: "ยืนยันการกู้คืนวงกู้",
@@ -789,7 +792,6 @@ export default function CustomerDetailPage({ params }) {
         try {
           const batch = writeBatch(db);
 
-          // 1. ค้นหา Transaction ล่าสุดของวงนี้
           const transQ = query(
             collection(db, "transactions"),
             where("loanId", "==", loan.id),
@@ -801,7 +803,6 @@ export default function CustomerDetailPage({ params }) {
             ref: d.ref,
             ...d.data(),
           }));
-          // เรียงจากใหม่ไปเก่า
           transList.sort(
             (a, b) =>
               (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0),
@@ -812,11 +813,9 @@ export default function CustomerDetailPage({ params }) {
           let revertedCount = 0;
 
           if (lastTrans) {
-            // ลบ Transaction ล่าสุดทิ้งเพื่อไม่ให้กำไร/ยอดรับซ้ำซ้อน
             batch.delete(lastTrans.ref);
             revertedAmount = lastTrans.amountPaid || 0;
 
-            // ค้นหา Schedules ที่เป็น paid ทั้งหมดของวงนี้
             const sQ = query(
               collection(db, "schedules"),
               where("loanId", "==", loan.id),
@@ -830,7 +829,6 @@ export default function CustomerDetailPage({ params }) {
             }));
 
             if (lastTrans.installmentNo === "Early Payoff") {
-              // ถ้าเป็นการโปะปิดวง ให้หางวดที่ถูกเซ็ตจ่ายตรงกับวันที่โปะ
               schedules.forEach((s) => {
                 if (s.dueDate === lastTrans.paymentDate) {
                   batch.update(s.ref, { status: "pending", paidAt: null });
@@ -838,7 +836,6 @@ export default function CustomerDetailPage({ params }) {
                 }
               });
 
-              // Fallback หากหางวดไม่เจอจากวันที่ ให้เรียงจากงวดล่าสุดแล้วนับถอยหลังตามยอดเงิน
               if (revertedCount === 0) {
                 schedules.sort((a, b) => b.installmentNo - a.installmentNo);
                 let estimatedCount = Math.ceil(
@@ -857,7 +854,6 @@ export default function CustomerDetailPage({ params }) {
                 }
               }
             } else {
-              // ถ้าเป็นการจ่ายปกติ 1 งวดสุดท้าย ให้ยกเลิกเฉพาะงวดนั้น
               const targetSchedule = schedules.find(
                 (s) =>
                   String(s.installmentNo) === String(lastTrans.installmentNo),
@@ -871,11 +867,9 @@ export default function CustomerDetailPage({ params }) {
               }
             }
           } else {
-            // ถ้าไม่พบประวัติ Transaction เลย (เช่น ปิดด้วยปุ่มลบทิ้ง)
             revertedAmount = loan.installmentAmount || 0;
             revertedCount = 1;
 
-            // ดึงงวดสุดท้ายที่เป็น paid กลับมา
             const sQ = query(
               collection(db, "schedules"),
               where("loanId", "==", loan.id),
@@ -896,7 +890,6 @@ export default function CustomerDetailPage({ params }) {
             }
           }
 
-          // 3. ปรับสถานะวงกู้และคืนยอดหนี้
           batch.update(doc(db, "loans", loan.id), {
             status: "active",
             closedAt: null,
@@ -1726,10 +1719,21 @@ export default function CustomerDetailPage({ params }) {
                           {loan.loanNumber || "-"}
                         </div>
                         <div>
-                          <h3 className="text-base font-black text-gray-800">
+                          <h3 className="text-base font-black text-gray-800 flex items-center gap-2">
                             วง {loan.loanNumber} • {loan.loanName}
+                            {/* 🌟 ป้ายวงกลุ่ม/วงเดี่ยว */}
+                            {loan.isGroup ? (
+                              <span className="text-[9px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-md uppercase tracking-widest flex items-center gap-1">
+                                <Users className="w-3 h-3" /> วงกลุ่ม (
+                                {loan.memberCount})
+                              </span>
+                            ) : (
+                              <span className="text-[9px] bg-emerald-100 text-emerald-600 px-1.5 py-0.5 rounded-md uppercase tracking-widest flex items-center gap-1">
+                                <User className="w-3 h-3" /> วงเดี่ยว
+                              </span>
+                            )}
                           </h3>
-                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1.5">
                             ปิดวงเมื่อ:{" "}
                             {loan.closedAt
                               ? new Date(loan.closedAt).toLocaleDateString(
