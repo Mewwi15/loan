@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Landmark,
   Wand2, // 🌟 นำเข้าไอคอนสำหรับหน้าเครื่องมือรันงวด
+  BarChart3, // 🌟 ไอคอนรายงานธนาคาร
 } from "lucide-react";
 
 export default function Sidebar() {
@@ -235,6 +236,26 @@ export default function Sidebar() {
             >
               <PlusCircle className="w-5 h-5" />
               <span>เปิดวงแชร์ใหม่</span>
+            </Link>
+          </div>
+
+          {/* 🌟 โซนรายงานธนาคาร */}
+          <div className="space-y-2">
+            <div className="text-gray-400 text-[10px] font-black uppercase tracking-[0.2em] mb-4 ml-4">
+              Bank Report
+            </div>
+
+            <Link
+              href="/reports"
+              onClick={handleLinkClick}
+              className={`flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all duration-200 ${
+                pathname.startsWith("/reports")
+                  ? "bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 font-black"
+                  : "text-gray-400 hover:text-white hover:bg-white/5 font-bold"
+              }`}
+            >
+              <BarChart3 className="w-5 h-5" />
+              <span>รายงานยอดธนาคาร</span>
             </Link>
           </div>
 
