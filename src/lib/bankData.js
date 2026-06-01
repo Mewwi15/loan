@@ -1,7 +1,7 @@
 // src/lib/bankData.js — Firestore access for bank daily reports
 import { db } from "@/lib/firebase";
 import {
-  collection, doc, getDoc, setDoc, getDocs, query, orderBy, limit, where,
+  collection, doc, getDoc, setDoc, getDocs, query, orderBy, limit, where, deleteDoc,
 } from "firebase/firestore";
 import { sumRows } from "@/lib/bankReport";
 
@@ -36,6 +36,17 @@ export async function listReports(max = 400) {
   const q = query(collection(db, COL), orderBy("date", "desc"), limit(max));
   const snap = await getDocs(q);
   return snap.docs.map((d) => d.data());
+}
+
+// ลบรายงานธนาคารทั้งหมด (เริ่มข้อมูลใหม่) — คืนจำนวนวันที่ลบ
+export async function clearAllReports() {
+  const snap = await getDocs(collection(db, COL));
+  let n = 0;
+  for (const d of snap.docs) {
+    await deleteDoc(doc(db, COL, d.id));
+    n++;
+  }
+  return n;
 }
 
 // the most recent report strictly BEFORE `date` (for carry-over)

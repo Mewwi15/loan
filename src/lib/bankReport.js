@@ -96,19 +96,15 @@ export function carryOverRows(prevRows) {
   );
 }
 
-// ── parse a workbook (ArrayBuffer) → { date, rows[], totals } ─
-// Excel layout: R1 date · R2 headers · R3+ accounts · last row = totals
-export function parseWorkbook(arrayBuffer) {
-  const wb = XLSX.read(arrayBuffer, { type: "array" });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const grid = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-
+// ── parse one sheet grid → { date, rows[], totals } ─────────
+// Layout: R1 date · R2 headers · R3+ accounts · totals row = empty name + numbers
+function parseGrid(grid) {
   const date = parseThaiDate(grid[0]?.[0]);
   const rows = [];
   let totals = null;
 
   for (let r = 2; r < grid.length; r++) {
-    const cells = grid[r];
+    const cells = grid[r] || [];
     const first = String(cells[0] || "").trim();
     const c1 = toNum(cells[1]); // ยอดยกมา
     // totals row = empty name but has numbers
@@ -142,6 +138,31 @@ export function parseWorkbook(arrayBuffer) {
     });
   }
   return { date, rows, totals };
+}
+
+// ── parse a workbook (ArrayBuffer) → sheet แรก { date, rows[], totals } ─
+export function parseWorkbook(arrayBuffer) {
+  const wb = XLSX.read(arrayBuffer, { type: "array" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const grid = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  return parseGrid(grid);
+}
+
+// ── parse ทุก sheet ในไฟล์ → [{ sheetName, date, rows[], totals }] ─
+// ไฟล์รายงานมักมี 1 sheet ต่อ 1 วัน — อ่านทุกวันเข้าทีเดียว
+export function parseAllSheets(arrayBuffer) {
+  const wb = XLSX.read(arrayBuffer, { type: "array" });
+  const out = [];
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    if (!ws) continue;
+    const grid = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+    const parsed = parseGrid(grid);
+    // ข้าม sheet ที่ไม่มีวันที่หรือไม่มีบัญชี (sheet ว่าง/สรุป)
+    if (!parsed.date || !parsed.rows.length) continue;
+    out.push({ sheetName, ...parsed });
+  }
+  return out;
 }
 
 // ── sum rows → totals ───────────────────────────────────────
