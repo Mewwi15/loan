@@ -70,32 +70,36 @@ export default function AuthGuard({ children }) {
       const now = new Date().getTime();
       if (now - parseInt(loginTime) > SESSION_TIMEOUT) {
         handleLogout();
-      } else {
-        setIsAuth(true); // อนุญาตให้เข้าแผงควบคุม
-        if (deviceToken) {
-          try {
-            const docRef = doc(db, "settings", "auth");
-            const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) {
-              const trustedDevices = docSnap.data().trustedDevices || [];
-              const isTrusted = trustedDevices.some((d) =>
-                typeof d === "string"
-                  ? d === deviceToken
-                  : d.token === deviceToken,
-              );
-              if (!isTrusted) {
-                localStorage.removeItem("deviceToken");
-                handleLogout();
-              }
+        return;
+      }
+
+      // ตรวจสอบ trusted device ก่อน แล้วค่อย setIsAuth(true)
+      if (deviceToken) {
+        try {
+          const docRef = doc(db, "settings", "auth");
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            const trustedDevices = docSnap.data().trustedDevices || [];
+            const isTrusted = trustedDevices.some((d) =>
+              typeof d === "string"
+                ? d === deviceToken
+                : d.token === deviceToken,
+            );
+            if (!isTrusted) {
+              // token ไม่ valid — ล้างออกแล้ว logout
+              localStorage.removeItem("deviceToken");
+              handleLogout();
+              return;
             }
-          } catch (err) {
-            console.error("Token verification error:", err);
           }
+        } catch (err) {
+          // network error — ให้ benefit of doubt ไม่เตะออก
+          console.error("Token verification error:", err);
         }
       }
+
+      setIsAuth(true);
     }
-    // 🌟 พระเอกอยู่ตรงนี้ครับ! ผมเอา else { handleLogout() } ออกไป
-    // เพื่อให้ระบบ "รอ" บอสกรอก OTP ก่อน ไม่ใจร้อนเตะออกแล้วครับ!
     setLoading(false);
   }, [handleLogout, SESSION_TIMEOUT]);
 
@@ -221,47 +225,53 @@ export default function AuthGuard({ children }) {
 
         if (rememberDevice) {
           const newToken = crypto.randomUUID();
-          localStorage.setItem("deviceToken", newToken);
 
+          // ระบุชื่ออุปกรณ์จาก User-Agent (ไม่ต้องรอ network)
           let deviceName = "Unknown Device";
-          let locationStr = "ไม่ทราบตำแหน่ง";
-          let ipStr = "";
-
-          try {
-            const ua = navigator.userAgent;
-            if (/Windows/i.test(ua)) deviceName = "Windows PC";
-            else if (/Macintosh/i.test(ua)) deviceName = "Mac Computer";
-            else if (/iPad|iPhone|iPod/i.test(ua))
-              deviceName = "Apple Device (iOS)";
-            else if (/Android/i.test(ua)) deviceName = "Android Device";
-
-            const res = await fetch("https://ipapi.co/json/");
-            if (res.ok) {
-              const locData = await res.json();
-              locationStr = locData.region
-                ? `${locData.region}, ${locData.country_name}`
-                : "ไม่ทราบตำแหน่ง";
-              ipStr = locData.ip || "";
-            }
-          } catch (err) {
-            console.error("Failed to get device info", err);
-          }
+          const ua = navigator.userAgent;
+          if (/Windows/i.test(ua)) deviceName = "Windows PC";
+          else if (/Macintosh/i.test(ua)) deviceName = "Mac Computer";
+          else if (/iPad|iPhone|iPod/i.test(ua)) deviceName = "Apple Device (iOS)";
+          else if (/Android/i.test(ua)) deviceName = "Android Device";
 
           const deviceRecord = {
             token: newToken,
             device: deviceName,
-            location: locationStr,
-            ip: ipStr,
+            location: "ไม่ทราบตำแหน่ง",
+            ip: "",
             timestamp: new Date().toISOString(),
           };
 
+          // บันทึก Firestore ก่อน — แล้วค่อยบันทึก localStorage หลัง confirm
           await setDoc(
             docRef,
-            {
-              trustedDevices: arrayUnion(deviceRecord),
-            },
+            { trustedDevices: arrayUnion(deviceRecord) },
             { merge: true },
           );
+
+          // บันทึก localStorage หลัง Firestore สำเร็จแล้วเท่านั้น
+          localStorage.setItem("deviceToken", newToken);
+
+          // ดึง IP/location แบบ background (ไม่บล็อก login flow)
+          fetch("https://ipapi.co/json/")
+            .then((res) => (res.ok ? res.json() : null))
+            .then((locData) => {
+              if (!locData) return;
+              const location = locData.region
+                ? `${locData.region}, ${locData.country_name}`
+                : "ไม่ทราบตำแหน่ง";
+              const updatedRecord = {
+                ...deviceRecord,
+                location,
+                ip: locData.ip || "",
+              };
+              setDoc(
+                docRef,
+                { trustedDevices: arrayUnion(updatedRecord) },
+                { merge: true },
+              ).catch(() => {});
+            })
+            .catch(() => {});
         }
 
         completeLogin();
