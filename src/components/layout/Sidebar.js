@@ -120,7 +120,7 @@ export default function Sidebar() {
             </Link>
           </div>
 
-          {/* โซนที่ 2: ระบบเงินกู้ */}
+          {/* โซนที่ 2: ระบบเงินผ่อน */}
           <div className="space-y-2">
             <div className="text-gray-400 text-[10px] font-black uppercase tracking-[0.2em] mb-4 ml-4">
               Loan System
@@ -266,10 +266,10 @@ export default function Sidebar() {
             </div>
 
             <Link
-              href="/settings/security"
+              href="/settings"
               onClick={handleLinkClick}
               className={`flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all duration-200 ${
-                isActive("/settings/security")
+                isActive("/settings")
                   ? "bg-gray-700 text-white shadow-lg shadow-gray-900/50 font-black"
                   : "text-gray-400 hover:text-white hover:bg-white/5 font-bold"
               }`}
