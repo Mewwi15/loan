@@ -44,7 +44,7 @@ export default function DailyCheckPage() {
   const [slipStatus, setSlipStatus] = useState("idle");
   const [slipData, setSlipData] = useState(null);
   const [slipError, setSlipError] = useState("");
-  const [activeLoanForSlip, setActiveLoanForSlip] = useState(null); // เก็บข้อมูลวงกู้ที่กำลังสแกนสลิป
+  const [activeLoanForSlip, setActiveLoanForSlip] = useState(null); // เก็บข้อมูลวงผ่อนที่กำลังสแกนสลิป
 
   const handleOpenMessenger = (e, fullLink) => {
     e.preventDefault();
@@ -373,7 +373,7 @@ export default function DailyCheckPage() {
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             type="text"
-            placeholder="ค้นหาชื่อ, รหัสวงกู้..."
+            placeholder="ค้นหาชื่อ, รหัสวงผ่อน..."
             className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-100 rounded-2xl outline-none font-bold text-gray-700 text-sm shadow-sm focus:border-orange-500 transition-all"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -533,7 +533,7 @@ export default function DailyCheckPage() {
                 <thead className="bg-gray-50/50 border-b border-gray-50">
                   <tr className="text-[12px] font-black text-gray-400 uppercase tracking-[0.2em]">
                     <th className="px-4 py-4 text-center w-20">เช็คจ่าย</th>
-                    <th className="px-4 py-4">ข้อมูลวงกู้</th>
+                    <th className="px-4 py-4">ข้อมูลวงผ่อน</th>
                     <th className="px-4 py-4">บัญชีรับโอน</th>
                     <th className="px-4 py-4 text-right">ยอดเก็บ</th>
                     <th className="px-4 py-4 text-right pr-6">

@@ -379,7 +379,7 @@ export default function DatabaseExplorerPage() {
                 📁 ตาราง: schedules (ตารางค่างวด)
               </option>
               <option value="shares">📁 ตาราง: shares (วงแชร์แม่)</option>
-              <option value="loans">📁 ตาราง: loans (สัญญา/วงกู้)</option>
+              <option value="loans">📁 ตาราง: loans (สัญญา/วงผ่อน)</option>
               <option value="customers">
                 📁 ตาราง: customers (ข้อมูลลูกค้า)
               </option>

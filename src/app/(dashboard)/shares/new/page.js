@@ -33,7 +33,7 @@ import {
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
-// ข้อมูลบัญชีธนาคาร (ใช้ร่วมกันทั้งระบบกู้และแชร์)
+// ข้อมูลบัญชีธนาคาร (ใช้ร่วมกันทั้งระบบผ่อนและแชร์)
 const RAW_BANK_ACCOUNTS = [
   { owner: "พงศกร ศรีษเกตุ", bank: "TTB", acc: "9219175719", color: "#f6821f" },
   {

@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "LoanTrack - ระบบบริหารเงินกู้",
-  description: "จัดการบัญชีรายรับรายจ่ายและเงินกู้อัตโนมัติ",
+  title: "LoanTrack - ระบบบริหารเงินผ่อน",
+  description: "จัดการบัญชีรายรับรายจ่ายและเงินผ่อนอัตโนมัติ",
 };
 
 export const viewport = {

@@ -138,7 +138,7 @@ export async function GET(request) {
             <p style="font-size: 16px; color: #374151;">หมดเวลาทำการแล้วครับ! นี่คือผลประกอบการของคุณวันนี้:</p>
             
             <div style="background-color: #f0fdf4; border-left: 4px solid #22c55e; padding: 16px; margin: 24px 0; border-radius: 0 8px 8px 0;">
-              <h3 style="margin: 0 0 12px 0; color: #166534;">✅ ยอดเงินกู้ที่จัดเก็บได้จริง</h3>
+              <h3 style="margin: 0 0 12px 0; color: #166534;">✅ ยอดเงินผ่อนที่จัดเก็บได้จริง</h3>
               <p style="margin: 4px 0; font-size: 24px; font-weight: bold; color: #15803d;">฿${collectedAmount.toLocaleString()}</p>
             </div>
 

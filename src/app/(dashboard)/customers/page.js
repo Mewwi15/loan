@@ -165,7 +165,7 @@ export default function CustomersPage() {
 
       if (needsUpdate) {
         await batch.commit();
-        console.log("✅ Auto-Sync: ซิงค์ยอดวงกู้สำเร็จตรงกันกับหน้า ID 100%");
+        console.log("✅ Auto-Sync: ซิงค์ยอดวงผ่อนสำเร็จตรงกันกับหน้า ID 100%");
       }
     } catch (error) {
       console.error("Error fixing customer stats:", error);
@@ -620,7 +620,7 @@ export default function CustomersPage() {
                   </div>
                   <div className="sm:border-l sm:border-gray-100 sm:pl-6">
                     <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1">
-                      รวมกู้ทั้งหมด
+                      รวมผ่อนทั้งหมด
                     </p>
                     <p className="text-sm sm:text-base font-black text-blue-600">
                       {customer.activeLoans || 0} วง
@@ -762,7 +762,7 @@ export default function CustomersPage() {
               </div>
               <div className="pt-2">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 block mb-2">
-                  เอกสารประกอบการกู้ (PDF)
+                  เอกสารประกอบการผ่อน (PDF)
                 </label>
                 <input
                   type="file"
@@ -930,7 +930,7 @@ export default function CustomersPage() {
               ลบข้อมูลลูกค้า?
             </h2>
             <p className="text-sm font-bold text-gray-500 mb-8">
-              ข้อมูลและประวัติเงินกู้ทั้งหมดของ{" "}
+              ข้อมูลและประวัติเงินผ่อนทั้งหมดของ{" "}
               <span className="text-gray-800">
                 {customerToDelete?.nickname || customerToDelete?.name}
               </span>{" "}

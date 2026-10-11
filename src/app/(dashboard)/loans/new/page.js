@@ -184,7 +184,7 @@ export default function NewLoanPage() {
   const dropdownRef = useRef(null);
 
   // ==========================================
-  // 🟢 STATE: สำหรับวงกู้เดี่ยว (Single Loan)
+  // 🟢 STATE: สำหรับวงผ่อนเดี่ยว (Single Loan)
   // ==========================================
   const [isCustomFrequency, setIsCustomFrequency] = useState(false);
   const [formData, setFormData] = useState({
@@ -385,8 +385,8 @@ export default function NewLoanPage() {
 
     if (!formData.customerId)
       return alert("❌ กรุณาเลือกลูกค้าจากรายการค้นหา (Dropdown) ครับ");
-    if (principal <= 0) return alert("กรุณาระบุยอดปล่อยกู้");
-    if (!targetLoanNumber) return alert("กรุณาระบุลำดับวงกู้");
+    if (principal <= 0) return alert("กรุณาระบุยอดปล่อยผ่อน");
+    if (!targetLoanNumber) return alert("กรุณาระบุลำดับวงผ่อน");
     if (Number(formData.frequency) <= 0)
       return alert("กรุณาระบุรอบการส่งเงินที่ถูกต้อง");
 
@@ -614,10 +614,10 @@ export default function NewLoanPage() {
 
     if (!groupConfig.groupName.trim())
       return alert("กรุณาตั้งชื่อกลุ่ม / วงแชร์");
-    if (!targetLoanNumber) return alert("กรุณาระบุลำดับวงกู้ของกลุ่ม");
+    if (!targetLoanNumber) return alert("กรุณาระบุลำดับวงผ่อนของกลุ่ม");
     if (groupDefaultPrincipal <= 0)
       return alert(
-        "กรุณาระบุ 'ยอดปล่อยกู้ (ต่อคน)' สำหรับเป็นยอดมาตรฐานด้วยครับ",
+        "กรุณาระบุ 'ยอดปล่อยผ่อน (ต่อคน)' สำหรับเป็นยอดมาตรฐานด้วยครับ",
       );
     if (groupConfig.installments <= 0 || Number(groupConfig.frequency) <= 0)
       return alert("รูปแบบงวดไม่ถูกต้อง");
@@ -650,7 +650,7 @@ export default function NewLoanPage() {
       } else {
         if (
           !window.confirm(
-            `ยืนยันการสร้างวงกลุ่ม "${groupConfig.groupName}" (วงที่ ${targetLoanNumber})\nยอดปล่อยกู้รวม ${totalGroupPrincipal.toLocaleString()} บาท (จำนวน ${selectedMembers.length} คน) ?`,
+            `ยืนยันการสร้างวงกลุ่ม "${groupConfig.groupName}" (วงที่ ${targetLoanNumber})\nยอดปล่อยผ่อนรวม ${totalGroupPrincipal.toLocaleString()} บาท (จำนวน ${selectedMembers.length} คน) ?`,
           )
         ) {
           setLoading(false);
@@ -735,7 +735,7 @@ export default function NewLoanPage() {
 
       clearDraft();
 
-      alert("✅ สร้างวงกู้กลุ่มและกระจายข้อมูลสำเร็จเรียบร้อยแล้ว!");
+      alert("✅ สร้างวงผ่อนกลุ่มและกระจายข้อมูลสำเร็จเรียบร้อยแล้ว!");
       router.push("/");
     } catch (error) {
       console.error("Error creating group loan:", error);
@@ -764,7 +764,7 @@ export default function NewLoanPage() {
         <div>
           <h1 className="text-3xl font-black text-gray-800 tracking-tight flex items-center gap-3">
             {loanMode === "single" ? (
-              "สร้างวงกู้ใหม่"
+              "สร้างวงผ่อนใหม่"
             ) : (
               <>
                 <Users className="w-8 h-8 text-orange-500" /> สร้างวงแชร์ /
@@ -781,7 +781,7 @@ export default function NewLoanPage() {
                   : "text-gray-400 hover:text-gray-600"
               }`}
             >
-              วงกู้เดี่ยว
+              วงผ่อนเดี่ยว
             </button>
             <button
               onClick={() => setLoanMode("group")}
@@ -908,7 +908,7 @@ export default function NewLoanPage() {
 
                   <div className="md:col-span-5">
                     <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
-                      ลำดับวงกู้
+                      ลำดับวงผ่อน
                     </label>
                     <div className="relative mt-1">
                       <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
@@ -945,7 +945,7 @@ export default function NewLoanPage() {
 
                 <div>
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400 mb-1 block">
-                    บัญชีธนาคารที่ใช้ปล่อยกู้
+                    บัญชีธนาคารที่ใช้ปล่อยผ่อน
                   </label>
                   <button
                     type="button"
@@ -985,7 +985,7 @@ export default function NewLoanPage() {
                 <div className="grid grid-cols-2 gap-4 md:gap-6">
                   <div>
                     <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
-                      ยอดปล่อยกู้
+                      ยอดปล่อยผ่อน
                     </label>
                     <input
                       name="principal"
@@ -1232,7 +1232,7 @@ export default function NewLoanPage() {
 
                 <div className="md:col-span-4">
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
-                    ลำดับวงกู้ *
+                    ลำดับวงผ่อน *
                   </label>
                   <div className="relative mt-1">
                     <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
@@ -1268,7 +1268,7 @@ export default function NewLoanPage() {
 
                 <div className="md:col-span-6">
                   <label className="text-[12px] font-black uppercase tracking-widest ml-1 text-gray-400">
-                    ยอดปล่อยกู้เริ่มต้น (ต่อคน) *
+                    ยอดปล่อยผ่อนเริ่มต้น (ต่อคน) *
                   </label>
                   <input
                     name="principal"
@@ -1431,7 +1431,7 @@ export default function NewLoanPage() {
                     2. สมาชิกในกลุ่ม ({selectedMembers.length} คน)
                   </h3>
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1 ml-5">
-                    สามารถปรับยอดกู้แยกรายบุคคลได้
+                    สามารถปรับยอดผ่อนแยกรายบุคคลได้
                   </p>
                 </div>
                 <button
@@ -1759,7 +1759,7 @@ export default function NewLoanPage() {
                   เลือกบัญชีโอนออก
                 </h2>
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
-                  แหล่งที่มาของเงินต้นสำหรับการปล่อยกู้
+                  แหล่งที่มาของเงินต้นสำหรับการปล่อยผ่อน
                 </p>
               </div>
               <button

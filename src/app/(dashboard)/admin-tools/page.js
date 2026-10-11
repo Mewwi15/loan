@@ -193,7 +193,7 @@ export default function AdminToolsPage() {
   };
 
   // ===============================================
-  // 🌟 2. ลบวงกู้ตามเลขที่ระบุ
+  // 🌟 2. ลบวงผ่อนตามเลขที่ระบุ
   // ===============================================
   const handleDeleteSpecificLoan = async () => {
     const targetNumber = deleteLoanNo.trim();
@@ -422,7 +422,7 @@ export default function AdminToolsPage() {
           </div>
         </div>
 
-        {/* ส่วนที่ 2: ลบวงกู้ตามเลขที่ระบุ */}
+        {/* ส่วนที่ 2: ลบวงผ่อนตามเลขที่ระบุ */}
         <div className="bg-orange-50 border border-orange-200 p-6 md:p-8 rounded-2xl mb-8">
           <h3 className="font-black text-orange-800 mb-2 flex items-center gap-2 text-lg">
             <Trash2 className="w-5 h-5" /> ล้างข้อมูลวงเทสต์ (ระบุเลขวง)

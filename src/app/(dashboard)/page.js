@@ -649,9 +649,9 @@ export default function DashboardHome() {
                 </h2>
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
                   {activeModal === "disbursed"
-                    ? `แสดงยอดปล่อยกู้เฉพาะเดือน ${new Date(selectedDate).toLocaleDateString("th-TH", { month: "long", year: "numeric" })} (เรียงตามวันที่ปล่อย)`
+                    ? `แสดงยอดปล่อยผ่อนเฉพาะเดือน ${new Date(selectedDate).toLocaleDateString("th-TH", { month: "long", year: "numeric" })} (เรียงตามวันที่ปล่อย)`
                     : activeModal === "principal"
-                      ? "แสดงวงกู้ที่กำลังดำเนินการ แยกตามเงินต้น ดอกเบี้ย และยอดรวม"
+                      ? "แสดงวงผ่อนที่กำลังดำเนินการ แยกตามเงินต้น ดอกเบี้ย และยอดรวม"
                       : activeModal === "profitMonth"
                         ? `กางบิลกำไรทุกใบ ประจำเดือน ${new Date(selectedDate).toLocaleDateString("th-TH", { month: "long", year: "numeric" })}`
                         : `ดึงจากตารางดิว ประจำวันที่ ${formatDateThai(selectedDate)} (กรองยอดซ้ำแล้ว)`}

@@ -317,7 +317,7 @@ export default function CustomerDetailPage({ params }) {
         const customerData = customerDoc.data();
         setCustomer(customerData);
 
-        // ดึงวงกู้ทั้งหมด (ไม่ต้องรวบกลุ่ม) เพื่อรักษาประวัติทุกวง
+        // ดึงวงผ่อนทั้งหมด (ไม่ต้องรวบกลุ่ม) เพื่อรักษาประวัติทุกวง
         const qById = query(
           collection(db, "loans"),
           where("customerId", "==", customerId),
@@ -545,7 +545,7 @@ export default function CustomerDetailPage({ params }) {
 
   const handleToggleCategory = (loan) => {
     const newCategory = loan.category === "PD" ? "normal" : "PD";
-    const typeLabel = newCategory === "PD" ? "ผ่อนของ (PD)" : "กู้ปกติ";
+    const typeLabel = newCategory === "PD" ? "ผ่อนของ (PD)" : "ผ่อนปกติ";
 
     setConfirmConfig({
       title: "ยืนยันการเปลี่ยนประเภทวง",
@@ -740,9 +740,9 @@ export default function CustomerDetailPage({ params }) {
 
   const handleCloseLoan = (loanId) => {
     setConfirmConfig({
-      title: "คำเตือน: ลบวงกู้",
+      title: "คำเตือน: ลบวงผ่อน",
       message:
-        "นี่คือการยกเลิกหรือลบวงกู้ที่สร้างผิดพลาด\nระบบจะลบตารางค่างวดที่ยังไม่จ่ายทิ้งทั้งหมด และย้ายวงกู้นี้ไปที่ประวัติที่ปิดแล้ว\n\nต้องการดำเนินการต่อหรือไม่?",
+        "นี่คือการยกเลิกหรือลบวงผ่อนที่สร้างผิดพลาด\nระบบจะลบตารางค่างวดที่ยังไม่จ่ายทิ้งทั้งหมด และย้ายวงผ่อนนี้ไปที่ประวัติที่ปิดแล้ว\n\nต้องการดำเนินการต่อหรือไม่?",
       onConfirm: async () => {
         setConfirmConfig(null);
         setIsProcessingAction(true);
@@ -766,14 +766,14 @@ export default function CustomerDetailPage({ params }) {
           await syncCustomerData();
           fetchData();
           setAlertConfig({
-            title: "ลบวงกู้สำเร็จ",
-            message: "ยกเลิกวงกู้และเคลียร์ข้อมูลเรียบร้อยแล้ว",
+            title: "ลบวงผ่อนสำเร็จ",
+            message: "ยกเลิกวงผ่อนและเคลียร์ข้อมูลเรียบร้อยแล้ว",
           });
         } catch (error) {
           console.error("Error closing loan:", error);
           setAlertConfig({
             title: "เกิดข้อผิดพลาด",
-            message: "ไม่สามารถลบวงกู้ได้",
+            message: "ไม่สามารถลบวงผ่อนได้",
           });
         } finally {
           setIsProcessingAction(false);
@@ -784,7 +784,7 @@ export default function CustomerDetailPage({ params }) {
 
   const handleUndoCloseLoan = (loan) => {
     setConfirmConfig({
-      title: "ยืนยันการกู้คืนวงกู้",
+      title: "ยืนยันการกู้คืนวงผ่อน",
       message: `ต้องการนำวง ${loan.loanNumber} กลับมาดำเนินการต่อใช่หรือไม่?\n\nระบบจะตรวจสอบและยกเลิกการชำระเงินของ "รายการล่าสุด" ให้อัตโนมัติ เพื่อให้ยอดหนี้กลับมาตามปกติ และรันต่อได้ทันที`,
       onConfirm: async () => {
         setConfirmConfig(null);
@@ -906,15 +906,15 @@ export default function CustomerDetailPage({ params }) {
           fetchData();
 
           setAlertConfig({
-            title: "กู้คืนวงกู้สำเร็จ",
+            title: "กู้คืนวงผ่อนสำเร็จ",
             message:
-              "ระบบดึงวงกู้กลับมาดำเนินการต่อ และยกเลิกรายการจ่ายล่าสุดให้เรียบร้อยแล้ว",
+              "ระบบดึงวงผ่อนกลับมาดำเนินการต่อ และยกเลิกรายการจ่ายล่าสุดให้เรียบร้อยแล้ว",
           });
         } catch (error) {
           console.error("Error undoing close loan:", error);
           setAlertConfig({
             title: "เกิดข้อผิดพลาด",
-            message: "ไม่สามารถกู้คืนวงกู้ได้ กรุณาลองใหม่อีกครั้ง",
+            message: "ไม่สามารถกู้คืนวงผ่อนได้ กรุณาลองใหม่อีกครั้ง",
           });
         } finally {
           setIsProcessingAction(false);
@@ -1298,7 +1298,7 @@ export default function CustomerDetailPage({ params }) {
 
       <div className="w-full h-px bg-gray-100 mb-8 sm:mb-10 mt-2"></div>
 
-      {/* --- ส่วน Active Loans (วงกู้ที่กำลังดำเนินการ) --- */}
+      {/* --- ส่วน Active Loans (วงผ่อนที่กำลังดำเนินการ) --- */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-3 sm:gap-4 mb-5 sm:mb-6">
         <div className="flex items-center gap-2.5 sm:gap-3">
           <div className="p-2 sm:p-3 bg-orange-50 rounded-xl sm:rounded-2xl flex flex-col">
@@ -1306,11 +1306,11 @@ export default function CustomerDetailPage({ params }) {
           </div>
           <div>
             <h2 className="text-lg sm:text-xl font-black text-gray-800">
-              วงกู้ที่กำลังดำเนินการ
+              วงผ่อนที่กำลังดำเนินการ
             </h2>
             <div className="flex gap-2 mt-0.5">
               <p className="text-[9px] sm:text-[10px] font-bold text-blue-500 uppercase tracking-widest">
-                กู้ปกติ: {normalLoans.length} วง
+                ผ่อนปกติ: {normalLoans.length} วง
               </p>
               <p className="text-[9px] sm:text-[10px] font-bold text-rose-500 uppercase tracking-widest border-l border-gray-200 pl-2">
                 PD: {pdLoans.length} วง
@@ -1377,7 +1377,7 @@ export default function CustomerDetailPage({ params }) {
                           }`}
                         >
                           <RefreshCw className="w-3 h-3" />
-                          {isPD ? "ผ่อนของ (PD)" : "กู้ปกติ"}
+                          {isPD ? "ผ่อนของ (PD)" : "ผ่อนปกติ"}
                         </button>
 
                         {loan.chatLink ? (
@@ -1470,7 +1470,7 @@ export default function CustomerDetailPage({ params }) {
                     <p
                       className={`text-[9px] sm:text-[10px] font-black uppercase tracking-widest mb-0.5 ${isPD ? "text-rose-500" : "text-blue-500"}`}
                     >
-                      ปล่อยกู้ (เงินต้น)
+                      ปล่อยผ่อน (เงินต้น)
                     </p>
                     <p className="text-xs sm:text-sm font-black text-gray-800">
                       ฿{(loan.principal || 0).toLocaleString()}
@@ -1525,7 +1525,7 @@ export default function CustomerDetailPage({ params }) {
       ) : (
         <div className="py-12 sm:py-16 text-center text-gray-400 bg-gray-50/50 rounded-2xl sm:rounded-[2rem] border-2 border-dashed border-gray-100 mb-4 sm:mb-6">
           <p className="font-black text-xs sm:text-sm uppercase tracking-[0.2em]">
-            ไม่มีวงกู้ที่กำลังดำเนินการ
+            ไม่มีวงผ่อนที่กำลังดำเนินการ
           </p>
         </div>
       )}
@@ -1597,7 +1597,7 @@ export default function CustomerDetailPage({ params }) {
             className="bg-white hover:bg-green-50 p-5 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-gray-100 hover:border-green-200 shadow-sm flex flex-col justify-center relative cursor-pointer group transition-all hover:-translate-y-1"
           >
             <p className="text-[9px] sm:text-[10px] font-black uppercase text-gray-400 group-hover:text-green-500 tracking-widest mb-1 flex items-center gap-1 transition-colors">
-              <Archive className="w-3 h-3" /> วงกู้ที่ปิดแล้ว (
+              <Archive className="w-3 h-3" /> วงผ่อนที่ปิดแล้ว (
               {closedLoans.length} วง)
             </p>
             <p className="text-xl sm:text-2xl font-black text-gray-800 group-hover:text-green-600 transition-colors">
@@ -1610,7 +1610,7 @@ export default function CustomerDetailPage({ params }) {
 
           <div className="bg-blue-50 p-5 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-blue-100 shadow-sm flex flex-col justify-center relative transition-transform hover:-translate-y-1">
             <p className="text-[9px] sm:text-[10px] font-black uppercase text-blue-500 tracking-widest mb-1 flex items-center gap-1">
-              <Target className="w-3 h-3 text-blue-500" /> กำไรคาดหวัง (กู้ปกติ)
+              <Target className="w-3 h-3 text-blue-500" /> กำไรคาดหวัง (ผ่อนปกติ)
             </p>
             <p className="text-xl sm:text-2xl font-black text-blue-600">
               ฿{customerStats.expectedProfitNormal.toLocaleString()}
@@ -1691,7 +1691,7 @@ export default function CustomerDetailPage({ params }) {
                 </div>
                 <div>
                   <h2 className="text-lg sm:text-2xl font-black text-gray-800">
-                    ประวัติวงกู้ที่ปิดแล้ว
+                    ประวัติวงผ่อนที่ปิดแล้ว
                   </h2>
                   <p className="text-[9px] sm:text-[11px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">
                     ลูกค้ารายนี้ปิดวงไปแล้วทั้งหมด {closedLoans.length} วง
@@ -1761,7 +1761,7 @@ export default function CustomerDetailPage({ params }) {
                           onClick={() => handleUndoCloseLoan(loan)}
                           disabled={isProcessingAction}
                           className="mt-0 sm:mt-2 px-3 py-1.5 sm:px-4 sm:py-2 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-500 hover:text-gray-700 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer disabled:opacity-50"
-                          title="กู้คืนวงกู้นี้กลับไปสถานะเดิม"
+                          title="กู้คืนวงผ่อนนี้กลับไปสถานะเดิม"
                         >
                           <Undo2 className="w-3.5 h-3.5 pointer-events-none" />
                           กู้คืน
@@ -1911,7 +1911,7 @@ export default function CustomerDetailPage({ params }) {
                       className="w-4 h-4 text-blue-600 focus:ring-blue-500"
                     />
                     <span className="font-bold text-gray-700 text-sm">
-                      เงินกู้ปกติ
+                      เงินผ่อนปกติ
                     </span>
                   </label>
                   <label className="flex items-center gap-2 cursor-pointer bg-white px-4 py-2 border rounded-xl hover:border-rose-300 transition-colors">
@@ -1933,7 +1933,7 @@ export default function CustomerDetailPage({ params }) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                 <div>
                   <label className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest ml-1 text-gray-400">
-                    ชื่อวงกู้
+                    ชื่อวงผ่อน
                   </label>
                   <input
                     name="loanName"
@@ -1945,7 +1945,7 @@ export default function CustomerDetailPage({ params }) {
                 </div>
                 <div>
                   <label className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest ml-1 text-gray-400">
-                    ลำดับวงกู้
+                    ลำดับวงผ่อน
                   </label>
                   <input
                     name="loanNumber"
@@ -1958,7 +1958,7 @@ export default function CustomerDetailPage({ params }) {
               </div>
               <div>
                 <label className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest ml-1 text-gray-400 block mb-1">
-                  บัญชีธนาคารที่ใช้ปล่อยกู้
+                  บัญชีธนาคารที่ใช้ปล่อยผ่อน
                 </label>
                 <button
                   type="button"
@@ -1997,7 +1997,7 @@ export default function CustomerDetailPage({ params }) {
               <div className="grid grid-cols-2 gap-4 sm:gap-6">
                 <div>
                   <label className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest ml-1 text-gray-400">
-                    ยอดปล่อยกู้
+                    ยอดปล่อยผ่อน
                   </label>
                   <input
                     name="principal"
@@ -2178,7 +2178,7 @@ export default function CustomerDetailPage({ params }) {
                   เลือกบัญชีโอนออก
                 </h2>
                 <p className="text-[9px] sm:text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
-                  แหล่งที่มาของเงินต้นสำหรับการปล่อยกู้
+                  แหล่งที่มาของเงินต้นสำหรับการปล่อยผ่อน
                 </p>
               </div>
               <button

@@ -317,7 +317,7 @@ export default function WarRoomPage() {
               isGroup: activeLoans.length > 1,
               id: activeLoans.length > 1 ? `group-${key}` : baseLoan.id,
               displayLoanNumber: baseLoan.displayLoanNumber,
-              loanName: baseLoan.loanName || "วงกู้รวม",
+              loanName: baseLoan.loanName || "วงผ่อนรวม",
               customerNamesList: customerNamesList,
               memberCount: activeLoans.length,
               remainingBalance: totalRemaining,
@@ -422,7 +422,7 @@ export default function WarRoomPage() {
         <div>
           <h1 className="text-2xl font-black text-gray-800 flex items-center gap-3">
             <Activity className="w-6 h-6 text-orange-500" />
-            หน้าวอติดตามยอดวงกู้
+            หน้าวอติดตามยอดวงผ่อน
           </h1>
           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
             Real-time Monitoring Dashboard
@@ -665,7 +665,7 @@ export default function WarRoomPage() {
           <div className="py-32 flex flex-col items-center justify-center text-gray-300 border-2 border-dashed border-gray-100 rounded-[2.5rem]">
             <Activity className="w-12 h-12 mb-4 opacity-20" />
             <p className="font-black text-xs uppercase tracking-[0.4em]">
-              ไม่พบข้อมูลวงกู้ในระบบ
+              ไม่พบข้อมูลวงผ่อนในระบบ
             </p>
           </div>
         )}
@@ -731,7 +731,7 @@ function EditLoanModal({ loan, onClose }) {
 
   const handleRemoveMemberFromGroup = (memberId) => {
     if (currentMembers.length === 1) {
-      alert("ต้องมีสมาชิกอย่างน้อย 1 คนในวงกู้นี้ครับบอส");
+      alert("ต้องมีสมาชิกอย่างน้อย 1 คนในวงผ่อนนี้ครับบอส");
       return;
     }
     setCurrentMembers((prev) => prev.filter((m) => m.id !== memberId));
@@ -868,7 +868,7 @@ function EditLoanModal({ loan, onClose }) {
           });
         }
 
-        // อัปเดตข้อมูลวงกู้
+        // อัปเดตข้อมูลวงผ่อน
         const loanDataObj = {
           customerId: member.customerId || null,
           customerName: member.customerName,
@@ -928,7 +928,7 @@ function EditLoanModal({ loan, onClose }) {
             </div>
             <div>
               <h2 className="text-xl font-black text-gray-800">
-                แก้ไขข้อมูลวงกู้ {loan.isGroup ? "(แบบกลุ่ม)" : ""}
+                แก้ไขข้อมูลวงผ่อน {loan.isGroup ? "(แบบกลุ่ม)" : ""}
               </h2>
               <p className="text-[10px] font-bold text-orange-500 uppercase mt-0.5 tracking-widest">
                 การแก้ไขจะมีผลกับสมาชิกทุกคนในกลุ่มนี้

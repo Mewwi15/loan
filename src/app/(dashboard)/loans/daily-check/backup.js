@@ -379,7 +379,7 @@ export default function DailyCheckPage() {
 
           <input
             type="text"
-            placeholder="ค้นหาชื่อ, รหัสวงกู้..."
+            placeholder="ค้นหาชื่อ, รหัสวงผ่อน..."
             className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-100 rounded-2xl outline-none font-bold text-gray-700 text-sm shadow-sm focus:border-orange-500 transition-all"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -434,7 +434,7 @@ export default function DailyCheckPage() {
                       {/* รายละเอียด (ขวา) */}
 
                       <div className="flex-1 min-w-0">
-                        {/* ส่วนหัว: ข้อมูลวงกู้ + แชท */}
+                        {/* ส่วนหัว: ข้อมูลวงผ่อน + แชท */}
 
                         <div className="flex justify-between items-start mb-2">
                           <div className="flex items-center gap-2.5 min-w-0">
@@ -566,7 +566,7 @@ export default function DailyCheckPage() {
                   <tr className="text-[12px] font-black text-gray-400 uppercase tracking-[0.2em]">
                     <th className="px-4 py-4 text-center w-20">เช็คจ่าย</th>
 
-                    <th className="px-4 py-4">ข้อมูลวงกู้</th>
+                    <th className="px-4 py-4">ข้อมูลวงผ่อน</th>
 
                     <th className="px-4 py-4">บัญชีรับโอน</th>
 
