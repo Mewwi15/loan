@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { readDeviceToken, clearDeviceToken } from "@/lib/deviceToken";
 import Link from "next/link";
 import {
   ShieldCheck,
@@ -30,7 +31,7 @@ export default function SecuritySettingsPage() {
   const fetchSecurityData = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem("deviceToken");
+      const token = readDeviceToken();
       setCurrentDeviceToken(token || "");
 
       const docRef = doc(db, "settings", "auth");
@@ -60,7 +61,15 @@ export default function SecuritySettingsPage() {
     setIsProcessing(true);
     try {
       const docRef = doc(db, "settings", "auth");
-      const updatedDevices = (authData.trustedDevices || []).filter((d) => {
+
+      // อ่านค่าล่าสุดก่อนเขียนทับเสมอ — ถ้าใช้ authData ที่โหลดตอนเปิดหน้า
+      // เครื่องที่เพิ่งล็อกอินระหว่างนั้นจะถูกลบไปด้วย แล้วโดนเตะ + ต้องกรอก OTP ใหม่
+      const freshSnap = await getDoc(docRef);
+      const latestDevices = freshSnap.exists()
+        ? freshSnap.data().trustedDevices || []
+        : [];
+
+      const updatedDevices = latestDevices.filter((d) => {
         const t = typeof d === "string" ? d : d.token;
         return t !== tokenToRevoke;
       });
@@ -88,12 +97,26 @@ export default function SecuritySettingsPage() {
     setIsProcessing(true);
     try {
       const docRef = doc(db, "settings", "auth");
-      const currentDeviceRecord = (authData.trustedDevices || []).find((d) => {
+
+      // อ่านค่าล่าสุดก่อนเขียนทับ (เหตุผลเดียวกับ handleRevokeDevice)
+      const freshSnap = await getDoc(docRef);
+      const latestDevices = freshSnap.exists()
+        ? freshSnap.data().trustedDevices || []
+        : [];
+
+      // เก็บทุก record ที่เป็น token ของเครื่องนี้ (ข้อมูลเก่าอาจมีซ้ำจากบั๊กเดิมที่เขียน 2 ครั้ง)
+      const updatedDevices = latestDevices.filter((d) => {
         const t = typeof d === "string" ? d : d.token;
         return t === currentDeviceToken;
       });
 
-      const updatedDevices = currentDeviceRecord ? [currentDeviceRecord] : [];
+      if (updatedDevices.length === 0) {
+        alert(
+          "⚠️ ไม่พบเครื่องนี้ในรายการอุปกรณ์ที่เชื่อถือได้\nถ้าล้างต่อ เครื่องนี้จะถูกเตะออกด้วย — ยกเลิกไว้ก่อนครับ",
+        );
+        setIsProcessing(false);
+        return;
+      }
 
       await updateDoc(docRef, { trustedDevices: updatedDevices });
       setAuthData((prev) => ({ ...prev, trustedDevices: updatedDevices }));
@@ -150,7 +173,7 @@ export default function SecuritySettingsPage() {
         trustedDevices: [],
       });
 
-      localStorage.removeItem("deviceToken");
+      clearDeviceToken();
       localStorage.removeItem("isLoggedIn");
       localStorage.removeItem("loginTimestamp");
 

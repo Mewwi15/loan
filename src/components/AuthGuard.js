@@ -12,6 +12,12 @@ import {
   signOut,
   onAuthStateChanged,
 } from "firebase/auth";
+import {
+  readDeviceToken,
+  writeDeviceToken,
+  clearDeviceToken,
+  newDeviceToken,
+} from "@/lib/deviceToken";
 import * as OTPAuth from "otpauth";
 import QRCode from "qrcode";
 import {
@@ -42,7 +48,8 @@ export default function AuthGuard({ children }) {
   const [tempSecret, setTempSecret] = useState("");
   const [qrCodeUrl, setQrCodeUrl] = useState("");
 
-  const SESSION_TIMEOUT = 12 * 60 * 60 * 1000;
+  // 30 วัน และต่ออายุใหม่ทุกครั้งที่เปิดใช้งาน (sliding window — ดูใน checkSession)
+  const SESSION_TIMEOUT = 30 * 24 * 60 * 60 * 1000;
 
   const handleLogout = useCallback(() => {
     localStorage.removeItem("isLoggedIn");
@@ -64,7 +71,7 @@ export default function AuthGuard({ children }) {
   const checkSession = useCallback(async () => {
     const loginTime = localStorage.getItem("loginTimestamp");
     const isLogged = localStorage.getItem("isLoggedIn");
-    const deviceToken = localStorage.getItem("deviceToken");
+    const deviceToken = readDeviceToken();
 
     if (isLogged === "true" && loginTime) {
       const now = new Date().getTime();
@@ -73,6 +80,11 @@ export default function AuthGuard({ children }) {
         return;
       }
 
+      // ต่ออายุ session โดยนับใหม่จากการใช้งานครั้งนี้
+      // (เดิมเขียน loginTimestamp แค่ตอน completeLogin เท่านั้น ทำให้ถูกเตะออก
+      //  เมื่อครบ 12 ชม. นับจากล็อกอินครั้งแรก ต่อให้กำลังนั่งใช้งานอยู่ก็ตาม)
+      localStorage.setItem("loginTimestamp", now.toString());
+
       // ตรวจสอบ trusted device ก่อน แล้วค่อย setIsAuth(true)
       if (deviceToken) {
         try {
@@ -80,16 +92,23 @@ export default function AuthGuard({ children }) {
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
             const trustedDevices = docSnap.data().trustedDevices || [];
-            const isTrusted = trustedDevices.some((d) =>
-              typeof d === "string"
-                ? d === deviceToken
-                : d.token === deviceToken,
-            );
-            if (!isTrusted) {
-              // token ไม่ valid — ล้างออกแล้ว logout
-              localStorage.removeItem("deviceToken");
-              handleLogout();
-              return;
+
+            // รายการว่าง = ยังไม่เคยลงทะเบียนอุปกรณ์ไว้ หรือเพิ่งรีเซ็ต 2FA
+            // ไม่ใช่ "การถอนสิทธิ์" จึงห้ามลบ token ทิ้ง
+            // (ของเดิมลบทุกครั้งที่รายการว่าง → ทุกเครื่องโดนเตะทุกครั้งที่โหลดหน้า
+            //  แล้ววนกลับไปกรอก OTP ใหม่ไม่จบ)
+            if (trustedDevices.length > 0) {
+              const isTrusted = trustedDevices.some((d) =>
+                typeof d === "string"
+                  ? d === deviceToken
+                  : d.token === deviceToken,
+              );
+              if (!isTrusted) {
+                // ถูกถอนสิทธิ์จริง — ล้างออกแล้ว logout
+                clearDeviceToken();
+                handleLogout();
+                return;
+              }
             }
           }
         } catch (err) {
@@ -160,7 +179,7 @@ export default function AuthGuard({ children }) {
       }
 
       setAuthData(data);
-      const localToken = localStorage.getItem("deviceToken");
+      const localToken = readDeviceToken();
 
       if (data.totpSecret) {
         const isTrusted = data.trustedDevices?.some((d) =>
@@ -224,7 +243,9 @@ export default function AuthGuard({ children }) {
         }
 
         if (rememberDevice) {
-          const newToken = crypto.randomUUID();
+          // ห้ามใช้ crypto.randomUUID() ตรงๆ — มีเฉพาะ secure context (https/localhost)
+          // ถ้าเปิดผ่าน http://<ip> ในวง LAN จะ throw ทำให้ token ไม่เคยถูกบันทึก
+          const newToken = newDeviceToken();
 
           // ระบุชื่ออุปกรณ์จาก User-Agent (ไม่ต้องรอ network)
           let deviceName = "Unknown Device";
@@ -234,44 +255,53 @@ export default function AuthGuard({ children }) {
           else if (/iPad|iPhone|iPod/i.test(ua)) deviceName = "Apple Device (iOS)";
           else if (/Android/i.test(ua)) deviceName = "Android Device";
 
+          // ดึง IP/location ให้จบก่อน (จำกัดเวลา 2 วิ) แล้วค่อยเขียน Firestore "ครั้งเดียว"
+          // ของเดิมเขียน 2 ครั้ง (ก่อนและหลังได้ IP) ซึ่ง arrayUnion มองเป็นคนละ object
+          // ทำให้เก็บ 2 record ต่อการล็อกอิน 1 ครั้ง และเอกสารบวมไม่หยุด
+          let location = "ไม่ทราบตำแหน่ง";
+          let ip = "";
+          try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 2000);
+            const res = await fetch("https://ipapi.co/json/", {
+              signal: ctrl.signal,
+            });
+            clearTimeout(timer);
+            if (res.ok) {
+              const locData = await res.json();
+              if (locData?.region) {
+                location = `${locData.region}, ${locData.country_name}`;
+              }
+              ip = locData?.ip || "";
+            }
+          } catch {
+            // ไม่ได้ IP ก็ไม่เป็นไร ใช้ค่าเริ่มต้น
+          }
+
           const deviceRecord = {
             token: newToken,
             device: deviceName,
-            location: "ไม่ทราบตำแหน่ง",
-            ip: "",
+            location,
+            ip,
             timestamp: new Date().toISOString(),
           };
 
-          // บันทึก Firestore ก่อน — แล้วค่อยบันทึก localStorage หลัง confirm
-          await setDoc(
-            docRef,
-            { trustedDevices: arrayUnion(deviceRecord) },
-            { merge: true },
-          );
-
-          // บันทึก localStorage หลัง Firestore สำเร็จแล้วเท่านั้น
-          localStorage.setItem("deviceToken", newToken);
-
-          // ดึง IP/location แบบ background (ไม่บล็อก login flow)
-          fetch("https://ipapi.co/json/")
-            .then((res) => (res.ok ? res.json() : null))
-            .then((locData) => {
-              if (!locData) return;
-              const location = locData.region
-                ? `${locData.region}, ${locData.country_name}`
-                : "ไม่ทราบตำแหน่ง";
-              const updatedRecord = {
-                ...deviceRecord,
-                location,
-                ip: locData.ip || "",
-              };
-              setDoc(
-                docRef,
-                { trustedDevices: arrayUnion(updatedRecord) },
-                { merge: true },
-              ).catch(() => {});
-            })
-            .catch(() => {});
+          try {
+            await setDoc(
+              docRef,
+              { trustedDevices: arrayUnion(deviceRecord) },
+              { merge: true },
+            );
+            // บันทึกฝั่งเครื่องหลัง Firestore สำเร็จแล้วเท่านั้น
+            writeDeviceToken(newToken);
+          } catch (saveErr) {
+            // เขียนไม่สำเร็จ (rules ปิด / เอกสารเต็ม 1 MiB) — ยังให้เข้าระบบได้
+            // แต่ต้องไม่เก็บ token ไว้ ไม่งั้น checkSession จะเตะออกทุกครั้ง
+            console.error(
+              "จำอุปกรณ์นี้ไม่สำเร็จ — ครั้งหน้าจะต้องกรอก OTP อีก:",
+              saveErr,
+            );
+          }
         }
 
         completeLogin();
